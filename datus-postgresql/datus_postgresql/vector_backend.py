@@ -20,6 +20,7 @@ from datus.storage.backends.vector.interfaces import (
     BackendCapabilities,
     Condition,
     FilterExpr,
+    Not,
     Op,
     Or,
     VectorBackend,
@@ -261,8 +262,7 @@ class PgVectorTable(VectorTable):
             return None, {}
         if isinstance(expr, str):
             return expr, {}
-        # Fallback: use simple equality for namespace-only filters
-        return None, {}
+        return self._compile_node_sql(expr, "where")
 
     def _namespace_filter(self) -> Optional[ClauseElement]:
         if "namespace" in self._table.c:
@@ -278,6 +278,8 @@ class PgVectorTable(VectorTable):
         if isinstance(node, Or) or getattr(node, "__class__", None).__name__ == "Or":
             parts = [self._compile_node(n) for n in node.nodes if n is not None]
             return sa_or(*parts) if parts else text("1=0")
+        if isinstance(node, Not) or getattr(node, "__class__", None).__name__ == "Not":
+            return ~self._compile_node(node.node)
         raise TypeError(f"Unsupported filter node: {type(node)}")
 
     def _compile_condition(self, cond: Any) -> ClauseElement:
@@ -321,6 +323,95 @@ class PgVectorTable(VectorTable):
             return column <= value
 
         raise ValueError(f"Unsupported operator: {op}")
+
+    def _compile_node_sql(self, node: Any, param_prefix: str) -> tuple[str, dict[str, Any]]:
+        if isinstance(node, Condition) or hasattr(node, "field"):
+            return self._compile_condition_sql(node, param_prefix)
+
+        if isinstance(node, And) or getattr(node, "__class__", None).__name__ == "And":
+            parts: list[str] = []
+            params: dict[str, Any] = {}
+            for index, sub_node in enumerate(node.nodes):
+                if sub_node is None:
+                    continue
+                clause, clause_params = self._compile_node_sql(sub_node, f"{param_prefix}_and_{index}")
+                parts.append(f"({clause})")
+                params.update(clause_params)
+            return (" AND ".join(parts) if parts else "1=1"), params
+
+        if isinstance(node, Or) or getattr(node, "__class__", None).__name__ == "Or":
+            parts = []
+            params: dict[str, Any] = {}
+            for index, sub_node in enumerate(node.nodes):
+                if sub_node is None:
+                    continue
+                clause, clause_params = self._compile_node_sql(sub_node, f"{param_prefix}_or_{index}")
+                parts.append(f"({clause})")
+                params.update(clause_params)
+            return (" OR ".join(parts) if parts else "1=0"), params
+
+        if isinstance(node, Not) or getattr(node, "__class__", None).__name__ == "Not":
+            clause, params = self._compile_node_sql(node.node, f"{param_prefix}_not")
+            return f"NOT ({clause})", params
+
+        raise TypeError(f"Unsupported filter node: {type(node)}")
+
+    def _compile_condition_sql(self, cond: Any, param_prefix: str) -> tuple[str, dict[str, Any]]:
+        field = cond.field
+        if field not in self._table.c:
+            raise ValueError(f"Unknown column '{field}' in filter")
+
+        op = cond.op
+        raw_op = op.value if hasattr(op, "value") else str(op)
+        op_value = raw_op.upper() if isinstance(raw_op, str) and raw_op.isalpha() else raw_op
+        value = cond.value
+        column_sql = self._quote_identifier(field)
+
+        if value is None:
+            if op_value in ("=", "==") or op == Op.EQ:
+                return f"{column_sql} IS NULL", {}
+            if op_value in ("!=", "<>") or op == Op.NE:
+                return f"{column_sql} IS NOT NULL", {}
+            raise ValueError(f"Operator {op} is invalid with NULL (field: {field})")
+
+        if op_value == "IN" or op == Op.IN:
+            if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
+                raise TypeError("IN expects a non-string iterable value")
+            values = list(value)
+            if not values:
+                return "1=0", {}
+            placeholders: list[str] = []
+            params: dict[str, Any] = {}
+            for index, item in enumerate(values):
+                name = f"{param_prefix}_{index}"
+                placeholders.append(f":{name}")
+                params[name] = item
+            return f"{column_sql} IN ({', '.join(placeholders)})", params
+
+        if op_value == "LIKE" or op == Op.LIKE:
+            name = f"{param_prefix}_value"
+            return f"{column_sql} LIKE :{name}", {name: value}
+
+        op_map = {
+            "=": "=",
+            "==": "=",
+            "!=": "!=",
+            "<>": "!=",
+            ">": ">",
+            ">=": ">=",
+            "<": "<",
+            "<=": "<=",
+        }
+        if op_value not in op_map:
+            raise ValueError(f"Unsupported operator: {op}")
+
+        name = f"{param_prefix}_value"
+        return f"{column_sql} {op_map[op_value]} :{name}", {name: value}
+
+    @staticmethod
+    def _quote_identifier(name: str) -> str:
+        escaped = name.replace('"', '""')
+        return f'"{escaped}"'
 
     def _build_select(
         self,
@@ -391,6 +482,7 @@ class PgVectorBackend(VectorBackend):
         schema: str = "public",
         distance: str = "cosine",
         fts_enabled: bool = True,
+        ensure_vector_extension: bool = True,
     ):
         self._connection_string = connection_string
         self._schema = schema
@@ -414,6 +506,9 @@ class PgVectorBackend(VectorBackend):
                     register_vector(dbapi_conn)
             except Exception as exc:
                 logger.warning(f"pgvector register_vector failed: {exc}")
+
+        if ensure_vector_extension:
+            self._ensure_vector_extension()
 
     def ensure_table(self, spec) -> PgVectorTable:
         if not self.table_exists(spec.name):
@@ -460,6 +555,29 @@ class PgVectorBackend(VectorBackend):
         from sqlalchemy import create_engine
 
         return create_engine(connection_string, pool_pre_ping=True, future=True)
+
+    def _ensure_vector_extension(self) -> None:
+        """Fail fast with actionable guidance when pgvector extension is missing."""
+        try:
+            with self._engine.connect() as conn:
+                stmt = text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')")
+                extension_enabled = bool(conn.execute(stmt).scalar())
+        except Exception as exc:
+            raise DatusException(
+                ErrorCode.DB_EXECUTION_ERROR,
+                message_args={"error_message": f"Failed to verify pgvector extension availability: {exc}"},
+            ) from exc
+
+        if not extension_enabled:
+            raise DatusException(
+                ErrorCode.DB_EXECUTION_ERROR,
+                message_args={
+                    "error_message": (
+                        "PostgreSQL extension 'vector' is not enabled for the target database. "
+                        "Run: CREATE EXTENSION IF NOT EXISTS vector;"
+                    )
+                },
+            )
 
     def _validate_columns(self, table: Table, spec) -> None:
         if spec.schema is None:

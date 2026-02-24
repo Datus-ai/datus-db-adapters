@@ -56,7 +56,23 @@ pip install datus-mysql
 
 ---
 
-### 3. datus-starrocks
+### 3. datus-postgresql
+PostgreSQL database adapter with optional pgvector backend for vector search workloads.
+
+**Installation**:
+```bash
+pip install datus-postgresql
+```
+
+**Features**:
+- PostgreSQL relational connector
+- pgvector backend registration (`pgvector`)
+- Namespace-scoped relational/vector storage
+- Offline DDL generator for production-controlled schema rollout
+
+---
+
+### 4. datus-starrocks
 StarRocks database adapter (MySQL protocol compatible).
 
 **Installation**:
@@ -72,7 +88,7 @@ pip install datus-starrocks
 
 ---
 
-### 4. datus-snowflake
+### 5. datus-snowflake
 Snowflake database adapter (native SDK).
 
 **Installation**:
@@ -89,7 +105,7 @@ pip install datus-snowflake
 
 ---
 
-### 5. datus-clickzetta
+### 6. datus-clickzetta
 ClickZetta Lakehouse database adapter (native SDK).
 
 **Installation**:
@@ -108,6 +124,11 @@ pip install datus-clickzetta
 ---
 
 ## Development Guide
+
+## Vector Backend Extension Guide
+
+- PostgreSQL + pgvector operational guide and extension patterns:
+  - `docs/vector_backend_extensions.md`
 
 ### Development Environment Setup
 

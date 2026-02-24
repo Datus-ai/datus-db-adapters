@@ -245,3 +245,15 @@ def test_config_sslmode_verify_full():
     """Test config with sslmode=verify-full."""
     config = PostgreSQLConfig(username="test_user", sslmode="verify-full")
     assert config.sslmode == "verify-full"
+
+
+def test_config_enable_vector_search_defaults_true():
+    """Test vector search flag defaults to enabled."""
+    config = PostgreSQLConfig(username="test_user")
+    assert config.enable_vector_search is True
+
+
+def test_config_enable_vector_search_can_be_disabled():
+    """Test vector search flag can be disabled explicitly."""
+    config = PostgreSQLConfig(username="test_user", enable_vector_search=False)
+    assert config.enable_vector_search is False

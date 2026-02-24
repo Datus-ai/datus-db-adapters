@@ -22,3 +22,4 @@ class PostgreSQLConfig(BaseModel):
         default="prefer", description="SSL mode (disable, allow, prefer, require, verify-ca, verify-full)"
     )
     timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+    enable_vector_search: bool = Field(default=True, description="Enable pgvector extension for vector similarity search")

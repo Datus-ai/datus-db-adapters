@@ -208,11 +208,12 @@ def render_vector_ddl(vector_dim: int, schema: str = "public") -> str:
                 _column_sql("name", "TEXT"),
                 _column_sql("subject_node_id", "BIGINT"),
                 _column_sql("created_at", "TEXT"),
+                _column_sql("id", "TEXT"),
                 _column_sql("search_text", "TEXT"),
                 _column_sql("explanation", "TEXT"),
                 _column_sql("vector", vector_type),
             ],
-            ["UNIQUE (namespace, subject_node_id, name)"],
+            ["UNIQUE (namespace, id)", "UNIQUE (namespace, subject_node_id, name)"],
             ["search_text", "explanation"],
         ),
         (

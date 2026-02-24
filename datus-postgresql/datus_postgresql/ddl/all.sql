@@ -150,9 +150,11 @@ CREATE TABLE IF NOT EXISTS public.ext_knowledge (
   name TEXT,
   subject_node_id BIGINT,
   created_at TEXT,
+  id TEXT,
   search_text TEXT,
   explanation TEXT,
   vector vector(384),
+  UNIQUE (namespace, id),
   UNIQUE (namespace, subject_node_id, name)
 );
 
