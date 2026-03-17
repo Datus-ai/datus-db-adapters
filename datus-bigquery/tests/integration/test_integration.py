@@ -77,14 +77,14 @@ def test_get_tables_with_ddl(connector: BigQueryConnector, config: BigQueryConfi
             tables=[table_name],
         )
 
-        if len(tables) > 0:
-            table = tables[0]
-            assert "table_name" in table
-            assert "definition" in table
-            assert table["table_type"] == "table"
-            assert "database_name" in table
-            assert table["schema_name"] == ""
-            assert "identifier" in table
+        assert len(tables) > 0, f"Expected to find table {table_name}"
+        table = tables[0]
+        assert table["table_name"] == table_name
+        assert "definition" in table
+        assert table["table_type"] == "table"
+        assert "database_name" in table
+        assert table["schema_name"] == ""
+        assert "identifier" in table
     finally:
         connector.execute_ddl(f"DROP TABLE IF EXISTS {full}")
 
@@ -114,11 +114,11 @@ def test_get_views_with_ddl(connector: BigQueryConnector, config: BigQueryConfig
             database_name=config.dataset,
         )
 
-        if len(views) > 0:
-            view = [v for v in views if v["table_name"] == view_name]
-            if view:
-                assert "definition" in view[0]
-                assert view[0]["table_type"] == "view"
+        assert len(views) > 0, f"Expected to find view {view_name}"
+        view = [v for v in views if v["table_name"] == view_name]
+        assert view, f"Expected view {view_name} in results"
+        assert "definition" in view[0]
+        assert view[0]["table_type"] == "view"
     finally:
         connector.execute_ddl(f"DROP VIEW IF EXISTS {full_view}")
         connector.execute_ddl(f"DROP TABLE IF EXISTS {full_table}")

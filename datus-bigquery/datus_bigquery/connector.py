@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from typing import Any, Dict, List, Optional, Set, Union, override
+from urllib.parse import urlencode
 
 from datus.schemas.base import TABLE_TYPE
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -38,13 +39,13 @@ class BigQueryConnector(SQLAlchemyConnector):
             connection_string += f"/{dataset}"
 
         # Append credentials_path as query param if provided
-        query_parts = []
+        query_params: Dict[str, str] = {}
         if self.credentials_path:
-            query_parts.append(f"credentials_path={self.credentials_path}")
+            query_params["credentials_path"] = self.credentials_path
         if self.location:
-            query_parts.append(f"location={self.location}")
-        if query_parts:
-            connection_string += "?" + "&".join(query_parts)
+            query_params["location"] = self.location
+        if query_params:
+            connection_string += "?" + urlencode(query_params, safe="/")
 
         super().__init__(
             connection_string,
@@ -208,6 +209,12 @@ class BigQueryConnector(SQLAlchemyConnector):
         dataset = database_name or self.database_name
         project = catalog_name or self.catalog_name
 
+        if not dataset:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                "BigQuery requires a dataset name to read schema. Set dataset in config or pass database_name.",
+            )
+
         sql = (
             f"SELECT column_name, data_type, is_nullable, column_default, ordinal_position "
             f"FROM `{project}`.`{dataset}`.INFORMATION_SCHEMA.COLUMNS "
@@ -239,7 +246,12 @@ class BigQueryConnector(SQLAlchemyConnector):
         """List datasets in the project."""
         self.connect()
         project = catalog_name or self.catalog_name
-        sql = f"SELECT schema_name FROM `{project}`.INFORMATION_SCHEMA.SCHEMATA"
+        if self.location:
+            region = self.location.lower()
+            region = region if region.startswith("region-") else f"region-{region}"
+            sql = f"SELECT schema_name FROM `{project}`.`{region}`.INFORMATION_SCHEMA.SCHEMATA"
+        else:
+            sql = f"SELECT schema_name FROM `{project}`.INFORMATION_SCHEMA.SCHEMATA"
         df = self._execute_pandas(sql)
         if df.empty:
             return []
@@ -285,6 +297,13 @@ class BigQueryConnector(SQLAlchemyConnector):
         project = catalog_name or self.catalog_name
         result = []
 
+        try:
+            limit = int(top_n)
+        except (TypeError, ValueError):
+            raise DatusException(ErrorCode.COMMON_FIELD_INVALID, "top_n must be a positive integer.")
+        if limit <= 0:
+            raise DatusException(ErrorCode.COMMON_FIELD_INVALID, "top_n must be a positive integer.")
+
         if tables:
             target_tables = tables
         else:
@@ -292,7 +311,7 @@ class BigQueryConnector(SQLAlchemyConnector):
 
         for table_name in target_tables:
             full = self.full_name(catalog_name=project, database_name=dataset, table_name=table_name)
-            sql = f"SELECT * FROM {full} LIMIT {top_n}"
+            sql = f"SELECT * FROM {full} LIMIT {limit}"
             try:
                 df = self._execute_pandas(sql)
                 if not df.empty:
