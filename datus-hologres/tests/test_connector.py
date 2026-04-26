@@ -13,7 +13,7 @@ from datus_hologres.handlers import build_hologres_uri, resolve_hologres_context
 def test_connector_initialization_with_config_object():
     config = HologresConfig(
         host="hologres.example.com",
-        port=5432,
+        port=80,
         username="test_user",
         password="test_pass",
         database="testdb",
@@ -26,7 +26,7 @@ def test_connector_initialization_with_config_object():
     assert connector.hologres_config == config
     assert connector.config == config
     assert connector.host == "hologres.example.com"
-    assert connector.port == 5432
+    assert connector.port == 80
     assert connector.username == "test_user"
     assert connector.password == "test_pass"
     assert connector.database_name == "testdb"
@@ -65,7 +65,6 @@ def test_connector_initialization_invalid_type():
 def test_connector_uses_postgresql_protocol_connection_string():
     config = HologresConfig(
         host="hologres.example.com",
-        port=5432,
         username="user",
         password="pass",
         database="db",
@@ -75,7 +74,7 @@ def test_connector_uses_postgresql_protocol_connection_string():
         HologresConnector(config)
 
     connection_string = mock_init.call_args[0][0]
-    assert "postgresql+psycopg2://user:pass@hologres.example.com:5432/db" in connection_string
+    assert "postgresql+psycopg2://user:pass@hologres.example.com:80/db" in connection_string
     assert "sslmode=prefer" in connection_string
     assert mock_init.call_args.kwargs["dialect"] == "postgresql"
 
@@ -104,13 +103,13 @@ def test_build_hologres_uri_uses_postgresql_driver():
     uri = build_hologres_uri(config)
 
     assert uri.startswith("postgresql+psycopg2://")
-    assert "hologres.example.com:5432/db" in uri
+    assert "hologres.example.com:80/db" in uri
     assert "sslmode=require" in uri
 
 
 def test_resolve_hologres_context_preserves_postgresql_fields():
     config = HologresConfig(username="user", database="fallback_db", schema="fallback_schema")
-    uri = "postgresql+psycopg2://user:pass@hologres.example.com:5432/db?options=-csearch_path%3Danalytics"
+    uri = "postgresql+psycopg2://user:pass@hologres.example.com:80/db?options=-csearch_path%3Danalytics"
 
     adapter, catalog, database, schema = resolve_hologres_context(config, uri)
 

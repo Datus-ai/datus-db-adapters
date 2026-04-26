@@ -17,11 +17,11 @@ class HologresConfig(PostgreSQLConfig):
     """
 
     host: str = Field(default="127.0.0.1", description="Hologres instance host")
-    port: int = Field(default=5432, description="Hologres PostgreSQL-compatible port")
-    username: str = Field(..., description="Hologres username")
+    port: int = Field(default=80, description="Hologres PostgreSQL-compatible port")
+    username: str = Field(..., description="Hologres username or AccessKeyID")
     password: str = Field(
         default="",
-        description="Hologres password",
+        description="Hologres password or AccessKeySecret",
         json_schema_extra={"input_type": "password"},
     )
     database: Optional[str] = Field(default=None, description="Default Hologres database name")

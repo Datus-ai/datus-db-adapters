@@ -12,7 +12,7 @@ def test_config_defaults():
     config = HologresConfig(username="test_user")
 
     assert config.host == "127.0.0.1"
-    assert config.port == 5432
+    assert config.port == 80
     assert config.username == "test_user"
     assert config.password == ""
     assert config.database is None
