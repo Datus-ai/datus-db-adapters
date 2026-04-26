@@ -94,6 +94,10 @@ ORDER BY table_schema, table_name
 LIMIT 50;
 ```
 
+The external table check requires an already-attached external or foreign schema
+in Hologres; replace `<external_schema>` and `<external_table>` with names
+configured in your instance.
+
 ```sql
 SELECT *
 FROM "<external_schema>"."<external_table>"

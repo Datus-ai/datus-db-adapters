@@ -80,7 +80,10 @@ def test_connector_uses_postgresql_protocol_connection_string():
 
 
 def test_connector_migration_capability_hints_are_lightweight():
-    connector = HologresConnector.__new__(HologresConnector)
+    config = HologresConfig(username="user")
+
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
+        connector = HologresConnector(config)
 
     capabilities = connector.describe_migration_capabilities()
 
@@ -88,7 +91,8 @@ def test_connector_migration_capability_hints_are_lightweight():
     assert capabilities["dialect_family"] == "postgres-like"
     assert capabilities["requires"] == []
     assert any("Hologres" in note for note in capabilities["notes"])
-    assert "external tables" in capabilities["type_hints"]
+    assert "external tables" not in capabilities["type_hints"]
+    assert any("external table" in limitation for limitation in capabilities["limitations"])
 
 
 def test_build_hologres_uri_uses_postgresql_driver():

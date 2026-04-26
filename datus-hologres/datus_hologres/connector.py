@@ -25,7 +25,6 @@ class HologresConnector(PostgreSQLConnector):
 
         self.hologres_config = config
         super().__init__(config)
-        self.config = config
         self.db_type = "hologres"
         self.adapter_type = "hologres"
 
@@ -44,10 +43,12 @@ class HologresConnector(PostgreSQLConnector):
                 "LARGEINT": "NUMERIC(38,0)",
                 "unbounded VARCHAR": "TEXT (PostgreSQL-compatible fallback)",
                 "TIMESTAMP WITH TIME ZONE": "TIMESTAMPTZ",
-                "distribution": "Hologres may use distribution-oriented table layout syntax; tune in follow-up work",
-                "storage": "Hologres-specific storage options are not optimized by this skeleton",
-                "external tables": "Hologres external table syntax should be handled as normal SQL-accessible metadata for now",
             },
+            "limitations": [
+                "Hologres distribution-oriented table layout syntax is not optimized by this skeleton.",
+                "Hologres-specific storage options are not optimized by this skeleton.",
+                "Hologres external table syntax is treated as normal SQL-accessible metadata for now.",
+            ],
             "notes": [
                 "Hologres is PostgreSQL-compatible and this adapter currently reuses PostgreSQL behavior.",
                 "Hologres-specific distribution, storage, and external table DDL optimization is not implemented yet.",
