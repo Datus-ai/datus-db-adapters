@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 license = {file = "LICENSE"}
 
 [tool.uv.workspace]
-members = ["datus-db-core", "datus-mysql", "datus-postgresql", "datus-sqlalchemy", "datus-starrocks", "datus-snowflake", "datus-clickzetta", "datus-clickhouse", "datus-hive", "datus-redshift", "datus-spark", "datus-trino", "datus-greenplum"]
+members = ["datus-db-core", "datus-mysql", "datus-postgresql", "datus-hologres", "datus-sqlalchemy", "datus-starrocks", "datus-snowflake", "datus-clickzetta", "datus-clickhouse", "datus-hive", "datus-redshift", "datus-spark", "datus-trino", "datus-greenplum"]
 
 [dependency-groups]
 
@@ -62,4 +62,4 @@ ignore = [
 max-complexity = 10
 
 [tool.ruff.lint.isort]
-known-first-party = ["datus_db_core", "datus_sqlalchemy", "datus_mysql", "datus_postgresql", "datus_redshift", "datus_snowflake", "datus_clickhouse", "datus_clickzetta", "datus_starrocks", "datus_trino", "datus_spark", "datus_hive", "datus_greenplum"]
+known-first-party = ["datus_db_core", "datus_sqlalchemy", "datus_mysql", "datus_postgresql", "datus_hologres", "datus_redshift", "datus_snowflake", "datus_clickhouse", "datus_clickzetta", "datus_starrocks", "datus_trino", "datus_spark", "datus_hive", "datus_greenplum"]
