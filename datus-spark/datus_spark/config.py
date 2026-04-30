@@ -21,7 +21,7 @@ class SparkConfig(BaseModel):
         json_schema_extra={"input_type": "password"},
     )
     database: Optional[str] = Field(default=None, description="Default database name")
-    auth_mechanism: Literal["NONE", "PLAIN", "KERBEROS"] = Field(
-        default="NONE", description="Authentication mechanism (NONE, PLAIN, KERBEROS)"
+    auth_mechanism: Literal["NONE", "PLAIN", "KERBEROS", "CUSTOM"] = Field(
+        default="NONE", description="Authentication mechanism (NONE, PLAIN, KERBEROS, CUSTOM)"
     )
     timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
