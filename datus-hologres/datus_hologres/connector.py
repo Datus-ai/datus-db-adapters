@@ -54,10 +54,6 @@ class HologresConnector(PostgreSQLConnector):
                 "Hologres-specific distribution, storage, and external table DDL optimization is not implemented yet.",
             ],
             "example_ddl": (
-                "CREATE TABLE public.t (\n"
-                "  id BIGINT NOT NULL,\n"
-                "  name TEXT,\n"
-                "  created_at TIMESTAMPTZ\n"
-                ")"
+                "CREATE TABLE public.t (\n  id BIGINT NOT NULL,\n  name TEXT,\n  created_at TIMESTAMPTZ\n)"
             ),
         }
