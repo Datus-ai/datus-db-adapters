@@ -64,6 +64,29 @@ class TestDescribeMigrationCapabilitiesIceberg:
         )
         assert "partition" in haystack.lower()
 
+    def test_describes_snapshot_checkpointing(self, iceberg_connector):
+        result = iceberg_connector.describe_migration_capabilities()
+
+        checkpointing = result["checkpointing"]
+        assert checkpointing["mode"] == "iceberg_snapshot"
+        assert checkpointing["checkpoint_key"] == "snapshot_id"
+        assert "$snapshots" in checkpointing["latest_checkpoint_sql"]
+        assert "table_changes" in checkpointing["changes_since_checkpoint_sql"]
+
+    def test_does_not_recommend_delta_checkpoint_interval(self, iceberg_connector):
+        result = iceberg_connector.describe_migration_capabilities()
+        text = " ".join(
+            [
+                " ".join(result.get("type_hints", {}).values()),
+                result.get("example_ddl", ""),
+                str(result.get("checkpointing", {})),
+            ]
+        )
+
+        assert "checkpoint_interval" in " ".join(result["forbids"])
+        assert "checkpoint_interval" not in result["example_ddl"]
+        assert "checkpoint_interval" in text
+
 
 class TestDescribeMigrationCapabilitiesGeneric:
     @pytest.fixture
@@ -110,6 +133,35 @@ class TestValidateDdl:
         errors = connector.validate_ddl(ddl)
         assert any("ENGINE" in e.upper() or "CLICKHOUSE" in e.upper() for e in errors)
 
+    def test_accepts_iceberg_snapshot_ddl(self, connector, monkeypatch):
+        monkeypatch.setattr(connector, "_detect_catalog_type", lambda: "iceberg")
+        ddl = """CREATE TABLE catalog.schema.t (
+          id BIGINT,
+          ds DATE
+        ) WITH (format = 'PARQUET', partitioning = ARRAY['month(ds)'])"""
+
+        assert connector.validate_ddl(ddl) == []
+
+    def test_rejects_delta_checkpoint_interval_for_iceberg(self, connector, monkeypatch):
+        monkeypatch.setattr(connector, "_detect_catalog_type", lambda: "iceberg")
+        ddl = """CREATE TABLE catalog.schema.t (
+          id BIGINT,
+          ds DATE
+        ) WITH (format = 'PARQUET', checkpoint_interval = 5)"""
+
+        errors = connector.validate_ddl(ddl)
+        assert any("checkpoint_interval" in e for e in errors)
+
+    def test_rejects_partitioned_by_for_iceberg(self, connector, monkeypatch):
+        monkeypatch.setattr(connector, "_detect_catalog_type", lambda: "iceberg")
+        ddl = """CREATE TABLE catalog.schema.t (
+          id BIGINT,
+          ds DATE
+        ) WITH (partitioned_by = ARRAY['ds'])"""
+
+        errors = connector.validate_ddl(ddl)
+        assert any("partitioning" in e for e in errors)
+
 
 class TestSuggestTableLayoutHive:
     def test_hive_returns_partitioned_by(self, connector, monkeypatch):
@@ -124,14 +176,22 @@ class TestSuggestTableLayoutHive:
 
 
 class TestSuggestTableLayoutIceberg:
-    def test_iceberg_returns_partitioning(self, connector, monkeypatch):
+    def test_iceberg_returns_format_and_partitioning(self, connector, monkeypatch):
+        monkeypatch.setattr(connector, "_detect_catalog_type", lambda: "iceberg")
+        columns = [
+            {"name": "id", "type": "BIGINT", "nullable": False},
+            {"name": "ds", "type": "DATE", "nullable": False},
+        ]
+        layout = connector.suggest_table_layout(columns)
+        assert layout == {"format": "PARQUET", "partitioning": ["month(ds)"]}
+
+    def test_iceberg_returns_format_without_partitioning(self, connector, monkeypatch):
         monkeypatch.setattr(connector, "_detect_catalog_type", lambda: "iceberg")
         columns = [
             {"name": "id", "type": "BIGINT", "nullable": False},
         ]
         layout = connector.suggest_table_layout(columns)
-        # Iceberg hints: include partitioning
-        assert "partitioning" in layout or layout == {}
+        assert layout == {"format": "PARQUET"}
 
 
 class TestSuggestTableLayoutGeneric:

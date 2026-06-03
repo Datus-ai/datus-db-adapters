@@ -432,17 +432,47 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
                 "supported": True,
                 "dialect_family": "trino-iceberg",
                 "requires": [],
-                "forbids": ["DUPLICATE KEY (StarRocks)", "ENGINE = ... (ClickHouse/MySQL)"],
+                "forbids": [
+                    "DUPLICATE KEY (StarRocks)",
+                    "ENGINE = ... (ClickHouse/MySQL)",
+                    "checkpoint_interval (Delta Lake-only; Iceberg uses snapshot_id checkpoints)",
+                ],
                 "type_hints": {
                     "partitioning": "Use WITH (partitioning = ARRAY['month(ds)', 'bucket(id, 4)'])",
-                    "format": "Default format is PARQUET; ORC also supported",
+                    "sorted_by": "Use WITH (sorted_by = ARRAY['col']) to sort data written to each file",
+                    "format": "Use WITH (format = 'PARQUET'|'ORC'|'AVRO'); default is PARQUET",
                     "location": "Optional WITH (location = 's3://...') for custom table location",
+                    "snapshot_checkpoint": (
+                        "Persist the last processed Iceberg snapshot_id externally; do not add "
+                        "checkpoint_interval to Iceberg CREATE TABLE DDL"
+                    ),
+                    "change_reads": (
+                        "Use TABLE(system.table_changes(... start_snapshot_id => N, "
+                        "end_snapshot_id => M)) to read per-snapshot changes"
+                    ),
+                },
+                "checkpointing": {
+                    "mode": "iceberg_snapshot",
+                    "checkpoint_key": "snapshot_id",
+                    "latest_checkpoint_sql": (
+                        'SELECT snapshot_id FROM catalog.schema."table$snapshots" ORDER BY committed_at DESC LIMIT 1'
+                    ),
+                    "changes_since_checkpoint_sql": (
+                        "SELECT * FROM TABLE(system.table_changes("
+                        "schema_name => '<schema>', table_name => '<table>', "
+                        "start_snapshot_id => <last_snapshot_id>, "
+                        "end_snapshot_id => <current_snapshot_id>))"
+                    ),
+                    "note": (
+                        "Trino Iceberg exposes snapshots as checkpoints; checkpoint_interval is a "
+                        "Delta Lake table property, not an Iceberg table property."
+                    ),
                 },
                 "example_ddl": (
                     "CREATE TABLE catalog.schema.t (\n"
                     "  id BIGINT,\n"
                     "  ds DATE\n"
-                    ") WITH (partitioning = ARRAY['month(ds)'])"
+                    ") WITH (format = 'PARQUET', partitioning = ARRAY['month(ds)'])"
                 ),
             }
         if catalog_type == "delta":
@@ -500,9 +530,10 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
             return layout
         if catalog_type == "iceberg":
             partition_cols = [c["name"] for c in columns if c["name"].lower() in ("ds", "dt", "partition_date")]
+            layout = {"format": "PARQUET"}
             if partition_cols:
-                return {"partitioning": [f"month({partition_cols[0]})"]}
-            return {}
+                layout["partitioning"] = [f"month({partition_cols[0]})"]
+            return layout
         return {}
 
     def validate_ddl(self, ddl: str) -> List[str]:
@@ -517,6 +548,23 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
             )
         if "ENGINE =" in upper or "ENGINE=" in upper:
             errors.append("ENGINE clause is MySQL/ClickHouse syntax; Trino uses WITH (...) table properties")
+
+        if "CHECKPOINT_INTERVAL" in upper or "PARTITIONED_BY" in upper:
+            try:
+                catalog_type = self._detect_catalog_type()
+            except Exception:
+                catalog_type = "unknown"
+
+            if catalog_type == "iceberg":
+                if "CHECKPOINT_INTERVAL" in upper:
+                    errors.append(
+                        "checkpoint_interval is a Delta Lake table property; Trino Iceberg uses snapshot_id values "
+                        'from the "$snapshots" metadata table as checkpoints'
+                    )
+                if "PARTITIONED_BY" in upper:
+                    errors.append(
+                        "Iceberg catalogs use WITH (partitioning = ARRAY[...]); partitioned_by is not supported"
+                    )
         return errors
 
     def map_source_type(self, source_dialect: str, source_type: str) -> Optional[str]:
