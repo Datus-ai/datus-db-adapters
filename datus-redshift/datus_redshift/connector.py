@@ -833,6 +833,21 @@ class RedshiftConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedView
             raise _handle_redshift_exception(e, sql)
 
     @override
+    @staticmethod
+    def _qualify_name(meta, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the row carries that coordinate.
+        """
+        parts = []
+        if not arg_db and meta.get("database_name"):
+            parts.append(meta["database_name"])
+        if not arg_schema and meta.get("schema_name"):
+            parts.append(meta["schema_name"])
+        parts.append(meta["table_name"])
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """
         Get list of table names.
@@ -851,7 +866,7 @@ class RedshiftConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedView
             schema_name=schema_name,
             table_type="table",
         )
-        return [item["table_name"] for item in tables]
+        return [self._qualify_name(item, database_name, schema_name) for item in tables]
 
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """
@@ -871,7 +886,7 @@ class RedshiftConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedView
             schema_name=schema_name,
             table_type="view",
         )
-        return [view["table_name"] for view in views]
+        return [self._qualify_name(view, database_name, schema_name) for view in views]
 
     def get_materialized_views(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
@@ -893,7 +908,7 @@ class RedshiftConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedView
             schema_name=schema_name,
             table_type="mv",
         )
-        return [mv["table_name"] for mv in mvs]
+        return [self._qualify_name(mv, database_name, schema_name) for mv in mvs]
 
     def _get_tables_per_schema(
         self,

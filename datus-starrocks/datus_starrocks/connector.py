@@ -266,17 +266,32 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         return result
 
     @override
+    @staticmethod
+    def _qualify_name(meta, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the row carries that coordinate.
+        """
+        parts = []
+        if not arg_db and meta.get("database_name"):
+            parts.append(meta["database_name"])
+        if not arg_schema and meta.get("schema_name"):
+            parts.append(meta["schema_name"])
+        parts.append(meta["table_name"])
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of table names."""
         result = self._get_metadata(table_type="table", catalog_name=catalog_name, database_name=database_name)
-        return [table["table_name"] for table in result]
+        return [self._qualify_name(table, database_name, schema_name) for table in result]
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of view names."""
         try:
             result = self._get_metadata(table_type="view", catalog_name=catalog_name, database_name=database_name)
-            return [view["table_name"] for view in result]
+            return [self._qualify_name(view, database_name, schema_name) for view in result]
         except Exception as e:
             logger.warning(f"Failed to get views: {e}")
             return []
@@ -287,7 +302,7 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         """Get list of materialized view names."""
         try:
             result = self._get_metadata(table_type="mv", catalog_name=catalog_name, database_name=database_name)
-            return [mv["table_name"] for mv in result]
+            return [self._qualify_name(mv, database_name, schema_name) for mv in result]
         except Exception as e:
             logger.warning(f"Failed to get materialized views: {e}")
             return []

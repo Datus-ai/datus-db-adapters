@@ -123,21 +123,38 @@ class HiveConnector(SQLAlchemyConnector):
         return {"information_schema", "sys"}
 
     @override
+    @staticmethod
+    def _qualify(name, real_db, real_schema, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the connector resolved that coordinate.
+        """
+        parts = []
+        if not arg_db and real_db:
+            parts.append(real_db)
+        if not arg_schema and real_schema:
+            parts.append(real_schema)
+        parts.append(name)
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of tables."""
         self.connect()
+        arg_db = database_name
         database_name = database_name or self.database_name
         if database_name:
             sql = f"SHOW TABLES IN {self.quote_identifier(database_name)}"
         else:
             sql = "SHOW TABLES"
         result = self._execute_pandas(sql)
-        return self._extract_table_names(result)
+        return [self._qualify(name, database_name, "", arg_db, "") for name in self._extract_table_names(result)]
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of views."""
         self.connect()
+        arg_db = database_name
         database_name = database_name or self.database_name
         if database_name:
             sql = f"SHOW VIEWS IN {self.quote_identifier(database_name)}"
@@ -148,7 +165,7 @@ class HiveConnector(SQLAlchemyConnector):
         except Exception as exc:
             logger.warning("Failed to get Hive views: %s", exc)
             return []
-        return self._extract_table_names(result)
+        return [self._qualify(name, database_name, "", arg_db, "") for name in self._extract_table_names(result)]
 
     @override
     def get_schema(
