@@ -18,6 +18,7 @@ dependencies = [
     "redshift_connector>=2.0.0",
     "pydantic>=2.0.0",
     "pyarrow>=14.0.0",
+    "pandas>=2.1.4",
 ]
 
 [project.optional-dependencies]
