@@ -1,6 +1,6 @@
 [project]
 name = "datus-mysql"
-version = "0.1.7"
+version = "0.1.8"
 description = "MySQL database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
