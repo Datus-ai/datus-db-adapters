@@ -652,10 +652,11 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         inspector = self._inspector()
         try:
             if hasattr(inspector, "get_materialized_view_names"):
-                real_schema = schema_name or getattr(inspector, "default_schema_name", "") or ""
+                sqlalchemy_schema = self._sqlalchemy_schema(catalog_name, database_name, schema_name)
+                real_schema = sqlalchemy_schema or getattr(inspector, "default_schema_name", "") or ""
                 return [
-                    self._qualify(name, "", real_schema, "", schema_name)
-                    for name in inspector.get_materialized_view_names(schema=schema_name if schema_name else None)
+                    self._qualify(name, "", real_schema, "", sqlalchemy_schema)
+                    for name in inspector.get_materialized_view_names(schema=sqlalchemy_schema)
                 ]
             return []
         except Exception as e:
