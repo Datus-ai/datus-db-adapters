@@ -689,7 +689,11 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                         logger.debug(f"Materialized views not supported: {e}")
 
             logger.info(f"Getting sample data from {len(tables)} tables, limit {top_n}")
-            for table_name in tables:
+            for listed_name in tables:
+                # get_tables/get_views/get_materialized_views now return qualified
+                # ``[db.][schema.]table`` names; strip back to the bare table so
+                # full_name()/identifier() don't double-qualify the coordinates.
+                table_name = listed_name.split(".")[-1]
                 full_name = self.full_name(catalog_name, database_name, schema_name, table_name)
                 query = f"SELECT * FROM {full_name} LIMIT {top_n}"
                 result = self._execute_pandas(query)
