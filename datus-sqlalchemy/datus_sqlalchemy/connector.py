@@ -560,18 +560,41 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         except Exception as e:
             raise self._handle_exception(e, operation="inspector creation") from e
 
+    @staticmethod
+    def _qualify(name, real_db, real_schema, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the connector resolved that coordinate.
+        """
+        parts = []
+        if not arg_db and real_db:
+            parts.append(real_db)
+        if not arg_schema and real_schema:
+            parts.append(real_schema)
+        parts.append(name)
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of tables."""
         sqlalchemy_schema = self._sqlalchemy_schema(catalog_name, database_name, schema_name)
         inspector = self._inspector()
-        return inspector.get_table_names(schema=sqlalchemy_schema)
+        real_schema = sqlalchemy_schema or getattr(inspector, "default_schema_name", "") or ""
+        return [
+            self._qualify(name, "", real_schema, "", sqlalchemy_schema)
+            for name in inspector.get_table_names(schema=sqlalchemy_schema)
+        ]
 
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of views."""
         sqlalchemy_schema = self._sqlalchemy_schema(catalog_name, database_name, schema_name)
         inspector = self._inspector()
         try:
-            return inspector.get_view_names(schema=sqlalchemy_schema)
+            real_schema = sqlalchemy_schema or getattr(inspector, "default_schema_name", "") or ""
+            return [
+                self._qualify(name, "", real_schema, "", sqlalchemy_schema)
+                for name in inspector.get_view_names(schema=sqlalchemy_schema)
+            ]
         except Exception as e:
             raise DatusDbException(
                 ErrorCode.DB_FAILED,
@@ -629,7 +652,12 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         inspector = self._inspector()
         try:
             if hasattr(inspector, "get_materialized_view_names"):
-                return inspector.get_materialized_view_names(schema=schema_name if schema_name else None)
+                sqlalchemy_schema = self._sqlalchemy_schema(catalog_name, database_name, schema_name)
+                real_schema = sqlalchemy_schema or getattr(inspector, "default_schema_name", "") or ""
+                return [
+                    self._qualify(name, "", real_schema, "", sqlalchemy_schema)
+                    for name in inspector.get_materialized_view_names(schema=sqlalchemy_schema)
+                ]
             return []
         except Exception as e:
             logger.debug(f"Materialized views not supported: {str(e)}")
@@ -661,7 +689,11 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                         logger.debug(f"Materialized views not supported: {e}")
 
             logger.info(f"Getting sample data from {len(tables)} tables, limit {top_n}")
-            for table_name in tables:
+            for listed_name in tables:
+                # get_tables/get_views/get_materialized_views now return qualified
+                # ``[db.][schema.]table`` names; strip back to the bare table so
+                # full_name()/identifier() don't double-qualify the coordinates.
+                table_name = listed_name.split(".")[-1]
                 full_name = self.full_name(catalog_name, database_name, schema_name, table_name)
                 query = f"SELECT * FROM {full_name} LIMIT {top_n}"
                 result = self._execute_pandas(query)

@@ -661,6 +661,21 @@ class ClickZettaConnector:
         except DatusDbException:
             return [self.schema_name] if self.schema_name else []
 
+    @staticmethod
+    def _qualify(name, real_db, real_schema, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the connector resolved that coordinate.
+        """
+        parts = []
+        if not arg_db and real_db:
+            parts.append(real_db)
+        if not arg_schema and real_schema:
+            parts.append(real_schema)
+        parts.append(name)
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         workspace = database_name or self.database_name
         schema = self._normalized_schema(schema_name)
@@ -675,7 +690,11 @@ class ClickZettaConnector:
         if df.empty:
             return []
         valid_types = {"MANAGED_TABLE", "EXTERNAL_TABLE", "BASE TABLE", "TABLE"}
-        return [row.table_name for row in df.itertuples() if str(row.table_type).upper() in valid_types]
+        return [
+            self._qualify(row.table_name, workspace, schema, database_name, schema_name)
+            for row in df.itertuples()
+            if str(row.table_type).upper() in valid_types
+        ]
 
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         workspace = database_name or self.database_name
@@ -692,7 +711,11 @@ class ClickZettaConnector:
             if df.empty:
                 return []
             view_types = {"VIEW", "DYNAMIC_TABLE"}
-            return [row.table_name for row in df.itertuples() if str(row.table_type).upper() in view_types]
+            return [
+                self._qualify(row.table_name, workspace, schema, database_name, schema_name)
+                for row in df.itertuples()
+                if str(row.table_type).upper() in view_types
+            ]
         except DatusDbException:
             return []
 
@@ -712,7 +735,11 @@ class ClickZettaConnector:
             df = self._run_query(sql)
             if df.empty:
                 return []
-            return [row.table_name for row in df.itertuples() if str(row.table_type).upper() == "MATERIALIZED_VIEW"]
+            return [
+                self._qualify(row.table_name, workspace, schema, database_name, schema_name)
+                for row in df.itertuples()
+                if str(row.table_type).upper() == "MATERIALIZED_VIEW"
+            ]
         except DatusDbException:
             return []
 

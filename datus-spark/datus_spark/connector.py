@@ -109,6 +109,21 @@ class SparkConnector(SQLAlchemyConnector):
         return []
 
     @override
+    @staticmethod
+    def _qualify(name, real_db, real_schema, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the connector resolved that coordinate.
+        """
+        parts = []
+        if not arg_db and real_db:
+            parts.append(real_db)
+        if not arg_schema and real_schema:
+            parts.append(real_schema)
+        parts.append(name)
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of table names."""
         db = database_name or self.database_name
@@ -121,7 +136,7 @@ class SparkConnector(SQLAlchemyConnector):
             name_col = result.columns[1]
         else:
             name_col = result.columns[0]
-        return result[name_col].tolist()
+        return [self._qualify(name, db, "", database_name, "") for name in result[name_col].tolist()]
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
@@ -135,7 +150,7 @@ class SparkConnector(SQLAlchemyConnector):
                 name_col = result.columns[1]
             else:
                 name_col = result.columns[0]
-            return result[name_col].tolist()
+            return [self._qualify(name, db, "", database_name, "") for name in result[name_col].tolist()]
         except Exception as e:
             logger.warning(f"Failed to get views: {e}")
             return []

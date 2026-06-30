@@ -12,12 +12,14 @@ import pytest
 def test_tpch_get_tables(tpch_setup):
     """Test that TPC-H tables exist."""
     tables = tpch_setup.get_tables()
+    ws = tpch_setup.database_name
+    schema = tpch_setup.schema_name
     expected = {
-        "tpch_region",
-        "tpch_nation",
-        "tpch_customer",
-        "tpch_orders",
-        "tpch_supplier",
+        f"{ws}.{schema}.tpch_region".lower(),
+        f"{ws}.{schema}.tpch_nation".lower(),
+        f"{ws}.{schema}.tpch_customer".lower(),
+        f"{ws}.{schema}.tpch_orders".lower(),
+        f"{ws}.{schema}.tpch_supplier".lower(),
     }
     table_set = {t.lower() for t in tables}
     assert expected.issubset(table_set), f"Missing tables: {expected - table_set}"

@@ -155,6 +155,21 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         return schemas
 
     @override
+    @staticmethod
+    def _qualify(name, real_db, real_schema, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the connector resolved that coordinate.
+        """
+        parts = []
+        if not arg_db and real_db:
+            parts.append(real_db)
+        if not arg_schema and real_schema:
+            parts.append(real_schema)
+        parts.append(name)
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of table names."""
         catalog = catalog_name or self.catalog_name
@@ -162,7 +177,10 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         result = self._execute_pandas(f'SHOW TABLES FROM "{catalog}"."{schema}"')
         if result.empty:
             return []
-        return result.iloc[:, 0].tolist()
+        return [
+            self._qualify(name, catalog, schema, catalog_name, schema_name or database_name)
+            for name in result.iloc[:, 0].tolist()
+        ]
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
@@ -176,7 +194,10 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
             )
             if result.empty:
                 return []
-            return result.iloc[:, 0].tolist()
+            return [
+                self._qualify(name, catalog, schema, catalog_name, schema_name or database_name)
+                for name in result.iloc[:, 0].tolist()
+            ]
         except Exception as e:
             logger.warning(f"Failed to get views: {e}")
             return []

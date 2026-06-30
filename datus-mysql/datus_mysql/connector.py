@@ -236,9 +236,27 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         return result
 
     @override
+    @staticmethod
+    def _qualify_name(meta, arg_db, arg_schema):
+        """Prefix the table with the db/schema levels the caller left blank.
+
+        Yields ``[db.][schema.]table`` so an unscoped listing stays addressable; a level is
+        prepended only when the caller passed it empty and the row carries that coordinate.
+        """
+        parts = []
+        if not arg_db and meta.get("database_name"):
+            parts.append(meta["database_name"])
+        if not arg_schema and meta.get("schema_name"):
+            parts.append(meta["schema_name"])
+        parts.append(meta["table_name"])
+        return ".".join(parts)
+
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of table names."""
-        return [meta["table_name"] for meta in self._get_metadata("table", catalog_name, database_name)]
+        return [
+            self._qualify_name(meta, database_name, schema_name)
+            for meta in self._get_metadata("table", catalog_name, database_name)
+        ]
 
     @override
     def get_tables_with_ddl(

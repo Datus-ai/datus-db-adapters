@@ -25,12 +25,14 @@ S = TPCH_SCHEMA
 def test_tpch_get_tables(tpch_setup: RedshiftConnector):
     """Test that TPC-H tables exist in the database."""
     tables = tpch_setup.get_tables()
+    db = tpch_setup.database_name
+    schema = tpch_setup.schema_name
     expected = {
-        "tpch_region",
-        "tpch_nation",
-        "tpch_customer",
-        "tpch_orders",
-        "tpch_supplier",
+        f"{db}.{schema}.tpch_region",
+        f"{db}.{schema}.tpch_nation",
+        f"{db}.{schema}.tpch_customer",
+        f"{db}.{schema}.tpch_orders",
+        f"{db}.{schema}.tpch_supplier",
     }
     table_set = set(tables)
     assert expected.issubset(table_set), f"Missing tables: {expected - table_set}"
