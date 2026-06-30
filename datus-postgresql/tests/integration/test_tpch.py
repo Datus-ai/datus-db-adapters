@@ -128,17 +128,21 @@ class TestTpchMetadata:
     """Validate metadata retrieval for TPC-H tables."""
 
     def test_get_tables_includes_tpch(self, tpch_setup):
-        """get_tables() should return TPC-H tables."""
+        """get_tables() should return TPC-H tables qualified with the database name.
+
+        Only ``schema_name`` is passed, so the listing prefixes the unscoped database
+        level, yielding ``<database>.<table>``.
+        """
         tables = tpch_setup.get_tables(schema_name="public")
-        tpch_tables = {t for t in tables if t.startswith("tpch_")}
+        db = tpch_setup.database_name
         expected = {
-            "tpch_region",
-            "tpch_nation",
-            "tpch_supplier",
-            "tpch_customer",
-            "tpch_orders",
+            f"{db}.tpch_region",
+            f"{db}.tpch_nation",
+            f"{db}.tpch_supplier",
+            f"{db}.tpch_customer",
+            f"{db}.tpch_orders",
         }
-        assert expected.issubset(tpch_tables)
+        assert expected.issubset(set(tables))
 
     def test_get_schema_columns(self, tpch_setup):
         """get_schema() should return correct columns for tpch_region."""
