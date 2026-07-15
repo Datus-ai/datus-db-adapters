@@ -60,7 +60,7 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         )
 
         self._verify_ssl = config.verify
-
+        self._http_scheme = config.http_scheme
         self.dialect = TRINO_DIALECT
         self._default_catalog = config.catalog
         self._default_schema = config.schema_name
@@ -83,7 +83,7 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
                 pool_timeout=self.timeout_seconds,
                 pool_recycle=3600,
                 pool_pre_ping=True,
-                connect_args={"verify": self._verify_ssl},
+                connect_args={"verify": self._verify_ssl,"http_scheme": self._http_scheme},
             )
             self._owns_engine = True
             return self.engine
