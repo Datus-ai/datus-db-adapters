@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ALL_ADAPTERS=(postgresql mysql clickhouse starrocks trino greenplum hive spark)
+ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 
@@ -147,6 +147,7 @@ adapter_services() {
     mysql) echo "mysql:300" ;;
     clickhouse) echo "clickhouse:300" ;;
     starrocks) echo "starrocks:600" ;;
+    doris) echo "doris-fe:600 doris-be:600 hive-metastore:600" ;;
     trino) echo "trino:300" ;;
     greenplum) echo "greenplum:600" ;;
     hive) echo "hive-metastore:600 hive-server:900" ;;
@@ -204,6 +205,17 @@ export_adapter_env() {
       export STARROCKS_CATALOG="default_catalog"
       export STARROCKS_DATABASE="test"
       ;;
+    doris)
+      export DORIS_QUERY_HOST_PORT="${DORIS_QUERY_HOST_PORT:-49030}"
+      export DORIS_HTTP_HOST_PORT="${DORIS_HTTP_HOST_PORT:-48030}"
+      export DORIS_HOST="127.0.0.1"
+      export DORIS_PORT="$DORIS_QUERY_HOST_PORT"
+      export DORIS_USER="root"
+      export DORIS_PASSWORD=""
+      export DORIS_CATALOG="internal"
+      export DORIS_DATABASE="test"
+      export HIVE_METASTORE_URI="thrift://hive-metastore:9083"
+      ;;
     trino)
       export TRINO_HOST_PORT="${TRINO_HOST_PORT:-28080}"
       export TRINO_HOST="127.0.0.1"
@@ -252,6 +264,7 @@ adapter_env_summary() {
     mysql) echo "env: MYSQL_HOST=$MYSQL_HOST MYSQL_PORT=$MYSQL_PORT MYSQL_DATABASE=$MYSQL_DATABASE" ;;
     clickhouse) echo "env: CLICKHOUSE_HOST=$CLICKHOUSE_HOST CLICKHOUSE_PORT=$CLICKHOUSE_PORT CLICKHOUSE_DATABASE=$CLICKHOUSE_DATABASE" ;;
     starrocks) echo "env: STARROCKS_HOST=$STARROCKS_HOST STARROCKS_PORT=$STARROCKS_PORT STARROCKS_CATALOG=$STARROCKS_CATALOG STARROCKS_DATABASE=$STARROCKS_DATABASE" ;;
+    doris) echo "env: DORIS_HOST=$DORIS_HOST DORIS_PORT=$DORIS_PORT DORIS_CATALOG=$DORIS_CATALOG DORIS_DATABASE=$DORIS_DATABASE" ;;
     trino) echo "env: TRINO_HOST=$TRINO_HOST TRINO_PORT=$TRINO_PORT TRINO_CATALOG=$TRINO_CATALOG TRINO_SCHEMA=$TRINO_SCHEMA" ;;
     greenplum) echo "env: GREENPLUM_HOST=$GREENPLUM_HOST GREENPLUM_PORT=$GREENPLUM_PORT GREENPLUM_DATABASE=$GREENPLUM_DATABASE GREENPLUM_SCHEMA=$GREENPLUM_SCHEMA" ;;
     hive) echo "env: HIVE_HOST=$HIVE_HOST HIVE_PORT=$HIVE_PORT HIVE_DATABASE=$HIVE_DATABASE" ;;
@@ -384,6 +397,9 @@ wait_for_adapter_client_readiness() {
       ;;
     starrocks)
       uv run --package datus-starrocks python datus-starrocks/scripts/wait_for_starrocks.py --timeout "${STARROCKS_READY_TIMEOUT:-300}"
+      ;;
+    doris)
+      uv run --package datus-doris python datus-doris/scripts/wait_for_doris.py --timeout "${DORIS_READY_TIMEOUT:-600}"
       ;;
     trino)
       wait_for_python_connector_readiness "trino" "datus-trino"
@@ -569,7 +585,9 @@ if [ "$changed_mode" -eq 1 ]; then
     [ -n "$adapter" ] && selected_adapters+=("$adapter")
   done < <(adapters_from_changed_files "$changed_base" | awk '!seen[$0]++')
 else
-  selected_adapters=("${requested_adapters[@]}")
+  if [ "${#requested_adapters[@]}" -gt 0 ]; then
+    selected_adapters=("${requested_adapters[@]}")
+  fi
 fi
 
 if [ "${#selected_adapters[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then

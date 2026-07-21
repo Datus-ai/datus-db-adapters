@@ -305,6 +305,7 @@ _KEYWORD_SQL_TYPE_MAP: Dict[str, SQLType] = {
     "PRAGMA": SQLType.METADATA_SHOW,
     "EXPLAIN": SQLType.EXPLAIN,
     "USE": SQLType.CONTENT_SET,
+    "SWITCH": SQLType.CONTENT_SET,
     "SET": SQLType.CONTENT_SET,
     "CALL": SQLType.CONTENT_SET,
     "EXEC": SQLType.CONTENT_SET,
@@ -432,7 +433,7 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     return inferred if inferred else SQLType.UNKNOWN
 
 
-_CONTEXT_CMD_RE = re.compile(r"^\s*(use|set)\b", flags=re.IGNORECASE)
+_CONTEXT_CMD_RE = re.compile(r"^\s*(use|set|switch)\b", flags=re.IGNORECASE)
 
 
 def _identifier_name(value: Any) -> str:
@@ -494,6 +495,18 @@ def parse_context_switch(sql: str, dialect: str) -> Optional[Dict[str, Any]]:
         "raw": statement,
     }
 
+    if command == "SWITCH":
+        switch_match = re.match(r"^\s*SWITCH\s+(.+)$", statement, flags=re.IGNORECASE)
+        if not switch_match:
+            return None
+        remainder = switch_match.group(1).rstrip(";").strip()
+        if not remainder:
+            return None
+        parts = _parse_identifier_sequence(remainder, normalized_dialect)
+        result["catalog_name"] = parts["identifier"] or parts["database"] or parts["catalog"]
+        result["target"] = "catalog"
+        return result
+
     if command == "USE":
         expression = sqlglot.parse_one(statement, dialect=normalized_dialect, error_level=sqlglot.ErrorLevel.IGNORE)
         if not isinstance(expression, expressions.Use):
@@ -544,7 +557,7 @@ def parse_context_switch(sql: str, dialect: str) -> Optional[Dict[str, Any]]:
             result["target"] = "database"
             return result
 
-        if normalized_dialect == "starrocks":
+        if normalized_dialect in ("starrocks", "doris"):
             if catalog or (database and not catalog):
                 result["catalog_name"] = catalog or database
                 result["database_name"] = identifier

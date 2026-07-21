@@ -186,6 +186,9 @@ class TestParseSqlType:
         assert parse_sql_type("SET search_path TO my_schema", "postgres") == SQLType.CONTENT_SET
         assert parse_sql_type("SET catalog my_cat", "starrocks") == SQLType.CONTENT_SET
 
+    def test_switch_catalog_doris(self):
+        assert parse_sql_type("SWITCH internal", "doris") == SQLType.CONTENT_SET
+
     def test_with_cte_select(self):
         assert parse_sql_type("WITH cte AS (SELECT 1) SELECT * FROM cte", "snowflake") == SQLType.SELECT
 
@@ -332,6 +335,26 @@ class TestParseContextSwitch:
         assert result is not None
         assert result["database_name"] == "my_db"
         assert result["target"] == "database"
+
+    def test_use_doris_database(self):
+        result = parse_context_switch("USE my_db", "doris")
+        assert result is not None
+        assert result["database_name"] == "my_db"
+        assert result["target"] == "database"
+
+    def test_use_doris_catalog_database(self):
+        result = parse_context_switch("USE external_catalog.analytics", "doris")
+        assert result is not None
+        assert result["catalog_name"] == "external_catalog"
+        assert result["database_name"] == "analytics"
+        assert result["target"] == "database"
+
+    def test_switch_doris_catalog(self):
+        result = parse_context_switch("SWITCH `external-catalog`;", "doris")
+        assert result is not None
+        assert result["command"] == "SWITCH"
+        assert result["catalog_name"] == "external-catalog"
+        assert result["target"] == "catalog"
 
     def test_raw_preserved(self):
         result = parse_context_switch("USE my_db", "mysql")

@@ -11,6 +11,7 @@ PACKAGE_SPECS=(
   "datus-postgresql:datus-postgresql/tests/unit"
   "datus-clickhouse:datus-clickhouse/tests/unit"
   "datus-starrocks:datus-starrocks/tests/unit"
+  "datus-doris:datus-doris/tests/unit"
   "datus-trino:datus-trino/tests/unit"
   "datus-greenplum:datus-greenplum/tests/unit"
   "datus-hive:datus-hive/tests/unit"
@@ -142,7 +143,9 @@ if [ "$changed_mode" -eq 1 ]; then
     [ -n "$package" ] && selected_packages+=("$package")
   done < <(packages_from_changed_files "$changed_base" | awk '!seen[$0]++')
 else
-  selected_packages=("${requested_packages[@]}")
+  if [ "${#requested_packages[@]}" -gt 0 ]; then
+    selected_packages=("${requested_packages[@]}")
+  fi
 fi
 
 if [ "${#selected_packages[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
