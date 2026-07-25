@@ -20,11 +20,17 @@ class AdapterMetadata:
         connector_class: Type,
         config_class: Optional[Type] = None,
         display_name: Optional[str] = None,
+        parser_dialect: Optional[str] = None,
+        identifier_parser: Optional[Callable] = None,
+        sql_generation_notes: Optional[Any] = None,
     ):
         self.db_type = db_type
         self.connector_class = connector_class
         self.config_class = config_class
         self.display_name = display_name or db_type.capitalize()
+        self.parser_dialect = parser_dialect
+        self.identifier_parser = identifier_parser
+        self.sql_generation_notes = sql_generation_notes
 
     def get_config_fields(self) -> Dict[str, Dict[str, Any]]:
         if not self.config_class:
@@ -89,6 +95,10 @@ class ConnectorRegistry:
         capabilities: Optional[Set[str]] = None,
         uri_builder: Optional[Callable] = None,
         context_resolver: Optional[Callable] = None,
+        *,
+        parser_dialect: Optional[str] = None,
+        identifier_parser: Optional[Callable] = None,
+        sql_generation_notes: Optional[Any] = None,
     ):
         key = cls._resolve_key(db_type)
         with cls._lock:
@@ -107,6 +117,9 @@ class ConnectorRegistry:
                 connector_class=connector_class,
                 config_class=config_class,
                 display_name=display_name,
+                parser_dialect=parser_dialect,
+                identifier_parser=identifier_parser,
+                sql_generation_notes=sql_generation_notes,
             )
         logger.debug(f"Registered connector: {db_type} -> {connector_class.__name__}")
 
@@ -202,6 +215,10 @@ class ConnectorRegistry:
         capabilities: Optional[Set[str]] = None,
         uri_builder: Optional[Callable] = None,
         context_resolver: Optional[Callable] = None,
+        *,
+        parser_dialect: Optional[str] = None,
+        identifier_parser: Optional[Callable] = None,
+        sql_generation_notes: Optional[Any] = None,
     ):
         key = cls._resolve_key(db_type)
         if capabilities is not None:
@@ -210,10 +227,22 @@ class ConnectorRegistry:
             cls._uri_builders[key] = uri_builder
         if context_resolver:
             cls._context_resolvers[key] = context_resolver
+        metadata = cls._metadata.get(key)
+        if metadata:
+            if parser_dialect is not None:
+                metadata.parser_dialect = parser_dialect
+            if identifier_parser is not None:
+                metadata.identifier_parser = identifier_parser
+            if sql_generation_notes is not None:
+                metadata.sql_generation_notes = sql_generation_notes
 
     @classmethod
     def has_capabilities(cls, db_type: str) -> bool:
         return cls._resolve_key(db_type) in cls._capabilities
+
+    @classmethod
+    def get_capabilities(cls, db_type: str) -> Set[str]:
+        return cls._capabilities.get(cls._resolve_key(db_type), set()).copy()
 
     @classmethod
     def support_catalog(cls, db_type: str) -> bool:
@@ -234,6 +263,21 @@ class ConnectorRegistry:
     @classmethod
     def get_context_resolver(cls, db_type: str) -> Optional[Callable]:
         return cls._context_resolvers.get(cls._resolve_key(db_type))
+
+    @classmethod
+    def get_parser_dialect(cls, db_type: str) -> Optional[str]:
+        metadata = cls.get_metadata(db_type)
+        return metadata.parser_dialect if metadata else None
+
+    @classmethod
+    def get_identifier_parser(cls, db_type: str) -> Optional[Callable]:
+        metadata = cls.get_metadata(db_type)
+        return metadata.identifier_parser if metadata else None
+
+    @classmethod
+    def get_sql_generation_notes(cls, db_type: str) -> Optional[Any]:
+        metadata = cls.get_metadata(db_type)
+        return metadata.sql_generation_notes if metadata else None
 
 
 # Global instance

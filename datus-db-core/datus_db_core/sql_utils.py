@@ -19,8 +19,18 @@ _SQLITE = "sqlite"
 _DUCKDB = "duckdb"
 
 
+def _registered_parser_dialect(dialect: str) -> Optional[str]:
+    # Imported lazily to avoid a registry -> connector -> sql_utils cycle.
+    from datus_db_core.registry import connector_registry
+
+    return connector_registry.get_parser_dialect(dialect)
+
+
 def parse_read_dialect(dialect: str = "snowflake") -> str:
     db = (dialect or "").strip().lower()
+    registered = _registered_parser_dialect(db)
+    if registered:
+        return registered
     if db in ("postgres", "postgresql", "redshift", "greenplum"):
         return "postgres"
     if db in ("spark", "databricks", "hive", "starrocks"):
@@ -32,6 +42,9 @@ def parse_read_dialect(dialect: str = "snowflake") -> str:
 
 def parse_dialect(dialect: str = "snowflake") -> str:
     db = (dialect or "").strip().lower()
+    registered = _registered_parser_dialect(db)
+    if registered:
+        return registered
     if db in ("postgres", "postgresql"):
         return "postgres"
     if db in ("mssql", "sqlserver"):

@@ -103,6 +103,20 @@ class TestRegister:
         ConnectorRegistry.register("testdb", DummyConnector, context_resolver=resolver)
         assert ConnectorRegistry.get_context_resolver("testdb") is resolver
 
+    def test_register_with_optional_hooks(self):
+        identifier_parser = MagicMock()
+        notes = MagicMock()
+        ConnectorRegistry.register(
+            "testdb",
+            DummyConnector,
+            parser_dialect="hive",
+            identifier_parser=identifier_parser,
+            sql_generation_notes=notes,
+        )
+        assert ConnectorRegistry.get_parser_dialect("testdb") == "hive"
+        assert ConnectorRegistry.get_identifier_parser("testdb") is identifier_parser
+        assert ConnectorRegistry.get_sql_generation_notes("testdb") is notes
+
 
 class TestCreateConnector:
     def test_create_with_class(self):
@@ -217,6 +231,12 @@ class TestCapabilities:
         assert ConnectorRegistry.support_catalog("testdb")
         assert ConnectorRegistry.support_schema("testdb")
 
+    def test_capabilities_returns_copy(self):
+        ConnectorRegistry.register("testdb", DummyConnector, capabilities={"database"})
+        capabilities = ConnectorRegistry.get_capabilities("testdb")
+        capabilities.add("schema")
+        assert ConnectorRegistry.get_capabilities("testdb") == {"database"}
+
     def test_unregistered_db_no_capabilities(self):
         assert not ConnectorRegistry.support_catalog("unknown_db")
         assert not ConnectorRegistry.support_database("unknown_db")
@@ -263,6 +283,11 @@ class TestListAndQuery:
 
     def test_get_context_resolver_missing(self):
         assert ConnectorRegistry.get_context_resolver("nonexistent") is None
+
+    def test_optional_hooks_missing(self):
+        assert ConnectorRegistry.get_parser_dialect("nonexistent") is None
+        assert ConnectorRegistry.get_identifier_parser("nonexistent") is None
+        assert ConnectorRegistry.get_sql_generation_notes("nonexistent") is None
 
 
 class TestAdapterMetadata:

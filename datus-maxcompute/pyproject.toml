@@ -1,14 +1,14 @@
 [project]
-name = "datus-db-core"
-version = "0.1.5"
-description = "Core database abstractions for Datus adapters"
+name = "datus-maxcompute"
+version = "0.1.0"
+description = "Alibaba Cloud MaxCompute database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "DatusAI", email = "support@datus.ai"}
 ]
-keywords = ["datus", "database", "adapter", "core"]
+keywords = ["datus", "database", "maxcompute", "odps", "adapter"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -18,8 +18,11 @@ classifiers = [
 ]
 
 dependencies = [
+    "datus-db-core>=0.1.5",
+    "pandas>=2.0.0",
+    "pyarrow>=10.0.0",
     "pydantic>=2.0.0",
-    "sqlglot>=20.0.0",
+    "pyodps>=0.13.0",
 ]
 
 [project.urls]
@@ -27,9 +30,15 @@ Homepage = "https://github.com/Datus-ai/datus-db-adapters"
 Repository = "https://github.com/Datus-ai/datus-db-adapters"
 Issues = "https://github.com/Datus-ai/datus-db-adapters/issues"
 
+[project.entry-points."datus.adapters"]
+maxcompute = "datus_maxcompute:register"
+
+[tool.uv.sources]
+datus-db-core = { workspace = true }
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["datus_db_core"]
+packages = ["datus_maxcompute"]

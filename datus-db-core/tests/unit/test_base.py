@@ -13,6 +13,7 @@ from datus_db_core.base import BaseSqlConnector, list_to_in_str, to_sql_literal
 from datus_db_core.config import ConnectionConfig
 from datus_db_core.constants import SQLType
 from datus_db_core.models import ExecuteSQLInput, ExecuteSQLResult
+from datus_db_core.registry import ConnectorRegistry
 
 
 class ConcreteConnector(BaseSqlConnector):
@@ -165,6 +166,19 @@ class TestBaseSqlConnectorInit:
         connector = ConcreteConnector(config=config, dialect="mysql")
         assert connector.dialect == "mysql"
         assert connector.timeout_seconds == 60
+
+    def test_effective_capabilities_default_to_registry(self):
+        original_connectors = ConnectorRegistry._connectors.copy()
+        original_metadata = ConnectorRegistry._metadata.copy()
+        original_capabilities = ConnectorRegistry._capabilities.copy()
+        try:
+            ConnectorRegistry.register("customdb", ConcreteConnector, capabilities={"database", "schema"})
+            connector = ConcreteConnector(dialect="customdb")
+            assert connector.get_effective_capabilities() == {"database", "schema"}
+        finally:
+            ConnectorRegistry._connectors = original_connectors
+            ConnectorRegistry._metadata = original_metadata
+            ConnectorRegistry._capabilities = original_capabilities
 
 
 class TestClose:

@@ -4,7 +4,10 @@
 
 """Unit tests for sql_utils module."""
 
+import pytest
+
 from datus_db_core.constants import SQLType
+from datus_db_core.registry import ConnectorRegistry
 from datus_db_core.sql_utils import (
     _first_statement,
     metadata_identifier,
@@ -14,6 +17,17 @@ from datus_db_core.sql_utils import (
     parse_sql_type,
     strip_sql_comments,
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_registry_metadata():
+    saved_connectors = ConnectorRegistry._connectors.copy()
+    saved_metadata = ConnectorRegistry._metadata.copy()
+    saved_capabilities = ConnectorRegistry._capabilities.copy()
+    yield
+    ConnectorRegistry._connectors = saved_connectors
+    ConnectorRegistry._metadata = saved_metadata
+    ConnectorRegistry._capabilities = saved_capabilities
 
 
 class TestParseReadDialect:
@@ -41,6 +55,10 @@ class TestParseReadDialect:
         assert parse_read_dialect("") == ""
         assert parse_read_dialect(None) == ""
 
+    def test_registered_parser_dialect(self):
+        ConnectorRegistry.register("customdb", object, parser_dialect="hive")
+        assert parse_read_dialect("customdb") == "hive"
+
 
 class TestParseDialect:
     def test_postgres_variants(self):
@@ -54,6 +72,10 @@ class TestParseDialect:
     def test_passthrough(self):
         assert parse_dialect("snowflake") == "snowflake"
         assert parse_dialect("mysql") == "mysql"
+
+    def test_registered_parser_dialect(self):
+        ConnectorRegistry.register("customdb", object, parser_dialect="hive")
+        assert parse_dialect("customdb") == "hive"
 
 
 class TestStripSqlComments:

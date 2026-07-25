@@ -21,6 +21,7 @@ on:
           - datus-spark
           - datus-trino
           - datus-greenplum
+          - datus-maxcompute
       expected_version:
         description: "Expected package version, for example 0.1.5"
         required: true

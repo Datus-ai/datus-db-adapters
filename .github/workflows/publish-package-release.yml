@@ -21,6 +21,7 @@ on:
           - datus-spark
           - datus-trino
           - datus-greenplum
+          - datus-maxcompute
       version:
         description: "Release version. Use auto to publish the latest PyPI version + 0.0.1 without downgrading main."
         required: false

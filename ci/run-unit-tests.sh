@@ -18,6 +18,7 @@ PACKAGE_SPECS=(
   "datus-redshift:datus-redshift/tests/unit"
   "datus-snowflake:datus-snowflake/tests"
   "datus-clickzetta:datus-clickzetta/tests/unit"
+  "datus-maxcompute:datus-maxcompute/tests/unit"
 )
 
 usage() {

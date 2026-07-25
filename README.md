@@ -19,6 +19,7 @@ Plugin Adapters (Independent packages, install as needed)
 └── Native SDK Adapters
     ├── datus-snowflake
     ├── datus-clickzetta
+    ├── datus-maxcompute
 ```
 
 ## Implemented Adapters
@@ -107,6 +108,23 @@ pip install datus-clickzetta
 
 ---
 
+### 6. datus-maxcompute
+Alibaba Cloud MaxCompute adapter (PyODPS).
+
+**Installation**:
+```bash
+pip install datus-maxcompute
+```
+
+**Features**:
+- Automatic two-level (`project.table`) and three-level (`project.schema.table`) namespace detection
+- SQL execution through MaxCompute jobs with explicit per-project namespace hints
+- Unlimited Instance Tunnel reads in Arrow, pandas, list, and CSV formats
+- Tables, views, materialized views, DDL, columns, partitions, and sample-row metadata
+- Dedicated cloud integration coverage for both namespace models
+
+---
+
 ## Development Guide
 
 ### Development Environment Setup
@@ -126,6 +144,7 @@ pip install -e datus-sqlalchemy
 pip install -e datus-mysql
 pip install -e datus-starrocks
 pip install -e datus-snowflake
+pip install -e datus-maxcompute
 ```
 
 **Note**: The root `pyproject.toml` is only for development environment management. End users should install individual packages.
