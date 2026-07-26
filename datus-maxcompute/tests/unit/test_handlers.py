@@ -40,6 +40,31 @@ def test_uri_reads_adapter_fields_from_agent_extra():
     assert resolve_maxcompute_context(config, uri) == ("maxcompute", "", "project_a", "")
 
 
+def test_uri_strips_endpoint_query_and_fragment():
+    config = SimpleNamespace(
+        project="project_a",
+        endpoint="https://service.example/api?token=sensitive#fragment",
+        schema_name="",
+    )
+
+    uri = build_maxcompute_uri(config)
+
+    assert "sensitive" not in uri
+    assert "fragment" not in uri
+    assert "https%3A%2F%2Fservice.example%2Fapi" in uri
+
+
+def test_uri_rejects_endpoint_userinfo():
+    config = SimpleNamespace(
+        project="project_a",
+        endpoint="https://id:secret@service.example/api",
+        schema_name="",
+    )
+
+    with pytest.raises(ValueError, match="user information"):
+        build_maxcompute_uri(config)
+
+
 @pytest.mark.parametrize(
     ("identifier", "expected"),
     [
@@ -57,3 +82,19 @@ def test_parse_identifier_supports_both_namespace_models(identifier, expected):
 def test_parse_identifier_rejects_more_than_three_levels():
     with pytest.raises(ValueError, match="Invalid MaxCompute"):
         parse_maxcompute_identifier("catalog.project.schema.table")
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "project..orders",
+        ".orders",
+        "project.",
+        "`project.orders",
+        '"project.orders',
+        "[project.orders",
+    ],
+)
+def test_parse_identifier_rejects_malformed_components(identifier):
+    with pytest.raises(ValueError, match="Invalid MaxCompute"):
+        parse_maxcompute_identifier(identifier)

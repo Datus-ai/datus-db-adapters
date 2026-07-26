@@ -5,7 +5,7 @@
 """Generic integration hooks exposed by the MaxCompute adapter."""
 
 from typing import Any, Dict, Tuple
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 
 def _clean(value: Any) -> str:
@@ -34,6 +34,19 @@ def build_maxcompute_uri(db_config) -> str:
     """Build a credential-free URI used for datasource identity and context."""
     project = _config_value(db_config, "project", "database")
     endpoint = _config_value(db_config, "endpoint")
+    parsed_endpoint = urlparse(endpoint)
+    if parsed_endpoint.username is not None or parsed_endpoint.password is not None:
+        raise ValueError("MaxCompute endpoint must not contain user information")
+    endpoint = urlunparse(
+        (
+            parsed_endpoint.scheme,
+            parsed_endpoint.netloc,
+            parsed_endpoint.path,
+            parsed_endpoint.params,
+            "",
+            "",
+        )
+    )
     schema = _config_value(db_config, "schema_name", "schema")
     query = {"endpoint": endpoint}
     if schema:
@@ -72,11 +85,15 @@ def parse_maxcompute_identifier(full_table_name: str) -> Dict[str, str]:
 
 
 def _split_identifier(identifier: str) -> list[str]:
+    text = (identifier or "").strip()
+    if not text:
+        return []
+
     parts: list[str] = []
     current: list[str] = []
     quote = ""
     pairs = {"`": "`", '"': '"', "[": "]"}
-    for char in (identifier or "").strip():
+    for char in text:
         if quote:
             if char == quote:
                 quote = ""
@@ -87,14 +104,18 @@ def _split_identifier(identifier: str) -> list[str]:
             quote = pairs[char]
         elif char == ".":
             value = "".join(current).strip()
-            if value:
-                parts.append(value)
+            if not value:
+                raise ValueError(f"Invalid MaxCompute table identifier: {identifier}")
+            parts.append(value)
             current = []
         else:
             current.append(char)
+    if quote:
+        raise ValueError(f"Invalid MaxCompute table identifier: {identifier}")
     value = "".join(current).strip()
-    if value:
-        parts.append(value)
+    if not value:
+        raise ValueError(f"Invalid MaxCompute table identifier: {identifier}")
+    parts.append(value)
     return parts
 
 

@@ -69,7 +69,7 @@ def _coerce_config(config: Union[MaxComputeConfig, Dict[str, Any], BaseModel]) -
     def get(*names: str, default: Any = None) -> Any:
         for name in names:
             value = getattr(config, name, None)
-            if value is not None and value != "":
+            if value is not None and value != "" and not callable(value):
                 return value
         return default
 
@@ -451,21 +451,49 @@ class MaxComputeConnector(BaseSqlConnector):
         objects = list(self._odps.list_tables(project=project, schema=schema or None))
         return project, schema, objects
 
+    @staticmethod
+    def _qualify_listed_name(
+        name: str,
+        project: str,
+        schema: str,
+        requested_project: str,
+        requested_schema: str,
+    ) -> str:
+        parts = []
+        if not requested_project:
+            parts.append(project)
+        if schema and not requested_schema:
+            parts.append(schema)
+        parts.append(name)
+        return ".".join(parts)
+
     @override
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        _, _, objects = self._list_objects(catalog_name, database_name, schema_name)
-        return [table.name for table in objects if self._table_type(table) not in {"VIRTUAL_VIEW", "MATERIALIZED_VIEW"}]
+        project, schema, objects = self._list_objects(catalog_name, database_name, schema_name)
+        return [
+            self._qualify_listed_name(table.name, project, schema, database_name, schema_name)
+            for table in objects
+            if self._table_type(table) not in {"VIRTUAL_VIEW", "MATERIALIZED_VIEW"}
+        ]
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        _, _, objects = self._list_objects(catalog_name, database_name, schema_name)
-        return [table.name for table in objects if self._table_type(table) == "VIRTUAL_VIEW"]
+        project, schema, objects = self._list_objects(catalog_name, database_name, schema_name)
+        return [
+            self._qualify_listed_name(table.name, project, schema, database_name, schema_name)
+            for table in objects
+            if self._table_type(table) == "VIRTUAL_VIEW"
+        ]
 
     def get_materialized_views(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> List[str]:
-        _, _, objects = self._list_objects(catalog_name, database_name, schema_name)
-        return [table.name for table in objects if self._table_type(table) == "MATERIALIZED_VIEW"]
+        project, schema, objects = self._list_objects(catalog_name, database_name, schema_name)
+        return [
+            self._qualify_listed_name(table.name, project, schema, database_name, schema_name)
+            for table in objects
+            if self._table_type(table) == "MATERIALIZED_VIEW"
+        ]
 
     def _resolve_table(
         self,

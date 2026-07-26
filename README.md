@@ -119,7 +119,7 @@ pip install datus-maxcompute
 **Features**:
 - Automatic two-level (`project.table`) and three-level (`project.schema.table`) namespace detection
 - SQL execution through MaxCompute jobs with explicit per-project namespace hints
-- Unlimited Instance Tunnel reads in Arrow, pandas, list, and CSV formats
+- Instance Tunnel reads in Arrow, pandas, list, and CSV formats, with bounded CSV iteration
 - Tables, views, materialized views, DDL, columns, partitions, and sample-row metadata
 - Dedicated cloud integration coverage for both namespace models
 

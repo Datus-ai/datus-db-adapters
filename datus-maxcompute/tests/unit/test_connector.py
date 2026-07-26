@@ -7,10 +7,12 @@ from unittest.mock import MagicMock, patch
 import pyarrow as pa
 import pytest
 from odps.errors import InternalServerError, WaitTimeoutError
+from odps.rest import RestClient
+from pydantic import BaseModel
 
 from datus_db_core import DatusDbException
 from datus_maxcompute import MaxComputeConfig, MaxComputeConnector
-from datus_maxcompute.connector import _TimeoutRestClient
+from datus_maxcompute.connector import _coerce_config, _TimeoutRestClient
 
 
 @pytest.fixture
@@ -112,6 +114,47 @@ def test_connector_configures_local_rest_request_timeout(config):
     assert kwargs["rest_client_kwargs"] == {"timeout_seconds": 30}
 
 
+def test_timeout_rest_client_injects_default_and_preserves_explicit_timeout():
+    client = object.__new__(_TimeoutRestClient)
+    client._request_timeout = (30, 30)
+    with patch.object(RestClient, "request", return_value="ok") as request:
+        assert client.request("https://service.example", "GET") == "ok"
+        request.assert_called_once_with(
+            "https://service.example",
+            "GET",
+            stream=False,
+            timeout=(30, 30),
+        )
+
+        request.reset_mock()
+        client.request("https://service.example", "POST", timeout=(5, 5))
+        request.assert_called_once_with(
+            "https://service.example",
+            "POST",
+            stream=False,
+            timeout=(5, 5),
+        )
+
+
+def test_generic_pydantic_config_ignores_inherited_schema_method():
+    class GenericConfig(BaseModel):
+        project: str
+        endpoint: str
+        access_key_id: str
+        access_key_secret: str
+
+    parsed = _coerce_config(
+        GenericConfig(
+            project="project_a",
+            endpoint="https://service.example/api",
+            access_key_id="id",
+            access_key_secret="secret",
+        )
+    )
+
+    assert parsed.schema_name is None
+
+
 def test_csv_iterator_limits_tunnel_download(config):
     connector, odps = make_connector(config)
     instance, reader = make_instance(pa.table({"id": [1, 2]}))
@@ -192,9 +235,21 @@ def test_lists_objects_by_type(config):
         SimpleNamespace(name="orders_mv", type=SimpleNamespace(value="MATERIALIZED_VIEW")),
     ]
 
-    assert connector.get_tables(schema_name="analytics") == ["orders"]
-    assert connector.get_views(schema_name="analytics") == ["orders_view"]
-    assert connector.get_materialized_views(schema_name="analytics") == ["orders_mv"]
+    assert connector.get_tables(schema_name="analytics") == ["project_a.orders"]
+    assert connector.get_views(database_name="project_a") == ["default.orders_view"]
+    assert connector.get_materialized_views() == ["project_a.default.orders_mv"]
+
+
+def test_listed_names_only_include_namespace_levels_omitted_by_caller(config):
+    connector, odps = make_connector(config)
+    odps.list_tables.return_value = [
+        SimpleNamespace(name="orders", type=SimpleNamespace(value="MANAGED_TABLE")),
+    ]
+
+    assert connector.get_tables() == ["project_a.default.orders"]
+    assert connector.get_tables(database_name="project_a") == ["default.orders"]
+    assert connector.get_tables(schema_name="analytics") == ["project_a.orders"]
+    assert connector.get_tables(database_name="project_a", schema_name="analytics") == ["orders"]
 
 
 def test_get_schema_includes_partition_columns(config):

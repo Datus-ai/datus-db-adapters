@@ -35,14 +35,15 @@ def test_config_accepts_schema_alias():
 
 
 @pytest.mark.parametrize("field", ["project", "endpoint"])
-def test_config_rejects_empty_required_strings(field):
+@pytest.mark.parametrize("empty_value", ["", " "])
+def test_config_rejects_empty_required_strings(field, empty_value):
     values = {
         "project": "project_a",
         "endpoint": "https://service.example/api",
         "access_key_id": "id",
         "access_key_secret": "secret",
     }
-    values[field] = " "
+    values[field] = empty_value
     with pytest.raises(ValidationError):
         MaxComputeConfig(**values)
 
