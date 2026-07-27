@@ -17,7 +17,9 @@ from datus_db_core import (
     DatusDbException,
     ErrorCode,
     ExecuteSQLResult,
+    SQLType,
     get_logger,
+    parse_sql_type,
 )
 
 from .config import MaxComputeConfig
@@ -274,6 +276,18 @@ class MaxComputeConnector(BaseSqlConnector):
         with instance.open_reader(**reader_kwargs) as reader:
             return reader.read_all(count=max_rows)
 
+    def _read_task_result(self, instance, sql_type: SQLType, max_rows: Optional[int] = None) -> pa.Table:
+        """Read text results produced by non-SELECT MaxCompute SQL jobs."""
+        raw_result = str(instance.get_task_result() or "")
+        if sql_type == SQLType.EXPLAIN:
+            stripped_result = raw_result.strip("\r\n")
+            values = [stripped_result] if stripped_result.strip() else []
+        else:
+            values = [line.rstrip() for line in raw_result.splitlines() if line.strip()]
+        if max_rows is not None:
+            values = values[:max_rows]
+        return pa.table({"result": pa.array(values, type=pa.string())})
+
     def _query_arrow(
         self,
         sql: str,
@@ -288,6 +302,9 @@ class MaxComputeConnector(BaseSqlConnector):
             database_name=database_name,
             schema_name=schema_name,
         )
+        sql_type = parse_sql_type(sql, self.dialect)
+        if sql_type in {SQLType.METADATA_SHOW, SQLType.EXPLAIN}:
+            return self._read_task_result(instance, sql_type, max_rows=max_rows)
         return self._read_arrow(instance, max_rows=max_rows)
 
     @staticmethod
@@ -459,6 +476,10 @@ class MaxComputeConnector(BaseSqlConnector):
         requested_project: str,
         requested_schema: str,
     ) -> str:
+        if schema and requested_project and not requested_schema:
+            # MaxCompute parses every two-part identifier as project.table.
+            # Keep the three-level listing unambiguous and round-trippable.
+            return ".".join((project, schema, name))
         parts = []
         if not requested_project:
             parts.append(project)

@@ -71,6 +71,25 @@ def test_namespace_detection_crud_and_metadata(project_env, expected_mode, expec
         assert query.success, query.error
         assert query.sql_return == [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]
 
+        show = connector.execute(
+            {"sql_query": "SHOW TABLES", "result_format": "list"},
+            database_name=connector.project,
+            schema_name=schema_name,
+        )
+        assert show.success, show.error
+        assert any(row["result"] == table_name or row["result"].endswith(f":{table_name}") for row in show.sql_return)
+
+        explain = connector.execute(
+            {
+                "sql_query": f"EXPLAIN SELECT id FROM {full_name} LIMIT 1",
+                "result_format": "list",
+            },
+            database_name=connector.project,
+            schema_name=schema_name,
+        )
+        assert explain.success, explain.error
+        assert explain.sql_return and "job" in explain.sql_return[0]["result"].lower()
+
         preview_rows = list(
             connector.execute_csv_iterator(
                 f"SELECT id, name FROM {full_name} ORDER BY id",

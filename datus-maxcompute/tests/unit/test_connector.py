@@ -167,6 +167,49 @@ def test_csv_iterator_limits_tunnel_download(config):
     reader.read_all.assert_called_once_with(count=1)
 
 
+def test_metadata_show_reads_task_result_without_tunnel(config):
+    connector, odps = make_connector(config)
+    instance, _ = make_instance()
+    instance.get_task_result.return_value = "\norders\ncustomers\n\n"
+    odps.run_sql.return_value = instance
+
+    result = connector.execute({"sql_query": "SHOW TABLES", "result_format": "list"})
+
+    assert result.success
+    assert result.sql_return == [{"result": "orders"}, {"result": "customers"}]
+    assert result.row_count == 2
+    instance.get_task_result.assert_called_once_with()
+    instance.open_reader.assert_not_called()
+
+
+def test_empty_metadata_show_returns_typed_empty_result(config):
+    connector, odps = make_connector(config)
+    instance, _ = make_instance()
+    instance.get_task_result.return_value = "\n"
+    odps.run_sql.return_value = instance
+
+    result = connector.execute_query("SHOW TABLES", result_format="arrow")
+
+    assert result.success
+    assert result.sql_return.num_rows == 0
+    assert result.sql_return.schema.field("result").type == pa.string()
+    instance.open_reader.assert_not_called()
+
+
+def test_explain_preserves_multiline_task_result(config):
+    connector, odps = make_connector(config)
+    instance, _ = make_instance()
+    instance.get_task_result.return_value = "\njob0 is root job\n\n  VALUES: _c0 : {1}\n"
+    odps.run_sql.return_value = instance
+
+    result = connector.execute({"sql_query": "EXPLAIN SELECT 1", "result_format": "list"})
+
+    assert result.success
+    assert result.sql_return == [{"result": "job0 is root job\n\n  VALUES: _c0 : {1}"}]
+    assert result.row_count == 1
+    instance.open_reader.assert_not_called()
+
+
 def test_two_level_query_uses_false_hint_and_no_schema(config):
     explicit = config.model_copy(update={"namespace_mode": "two_level"})
     connector, odps = make_connector(explicit)
@@ -236,20 +279,33 @@ def test_lists_objects_by_type(config):
     ]
 
     assert connector.get_tables(schema_name="analytics") == ["project_a.orders"]
-    assert connector.get_views(database_name="project_a") == ["default.orders_view"]
+    assert connector.get_views(database_name="project_a") == ["project_a.default.orders_view"]
     assert connector.get_materialized_views() == ["project_a.default.orders_mv"]
 
 
-def test_listed_names_only_include_namespace_levels_omitted_by_caller(config):
+def test_listed_names_round_trip_across_context_shapes(config):
     connector, odps = make_connector(config)
     odps.list_tables.return_value = [
         SimpleNamespace(name="orders", type=SimpleNamespace(value="MANAGED_TABLE")),
     ]
 
     assert connector.get_tables() == ["project_a.default.orders"]
-    assert connector.get_tables(database_name="project_a") == ["default.orders"]
+    assert connector.get_tables(database_name="project_a") == ["project_a.default.orders"]
     assert connector.get_tables(schema_name="analytics") == ["project_a.orders"]
     assert connector.get_tables(database_name="project_a", schema_name="analytics") == ["orders"]
+    assert connector.full_name(table_name="project_a.default.orders") == "`project_a`.`default`.`orders`"
+    assert (
+        connector.full_name(database_name="project_a", table_name="project_a.default.orders")
+        == "`project_a`.`default`.`orders`"
+    )
+    assert (
+        connector.full_name(schema_name="analytics", table_name="project_a.orders")
+        == "`project_a`.`analytics`.`orders`"
+    )
+    assert (
+        connector.full_name(database_name="project_a", schema_name="analytics", table_name="orders")
+        == "`project_a`.`analytics`.`orders`"
+    )
 
 
 def test_get_schema_includes_partition_columns(config):
