@@ -37,6 +37,7 @@ from datus_doris.tpch_data import ROW_COUNTS, TPCH_DATA, TPCH_DDL, TPCH_TABLES  
 
 
 def main():
+    """Initialize and verify the Doris TPC-H sample dataset."""
     parser = argparse.ArgumentParser(description="Initialize TPC-H sample data in Doris")
     parser.add_argument(
         "--host",

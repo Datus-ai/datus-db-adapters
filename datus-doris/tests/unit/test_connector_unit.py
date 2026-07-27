@@ -44,18 +44,17 @@ def test_connector_rejects_invalid_config_type():
 
 
 @pytest.mark.parametrize(
-    ("catalog", "database", "mysql_database", "deferred_database", "effective_catalog"),
+    ("catalog", "database", "mysql_database", "effective_catalog"),
     [
-        ("internal", "analytics", "analytics", "", "internal"),
-        ("def", "analytics", "analytics", "", "internal"),
-        ("external", "analytics", "", "analytics", "external"),
+        ("internal", "analytics", "analytics", "internal"),
+        ("def", "analytics", "analytics", "internal"),
+        ("external", "analytics", "", "external"),
     ],
 )
 def test_connector_maps_doris_config_to_mysql(
     catalog,
     database,
     mysql_database,
-    deferred_database,
     effective_catalog,
 ):
     config = DorisConfig(
@@ -77,8 +76,8 @@ def test_connector_maps_doris_config_to_mysql(
         "admin",
     )
     assert mysql_config.database == mysql_database
-    assert connector._deferred_database == deferred_database
     assert connector.catalog_name == effective_catalog
+    assert connector.database_name == database
 
 
 @pytest.mark.parametrize(
@@ -171,6 +170,39 @@ def test_do_switch_context(connector, catalog, database, expected_sql):
     actual_sql = [str(call.args[0].text) for call in conn.execute.call_args_list]
     assert actual_sql == expected_sql
     assert conn.commit.call_count == len(expected_sql)
+
+
+def test_configured_external_database_is_applied_on_checkout():
+    connector = _connector(catalog="external", database="analytics")
+    conn = MagicMock()
+    engine = MagicMock()
+    engine.connect.return_value = conn
+    connector.engine = engine
+    connector._owns_engine = True
+
+    with connector._conn():
+        pass
+
+    actual_sql = [str(call.args[0].text) for call in conn.execute.call_args_list]
+    assert actual_sql == ["SWITCH `external`", "USE `analytics`"]
+
+
+def test_metadata_literals_escape_backslashes_before_quotes(connector):
+    rows = MagicMock()
+    rows.__len__.return_value = 0
+    connector.connect = MagicMock()
+    connector._execute_pandas = MagicMock(return_value=rows)
+    connector._get_materialized_view_metadata = MagicMock(return_value=[])
+    unsafe_name = "db\\'name"
+
+    connector._get_metadata(database_name=unsafe_name)
+    metadata_query = connector._execute_pandas.call_args.args[0]
+    assert "TABLE_SCHEMA = 'db\\\\''name'" in metadata_query
+
+    connector.get_schema(database_name=unsafe_name, table_name=unsafe_name)
+    schema_query = connector._execute_pandas.call_args.args[0]
+    assert "TABLE_SCHEMA = 'db\\\\''name'" in schema_query
+    assert "TABLE_NAME = 'db\\\\''name'" in schema_query
 
 
 def _connector_with_engine() -> DorisConnector:

@@ -20,6 +20,8 @@ classifiers = [
 dependencies = [
     "datus-db-core>=0.1.3",
     "datus-mysql>=0.1.8",
+    "datus-sqlalchemy>=0.1.7",
+    "pymysql>=1.1.1",
     "pydantic>=2.0.0",
 ]
 
@@ -40,6 +42,7 @@ doris = "datus_doris:register"
 [tool.uv.sources]
 datus-db-core = { workspace = true }
 datus-mysql = { workspace = true }
+datus-sqlalchemy = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -80,6 +80,19 @@ def test_validate_ddl_accepts_auto_increment_for_unique_key(connector):
     assert connector.validate_ddl(ddl) == []
 
 
+def test_validate_ddl_ignores_keywords_inside_identifiers_and_comments(connector):
+    ddl = """
+    CREATE TABLE db.t (
+        checksum_value BIGINT,
+        check_flag BOOLEAN
+    )
+    DUPLICATE KEY(checksum_value)
+    DISTRIBUTED BY HASH(checksum_value) BUCKETS 10
+    -- FULLTEXT and CHECK(id > 0) are not active clauses
+    """
+    assert connector.validate_ddl(ddl) == []
+
+
 @pytest.mark.parametrize(
     ("columns", "expected_keys"),
     [

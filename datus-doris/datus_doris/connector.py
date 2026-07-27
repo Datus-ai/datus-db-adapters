@@ -99,8 +99,10 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
             timeout_seconds=config.timeout_seconds,
         )
         super().__init__(mysql_config)
-        self._deferred_database = config.database if needs_catalog_switch else ""
         self._default_catalog = self.default_catalog() if config.catalog in ("", None, "def") else config.catalog
+        # Keep the configured database in connector context even when it must
+        # be omitted from the initial MySQL connection URL. _conn() consumes
+        # this value after switching to the configured external catalog.
         self._default_database = config.database or ""
 
         # Override dialect to Doris
@@ -296,7 +298,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
 
         # Build WHERE clause
         if database_name:
-            safe_db = database_name.replace("'", "''")
+            safe_db = database_name.replace("\\", "\\\\").replace("'", "''")
             where = f"TABLE_SCHEMA = '{safe_db}'"
         else:
             where = list_to_in_str("TABLE_SCHEMA NOT IN", list(self._sys_databases()))
@@ -473,8 +475,8 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
             return []
         current_catalog = self._resolve_catalog(catalog_name)
         database_name = database_name or self.database_name
-        safe_db = database_name.replace("'", "''")
-        safe_table = table_name.replace("'", "''")
+        safe_db = database_name.replace("\\", "\\\\").replace("'", "''")
+        safe_table = table_name.replace("\\", "\\\\").replace("'", "''")
         rows = self._execute_pandas(
             f"""
             SELECT
@@ -558,7 +560,9 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         return quoted_table
 
     @override
-    def _sqlalchemy_schema(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> str:
+    def _sqlalchemy_schema(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> Optional[str]:
         """Get schema name for SQLAlchemy Inspector with catalog support."""
         database_name = database_name or self.database_name
 
@@ -682,6 +686,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
     # ==================== MigrationTargetMixin ====================
 
     def describe_migration_capabilities(self) -> Dict[str, Any]:
+        """Describe Doris-specific DDL and type-mapping requirements."""
         return {
             "supported": True,
             "dialect_family": "mysql-like",
@@ -711,6 +716,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         }
 
     def suggest_table_layout(self, columns: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Suggest Doris duplicate-key and distribution columns."""
         if not columns:
             return {"duplicate_key": [], "distributed_by": [], "buckets": 10}
 
@@ -754,31 +760,36 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         return [name for score, name in scored[:max_keys] if score > 0] or [columns[0]["name"]]
 
     def validate_ddl(self, ddl: str) -> List[str]:
+        """Return Doris compatibility errors for a proposed table DDL."""
         errors: List[str] = []
-        upper = ddl.upper()
+        from datus_db_core.sql_utils import strip_sql_comments
 
-        has_duplicate_key = "DUPLICATE KEY" in upper and "ON DUPLICATE KEY" not in upper
-        if not (has_duplicate_key or any(k in upper for k in ("UNIQUE KEY", "AGGREGATE KEY"))):
+        upper = strip_sql_comments(ddl).upper()
+        has_duplicate_key = bool(re.search(r"\bDUPLICATE\s+KEY\b", upper)) and not re.search(
+            r"\bON\s+DUPLICATE\s+KEY\b", upper
+        )
+        if not (has_duplicate_key or re.search(r"\bUNIQUE\s+KEY\b", upper) or re.search(r"\bAGGREGATE\s+KEY\b", upper)):
             errors.append("Doris DDL must define one of: DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY")
 
-        if "DISTRIBUTED BY" not in upper:
+        if not re.search(r"\bDISTRIBUTED\s+BY\b", upper):
             errors.append("Doris DDL must include a DISTRIBUTED BY clause")
 
-        if "AUTO_INCREMENT" in upper and "UNIQUE KEY" not in upper:
+        if re.search(r"\bAUTO_INCREMENT\b", upper) and not re.search(r"\bUNIQUE\s+KEY\b", upper):
             errors.append("Doris AUTO_INCREMENT columns require a UNIQUE KEY table")
 
-        if "FOREIGN KEY" in upper:
+        if re.search(r"\bFOREIGN\s+KEY\b", upper):
             errors.append("Doris does not support FOREIGN KEY")
 
-        if "FULLTEXT" in upper:
+        if re.search(r"\bFULLTEXT\b", upper):
             errors.append("Doris does not support FULLTEXT indexes")
 
-        if "CHECK" in upper:
+        if re.search(r"\bCHECK\s*\(", upper):
             errors.append("Doris does not support CHECK constraints")
 
         return errors
 
     def map_source_type(self, source_dialect: str, source_type: str) -> str | None:
+        """Map a source type when Doris requires a dialect-specific override."""
         base = source_type.strip().upper()
         # Strip params for matching
         import re as _re

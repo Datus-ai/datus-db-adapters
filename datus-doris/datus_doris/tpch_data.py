@@ -6,8 +6,10 @@
 
 from datus_db_core.testing.tpch import ROW_COUNTS, TPCH_TABLES, build_tpch_inserts
 
-TPCH_DDL = [
-    """
+_TPCH_DDL_ITEMS = [
+    (
+        "tpch_region",
+        """
     CREATE TABLE IF NOT EXISTS `tpch_region` (
         `regionkey` INT NOT NULL,
         `name` VARCHAR(25) NOT NULL,
@@ -17,7 +19,10 @@ TPCH_DDL = [
     DISTRIBUTED BY HASH(`regionkey`) BUCKETS 1
     PROPERTIES ("replication_num" = "1")
     """,
-    """
+    ),
+    (
+        "tpch_nation",
+        """
     CREATE TABLE IF NOT EXISTS `tpch_nation` (
         `nationkey` INT NOT NULL,
         `name` VARCHAR(25) NOT NULL,
@@ -28,7 +33,10 @@ TPCH_DDL = [
     DISTRIBUTED BY HASH(`nationkey`) BUCKETS 1
     PROPERTIES ("replication_num" = "1")
     """,
-    """
+    ),
+    (
+        "tpch_customer",
+        """
     CREATE TABLE IF NOT EXISTS `tpch_customer` (
         `custkey` INT NOT NULL,
         `name` VARCHAR(25) NOT NULL,
@@ -40,7 +48,10 @@ TPCH_DDL = [
     DISTRIBUTED BY HASH(`custkey`) BUCKETS 1
     PROPERTIES ("replication_num" = "1")
     """,
-    """
+    ),
+    (
+        "tpch_orders",
+        """
     CREATE TABLE IF NOT EXISTS `tpch_orders` (
         `orderkey` INT NOT NULL,
         `custkey` INT NOT NULL,
@@ -52,7 +63,10 @@ TPCH_DDL = [
     DISTRIBUTED BY HASH(`orderkey`) BUCKETS 1
     PROPERTIES ("replication_num" = "1")
     """,
-    """
+    ),
+    (
+        "tpch_supplier",
+        """
     CREATE TABLE IF NOT EXISTS `tpch_supplier` (
         `suppkey` INT NOT NULL,
         `name` VARCHAR(25) NOT NULL,
@@ -63,8 +77,13 @@ TPCH_DDL = [
     DISTRIBUTED BY HASH(`suppkey`) BUCKETS 1
     PROPERTIES ("replication_num" = "1")
     """,
+    ),
 ]
 
+if [table for table, _ in _TPCH_DDL_ITEMS] != TPCH_TABLES:
+    raise ValueError("Doris TPC-H DDL order must match the shared TPCH_TABLES order")
+
+TPCH_DDL = [ddl for _, ddl in _TPCH_DDL_ITEMS]
 TPCH_DATA = build_tpch_inserts(lambda t: f"`{t}`")
 
 __all__ = ["TPCH_DDL", "TPCH_DATA", "TPCH_TABLES", "ROW_COUNTS"]

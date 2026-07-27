@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 import pymysql
 
+DORIS_PRIVILEGE_ERROR_CODE = 5203
+
 
 @dataclass(frozen=True)
 class DorisReadinessConfig:
@@ -27,19 +29,23 @@ class DorisReadinessConfig:
 
 
 def quote_identifier(identifier: str) -> str:
+    """Quote a Doris identifier."""
     return "`" + identifier.replace("`", "``") + "`"
 
 
 def table_identifier(catalog: str, database: str, table: str) -> str:
+    """Build a qualified, quoted Doris table identifier."""
     parts = [part for part in (catalog, database, table) if part]
     return ".".join(quote_identifier(part) for part in parts)
 
 
 def is_alive(value: object) -> bool:
+    """Interpret Doris SHOW BACKENDS Alive values."""
     return str(value).strip().lower() in {"true", "1", "yes"}
 
 
 def positive_int(value: str) -> int:
+    """Parse a strictly positive integer argument."""
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be greater than 0")
@@ -47,6 +53,7 @@ def positive_int(value: str) -> int:
 
 
 def positive_float(value: str) -> float:
+    """Parse a strictly positive floating-point argument."""
     parsed = float(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be greater than 0")
@@ -54,6 +61,7 @@ def positive_float(value: str) -> float:
 
 
 def check_doris_ready(config: DorisReadinessConfig) -> str:
+    """Verify connectivity, backend health, and OLAP DDL readiness."""
     backend_detail = "backend status not checked"
     probe_table = f"__datus_doris_readiness_probe_{os.getpid()}_{int(time.time() * 1000)}"
     conn = pymysql.connect(
@@ -77,7 +85,8 @@ def check_doris_ready(config: DorisReadinessConfig) -> str:
             try:
                 cursor.execute("SHOW BACKENDS")
             except pymysql.err.OperationalError as exc:
-                if not exc.args or exc.args[0] != 5203:
+                # Doris reports missing SYSTEM OPERATE/NODE privileges as 5203.
+                if not exc.args or exc.args[0] != DORIS_PRIVILEGE_ERROR_CODE:
                     raise
                 backend_detail = "backend status unavailable without SYSTEM OPERATE/NODE privilege"
             else:
@@ -96,25 +105,37 @@ def check_doris_ready(config: DorisReadinessConfig) -> str:
                     cursor.execute(f"SWITCH {quote_identifier(config.catalog)}")
                 cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(config.database)}")
                 full_probe_table = table_identifier(config.catalog, config.database, probe_table)
-                cursor.execute(
-                    f"""
-                    CREATE TABLE {full_probe_table} (
-                        `id` INT
+                create_error: BaseException | None = None
+                try:
+                    cursor.execute(
+                        f"""
+                        CREATE TABLE {full_probe_table} (
+                            `id` INT
+                        )
+                        ENGINE=OLAP
+                        DUPLICATE KEY(`id`)
+                        DISTRIBUTED BY HASH(`id`) BUCKETS 1
+                        PROPERTIES ("replication_num" = "1")
+                        """
                     )
-                    ENGINE=OLAP
-                    DUPLICATE KEY(`id`)
-                    DISTRIBUTED BY HASH(`id`) BUCKETS 1
-                    PROPERTIES ("replication_num" = "1")
-                    """
-                )
-                cursor.execute(f"DROP TABLE IF EXISTS {full_probe_table}")
-                return f"{backend_detail}; database {config.database!r} accepts OLAP DDL"
+                    return f"{backend_detail}; database {config.database!r} accepts OLAP DDL"
+                except BaseException as exc:
+                    create_error = exc
+                    raise
+                finally:
+                    try:
+                        cursor.execute(f"DROP TABLE IF EXISTS {full_probe_table}")
+                    except Exception as cleanup_error:
+                        if create_error is None:
+                            raise
+                        create_error.add_note(f"Probe-table cleanup also failed: {cleanup_error}")
             return f"{backend_detail}; no database DDL probe requested"
     finally:
         conn.close()
 
 
 def wait_for_doris_ready(config: DorisReadinessConfig, timeout: int, interval: float) -> str:
+    """Poll until Doris passes the readiness probe or timeout expires."""
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
 
@@ -132,6 +153,7 @@ def wait_for_doris_ready(config: DorisReadinessConfig, timeout: int, interval: f
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the readiness-check command-line parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default=os.getenv("DORIS_HOST", "localhost"))
     parser.add_argument("--port", type=int, default=int(os.getenv("DORIS_PORT", "9030")))
@@ -149,6 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Run the Doris readiness-check command."""
     args = build_parser().parse_args()
     config = DorisReadinessConfig(
         host=args.host,

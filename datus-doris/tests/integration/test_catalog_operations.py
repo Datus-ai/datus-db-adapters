@@ -50,13 +50,16 @@ def test_switch_external_catalog_and_restore(
     connector: DorisConnector,
     hive_catalog_setup: str,
 ):
-    original_catalog = connector.catalog_name
+    original_context = connector.get_current_context()
     try:
         connector.switch_catalog(hive_catalog_setup)
         assert connector.catalog_name == hive_catalog_setup
         assert connector.database_name == ""
         assert "default" in connector.get_databases(include_sys=True)
     finally:
-        connector.switch_catalog(original_catalog)
+        connector.switch_context(
+            catalog_name=original_context["catalog_name"],
+            database_name=original_context["database_name"],
+        )
 
-    assert connector.catalog_name == original_catalog
+    assert connector.get_current_context() == original_context
