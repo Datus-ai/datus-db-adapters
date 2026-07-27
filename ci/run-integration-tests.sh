@@ -552,14 +552,36 @@ PY
 
 adapters_from_changed_files() {
   local base_ref="$1"
+  local base_changed_files=""
+  local staged_files=""
+  local unstaged_files=""
+  local untracked_files=""
   local changed_files=""
+
+  if ! base_changed_files="$(git diff --name-only "${base_ref}...HEAD")"; then
+    echo "Unable to determine changed adapters from base ref '$base_ref'." >&2
+    return 1
+  fi
+  if ! staged_files="$(git diff --name-only --cached)"; then
+    echo "Unable to determine staged adapter changes." >&2
+    return 1
+  fi
+  if ! unstaged_files="$(git diff --name-only)"; then
+    echo "Unable to determine unstaged adapter changes." >&2
+    return 1
+  fi
+  if ! untracked_files="$(git ls-files --others --exclude-standard)"; then
+    echo "Unable to determine untracked adapter changes." >&2
+    return 1
+  fi
+
   changed_files="$(
-    {
-      git diff --name-only "${base_ref}...HEAD"
-      git diff --name-only --cached
-      git diff --name-only
-      git ls-files --others --exclude-standard
-    } | awk 'NF && !seen[$0]++'
+    printf '%s\n' \
+      "$base_changed_files" \
+      "$staged_files" \
+      "$unstaged_files" \
+      "$untracked_files" |
+      awk 'NF && !seen[$0]++'
   )"
 
   if [ -z "$changed_files" ]; then
@@ -581,9 +603,13 @@ adapters_from_changed_files() {
 
 selected_adapters=()
 if [ "$changed_mode" -eq 1 ]; then
+  changed_adapters=""
+  if ! changed_adapters="$(adapters_from_changed_files "$changed_base")"; then
+    exit 1
+  fi
   while IFS= read -r adapter; do
     [ -n "$adapter" ] && selected_adapters+=("$adapter")
-  done < <(adapters_from_changed_files "$changed_base" | awk '!seen[$0]++')
+  done < <(printf '%s\n' "$changed_adapters" | awk '!seen[$0]++')
 else
   if [ "${#requested_adapters[@]}" -gt 0 ]; then
     selected_adapters=("${requested_adapters[@]}")
