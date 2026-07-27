@@ -4,110 +4,59 @@
 
 import pytest
 
-from datus_doris import DorisConnector
-
-# ==================== Catalog Tests (CatalogSupportMixin) ====================
+from datus_doris import DorisConfig, DorisConnector
 
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_get_catalogs(connector: DorisConnector):
-    """Test getting list of catalogs."""
+def test_catalog_discovery(connector: DorisConnector):
     catalogs = connector.get_catalogs()
-    assert len(catalogs) > 0
-    assert connector.default_catalog() in catalogs
-
-
-@pytest.mark.integration
-@pytest.mark.acceptance
-def test_default_catalog(connector: DorisConnector):
-    """Test default catalog value."""
     assert connector.default_catalog() == "internal"
+    assert "internal" in catalogs
 
 
 @pytest.mark.integration
-@pytest.mark.acceptance
-def test_switch_catalog(connector: DorisConnector, hive_catalog_setup: str):
-    """Test switching catalogs."""
-    original_catalog = connector.catalog_name
-    try:
-        connector.switch_catalog(hive_catalog_setup)
-        assert connector.catalog_name == hive_catalog_setup
-    finally:
-        connector.switch_catalog(original_catalog)
-    assert connector.catalog_name == original_catalog
-
-
-@pytest.mark.integration
-def test_get_databases_from_default_catalog(connector: DorisConnector):
-    """Test getting databases from default catalog."""
-    # Ensure we're in default catalog
-    connector.switch_catalog(connector.default_catalog())
-
-    databases = connector.get_databases()
-    assert isinstance(databases, list)
-    assert len(databases) > 0
-
-
-@pytest.mark.integration
-def test_get_databases_from_custom_catalog(connector: DorisConnector, hive_catalog_setup: str):
-    """Test getting databases from Hive catalog."""
-    original_catalog = connector.catalog_name
-    try:
-        connector.switch_catalog(hive_catalog_setup)
-        databases = connector.get_databases(catalog_name=hive_catalog_setup)
-        assert "default" in databases
-    finally:
-        connector.switch_catalog(original_catalog)
-
-
-@pytest.mark.integration
-def test_get_databases_exclude_system(connector: DorisConnector):
-    """Test that system databases are excluded by default."""
+def test_default_catalog_databases(
+    connector: DorisConnector,
+    config: DorisConfig,
+):
     databases = connector.get_databases(include_sys=False)
 
-    # System databases should be filtered out
-    system_dbs = ["information_schema", "mysql", "__internal_schema"]
-    for sys_db in system_dbs:
-        assert sys_db not in databases
+    assert config.database in databases
+    assert {
+        "information_schema",
+        "mysql",
+        "__internal_schema",
+    }.isdisjoint(databases)
 
 
 @pytest.mark.integration
-def test_catalog_context_persists(connector: DorisConnector, hive_catalog_setup: str):
-    """Test that catalog context persists across operations."""
-    original_catalog = connector.catalog_name
-    try:
-        connector.switch_catalog(hive_catalog_setup)
+def test_query_external_catalog_without_changing_context(
+    connector: DorisConnector,
+    hive_catalog_setup: str,
+):
+    original_context = connector.get_current_context()
 
-        # Catalog should persist
-        assert connector.catalog_name == hive_catalog_setup
-
-        # Get databases (should use the switched catalog)
-        databases = connector.get_databases()
-        assert isinstance(databases, list)
-
-        # Catalog should still be the same
-        assert connector.catalog_name == hive_catalog_setup
-    finally:
-        connector.switch_catalog(original_catalog)
+    assert "default" in connector.get_databases(
+        catalog_name=hive_catalog_setup,
+        include_sys=True,
+    )
+    assert connector.get_current_context() == original_context
 
 
 @pytest.mark.integration
-def test_switch_back_to_original_catalog(connector: DorisConnector, hive_catalog_setup: str):
-    """Test switching back to original catalog."""
+@pytest.mark.acceptance
+def test_switch_external_catalog_and_restore(
+    connector: DorisConnector,
+    hive_catalog_setup: str,
+):
     original_catalog = connector.catalog_name
-
     try:
-        # Switch to Hive catalog
         connector.switch_catalog(hive_catalog_setup)
         assert connector.catalog_name == hive_catalog_setup
-
-        # Switch back to original
-        connector.switch_catalog(original_catalog)
-        assert connector.catalog_name == original_catalog
-
-        # Verify we can still access databases
-        databases = connector.get_databases()
-        assert isinstance(databases, list)
+        assert connector.database_name == ""
+        assert "default" in connector.get_databases(include_sys=True)
     finally:
         connector.switch_catalog(original_catalog)
+
+    assert connector.catalog_name == original_catalog

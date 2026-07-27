@@ -5,6 +5,7 @@
 import logging
 import os
 import time
+import uuid
 from typing import Generator
 
 import pytest
@@ -32,121 +33,99 @@ def _build_config(database: str | None = None) -> DorisConfig:
 
 
 def _require_success(result, operation: str) -> None:
-    if not result.success:
-        raise RuntimeError(f"{operation} failed: {result.error}")
+    assert result.success, f"{operation} failed: {result.error}"
 
 
 @pytest.fixture(scope="session")
-def hive_catalog_setup() -> Generator[str, None, None]:
-    """Session-scoped fixture: create a Hive external catalog in Doris for catalog tests."""
-    metastore_uri = os.getenv("HIVE_METASTORE_URI", "thrift://hive-metastore:9083")
-    doris_config = _build_config(database="information_schema")
-
-    conn = None
+def database_setup() -> Generator[DorisConfig, None, None]:
+    """Verify Doris and create the test database before running integration tests."""
+    test_config = _build_config()
+    init_conn = DorisConnector(_build_config(database="information_schema"))
     try:
-        conn = DorisConnector(doris_config)
-        if not conn.test_connection():
-            pytest.skip("Doris not available for Hive catalog setup")
-    except Exception as e:
-        pytest.skip(f"Doris not available: {e}")
-
-    try:
-        _require_success(conn.execute_ddl(f"DROP CATALOG IF EXISTS `{HIVE_CATALOG_NAME}`"), "drop Hive catalog")
-        _require_success(
-            conn.execute_ddl(
-                f"""
-            CREATE CATALOG `{HIVE_CATALOG_NAME}`
-            PROPERTIES (
-                "type" = "hms",
-                "hive.metastore.uris" = "{metastore_uri}"
+        assert init_conn.test_connection(), "Doris connection test failed"
+        if test_config.database:
+            _require_success(
+                init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{test_config.database}`"),
+                "create test database",
             )
-            """
-            ),
-            "create Hive catalog",
-        )
-        databases = conn.get_databases(catalog_name=HIVE_CATALOG_NAME, include_sys=True)
-        assert "default" in databases
-        yield HIVE_CATALOG_NAME
     finally:
-        if conn is not None:
-            try:
-                conn.execute_ddl(f"DROP CATALOG IF EXISTS `{HIVE_CATALOG_NAME}`")
-            except Exception:
-                logger.warning("Failed to drop Hive catalog during teardown", exc_info=True)
-            try:
-                conn.close()
-            except Exception:
-                pass
+        init_conn.close()
+
+    yield test_config
 
 
 @pytest.fixture
-def config() -> DorisConfig:
-    """Create Doris configuration from environment or defaults for integration tests."""
-    return _build_config()
+def config(database_setup: DorisConfig) -> DorisConfig:
+    return database_setup.model_copy()
 
 
 @pytest.fixture
 def connector(config: DorisConfig) -> Generator[DorisConnector, None, None]:
-    """Create and cleanup Doris connector for integration tests."""
-    conn = None
-    try:
-        # Ensure test database exists (connect without database first)
-        init_config = DorisConfig(
-            host=config.host,
-            port=config.port,
-            username=config.username,
-            password=config.password,
-            catalog=config.catalog,
-            database="information_schema",
-        )
-        init_conn = DorisConnector(init_config)
-        try:
-            if not init_conn.test_connection():
-                pytest.skip("Database connection test failed")
-            if config.database:
-                init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{config.database}`")
-        finally:
-            init_conn.close()
-
-        conn = DorisConnector(config)
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
-
+    conn = DorisConnector(config)
     try:
         yield conn
     finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                logger.warning("Failed to close connector during teardown", exc_info=True)
+        conn.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def metadata_objects_setup() -> Generator[None, None, None]:
-    """Create deterministic table, view, and async materialized view fixtures."""
-    test_config = _build_config()
-    init_conn = None
-    conn = None
+@pytest.fixture(scope="session")
+def hive_catalog_setup(
+    database_setup: DorisConfig,
+) -> Generator[str, None, None]:
+    """Create a real Hive external catalog for Doris catalog tests."""
+    metastore_uri = os.getenv(
+        "HIVE_METASTORE_URI",
+        "thrift://hive-metastore:9083",
+    )
+    conn = DorisConnector(_build_config(database="information_schema"))
     try:
-        init_conn = DorisConnector(_build_config(database="information_schema"))
-        if not init_conn.test_connection():
-            pytest.skip("Database connection test failed")
         _require_success(
-            init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{test_config.database}`"),
-            "create test database",
+            conn.execute_ddl(f"DROP CATALOG IF EXISTS `{HIVE_CATALOG_NAME}`"),
+            "drop Hive catalog",
         )
-        conn = DorisConnector(test_config)
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
+        _require_success(
+            conn.execute_ddl(
+                f"""
+                CREATE CATALOG `{HIVE_CATALOG_NAME}`
+                PROPERTIES (
+                    "type" = "hms",
+                    "hive.metastore.uris" = "{metastore_uri}"
+                )
+                """
+            ),
+            "create Hive catalog",
+        )
+        assert "default" in conn.get_databases(
+            catalog_name=HIVE_CATALOG_NAME,
+            include_sys=True,
+        )
+        yield HIVE_CATALOG_NAME
     finally:
-        if init_conn is not None:
-            init_conn.close()
+        try:
+            conn.execute_ddl(f"DROP CATALOG IF EXISTS `{HIVE_CATALOG_NAME}`")
+        finally:
+            conn.close()
 
+
+@pytest.fixture(scope="session")
+def metadata_objects_setup(
+    database_setup: DorisConfig,
+) -> Generator[None, None, None]:
+    """Create deterministic table, view, and async materialized-view fixtures."""
+    conn = DorisConnector(database_setup)
     try:
-        _require_success(conn.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS `{METADATA_MV}`"), "drop metadata MV")
-        _require_success(conn.execute_ddl(f"DROP VIEW IF EXISTS `{METADATA_VIEW}`"), "drop metadata view")
-        _require_success(conn.execute_ddl(f"DROP TABLE IF EXISTS `{METADATA_TABLE}`"), "drop metadata table")
+        _require_success(
+            conn.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS `{METADATA_MV}`"),
+            "drop metadata MV",
+        )
+        _require_success(
+            conn.execute_ddl(f"DROP VIEW IF EXISTS `{METADATA_VIEW}`"),
+            "drop metadata view",
+        )
+        _require_success(
+            conn.execute_ddl(f"DROP TABLE IF EXISTS `{METADATA_TABLE}`"),
+            "drop metadata table",
+        )
         _require_success(
             conn.execute_ddl(
                 f"""
@@ -185,7 +164,7 @@ def metadata_objects_setup() -> Generator[None, None, None]:
 
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
-            if METADATA_MV in conn.get_materialized_views(database_name=test_config.database or "test"):
+            if METADATA_MV in conn.get_materialized_views(database_name=database_setup.database or "test"):
                 break
             time.sleep(2)
         else:
@@ -193,69 +172,71 @@ def metadata_objects_setup() -> Generator[None, None, None]:
 
         yield
     finally:
-        if conn is not None:
-            try:
-                conn.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS `{METADATA_MV}`")
-                conn.execute_ddl(f"DROP VIEW IF EXISTS `{METADATA_VIEW}`")
-                conn.execute_ddl(f"DROP TABLE IF EXISTS `{METADATA_TABLE}`")
-            finally:
-                conn.close()
+        try:
+            conn.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS `{METADATA_MV}`")
+            conn.execute_ddl(f"DROP VIEW IF EXISTS `{METADATA_VIEW}`")
+            conn.execute_ddl(f"DROP TABLE IF EXISTS `{METADATA_TABLE}`")
+        finally:
+            conn.close()
+
+
+@pytest.fixture
+def unique_key_table(
+    connector: DorisConnector,
+    config: DorisConfig,
+) -> Generator[str, None, None]:
+    """Create an isolated UNIQUE KEY table for one DML test."""
+    table_name = f"datus_dml_{uuid.uuid4().hex[:8]}"
+    connector.switch_context(database_name=config.database)
+    _require_success(
+        connector.execute_ddl(
+            f"""
+            CREATE TABLE `{table_name}` (
+                `id` BIGINT NOT NULL,
+                `name` VARCHAR(64)
+            ) ENGINE=OLAP
+            UNIQUE KEY (`id`)
+            DISTRIBUTED BY HASH(`id`) BUCKETS 1
+            PROPERTIES (
+                "replication_num" = "1",
+                "enable_unique_key_merge_on_write" = "true"
+            )
+            """
+        ),
+        "create DML test table",
+    )
+    try:
+        yield table_name
+    finally:
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
 
 
 @pytest.fixture(scope="session")
-def tpch_setup() -> Generator[DorisConnector, None, None]:
-    """Session-scoped fixture: create TPC-H tables, insert data, yield connector, cleanup."""
-    tpch_config = _build_config()
-
-    conn = None
-    # Only skip on connection failures; DDL/DML errors should propagate and fail
-    # the suite so they are not silently hidden.
+def tpch_setup(
+    database_setup: DorisConfig,
+) -> Generator[DorisConnector, None, None]:
+    """Create deterministic TPC-H tables and rows for query-contract tests."""
+    conn = DorisConnector(database_setup)
     try:
-        # Ensure test database exists
-        init_config = DorisConfig(
-            host=tpch_config.host,
-            port=tpch_config.port,
-            username=tpch_config.username,
-            password=tpch_config.password,
-            catalog=tpch_config.catalog,
-            database="information_schema",
-        )
-        init_conn = DorisConnector(init_config)
-        try:
-            if not init_conn.test_connection():
-                pytest.skip("Database connection test failed")
-            if tpch_config.database:
-                init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{tpch_config.database}`")
-        finally:
-            init_conn.close()
-
-        conn = DorisConnector(tpch_config)
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
-
-    try:
-        # Drop tables first for deterministic setup.
-        # Errors here are real failures and must not be swallowed.
         for table in TPCH_TABLES:
-            conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`")
-
-        # Create tables
-        for ddl in TPCH_DDL:
-            conn.execute_ddl(ddl)
-
-        # Insert data
-        for data in TPCH_DATA:
-            conn.execute_insert(data)
+            _require_success(
+                conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`"),
+                f"drop TPC-H table {table}",
+            )
+        for index, ddl in enumerate(TPCH_DDL):
+            _require_success(conn.execute_ddl(ddl), f"create TPC-H table {index}")
+        for index, data in enumerate(TPCH_DATA):
+            _require_success(conn.execute_insert(data), f"insert TPC-H rows {index}")
 
         yield conn
     finally:
-        if conn is not None:
-            try:
-                for table in TPCH_TABLES:
-                    conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`")
-            except Exception:
-                logger.warning("Failed to drop TPC-H tables during teardown", exc_info=True)
-            try:
-                conn.close()
-            except Exception:
-                logger.warning("Failed to close connection during teardown", exc_info=True)
+        try:
+            for table in TPCH_TABLES:
+                conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`")
+        except Exception:
+            logger.warning(
+                "Failed to drop TPC-H tables during teardown",
+                exc_info=True,
+            )
+        finally:
+            conn.close()

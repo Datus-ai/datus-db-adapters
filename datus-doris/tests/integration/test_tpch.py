@@ -6,79 +6,50 @@ import pytest
 
 from datus_doris import DorisConnector
 
-# ==================== Metadata Tests ====================
-
 
 @pytest.mark.integration
-def test_tpch_get_tables(tpch_setup: DorisConnector):
-    """Test that TPC-H tables exist in the database."""
-    tables = tpch_setup.get_tables()
-    db = tpch_setup.doris_config.database
-    expected = {
-        f"{db}.tpch_region",
-        f"{db}.tpch_nation",
-        f"{db}.tpch_customer",
-        f"{db}.tpch_orders",
-        f"{db}.tpch_supplier",
+def test_tpch_metadata(tpch_setup: DorisConnector):
+    database = tpch_setup.doris_config.database
+    expected_tables = {
+        f"{database}.tpch_region",
+        f"{database}.tpch_nation",
+        f"{database}.tpch_customer",
+        f"{database}.tpch_orders",
+        f"{database}.tpch_supplier",
     }
-    table_set = set(tables)
-    assert expected.issubset(table_set), f"Missing tables: {expected - table_set}"
+    assert expected_tables.issubset(set(tpch_setup.get_tables()))
 
-
-@pytest.mark.integration
-def test_tpch_get_columns(tpch_setup: DorisConnector):
-    """Test getting column schema for tpch_customer table."""
-    columns = tpch_setup.get_schema(table_name="tpch_customer")
-    assert len(columns) > 0
-    column_names = {col["name"] for col in columns}
-    assert "custkey" in column_names
-    assert "name" in column_names
-    assert "nationkey" in column_names
-    for col in columns:
-        assert "name" in col
-        assert "type" in col
-
-
-@pytest.mark.integration
-def test_tpch_get_columns_nation(tpch_setup: DorisConnector):
-    """Test getting column schema for tpch_nation table."""
-    columns = tpch_setup.get_schema(table_name="tpch_nation")
-    column_names = {col["name"] for col in columns}
-    assert "nationkey" in column_names
-    assert "name" in column_names
-    assert "regionkey" in column_names
-
-
-# ==================== Data Query Tests ====================
+    expected_columns = {
+        "tpch_customer": {"custkey", "name", "nationkey"},
+        "tpch_nation": {"nationkey", "name", "regionkey"},
+    }
+    for table, expected in expected_columns.items():
+        columns = tpch_setup.get_schema(table_name=table)
+        assert expected.issubset({column["name"] for column in columns})
+        assert all("type" in column for column in columns)
 
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_tpch_query_region(tpch_setup: DorisConnector):
-    """Test querying tpch_region - should have 5 regions."""
+@pytest.mark.parametrize(
+    ("table", "expected_rows"),
+    [("tpch_region", 5), ("tpch_nation", 25)],
+)
+def test_tpch_row_counts(
+    tpch_setup: DorisConnector,
+    table: str,
+    expected_rows: int,
+):
     result = tpch_setup.execute(
-        {"sql_query": "SELECT * FROM `tpch_region`"},
+        {"sql_query": f"SELECT * FROM `{table}`"},
         result_format="list",
     )
     assert result.success
-    assert len(result.sql_return) == 5
+    assert len(result.sql_return) == expected_rows
 
 
 @pytest.mark.integration
-@pytest.mark.acceptance
-def test_tpch_query_nation(tpch_setup: DorisConnector):
-    """Test querying tpch_nation - should have 25 nations."""
-    result = tpch_setup.execute(
-        {"sql_query": "SELECT * FROM `tpch_nation`"},
-        result_format="list",
-    )
-    assert result.success
-    assert len(result.sql_return) == 25
-
-
-@pytest.mark.integration
-def test_tpch_query_join(tpch_setup: DorisConnector):
-    """Test JOIN query: nation JOIN region."""
+def test_tpch_join(tpch_setup: DorisConnector):
     result = tpch_setup.execute(
         {
             "sql_query": (
@@ -90,21 +61,22 @@ def test_tpch_query_join(tpch_setup: DorisConnector):
         },
         result_format="list",
     )
+
     assert result.success
     assert len(result.sql_return) == 25
-    # ALGERIA is in AFRICA
-    first_row = result.sql_return[0]
-    assert first_row["nation_name"] == "ALGERIA"
-    assert first_row["region_name"] == "AFRICA"
+    assert result.sql_return[0] == {
+        "nation_name": "ALGERIA",
+        "region_name": "AFRICA",
+    }
 
 
 @pytest.mark.integration
-def test_tpch_query_aggregation(tpch_setup: DorisConnector):
-    """Test aggregation: count nations per region."""
+def test_tpch_aggregation(tpch_setup: DorisConnector):
     result = tpch_setup.execute(
         {
             "sql_query": (
-                "SELECT r.name AS region_name, COUNT(n.nationkey) AS nation_count "
+                "SELECT r.name AS region_name, "
+                "COUNT(n.nationkey) AS nation_count "
                 "FROM `tpch_region` r "
                 "JOIN `tpch_nation` n ON r.regionkey = n.regionkey "
                 "GROUP BY r.name "
@@ -113,15 +85,14 @@ def test_tpch_query_aggregation(tpch_setup: DorisConnector):
         },
         result_format="list",
     )
+
     assert result.success
-    assert len(result.sql_return) == 5  # 5 regions
-    total_nations = sum(row["nation_count"] for row in result.sql_return)
-    assert total_nations == 25  # 25 nations total
+    assert len(result.sql_return) == 5
+    assert sum(row["nation_count"] for row in result.sql_return) == 25
 
 
 @pytest.mark.integration
-def test_tpch_query_customer_orders(tpch_setup: DorisConnector):
-    """Test JOIN query: customer JOIN orders."""
+def test_tpch_customer_orders(tpch_setup: DorisConnector):
     result = tpch_setup.execute(
         {
             "sql_query": (
@@ -136,50 +107,30 @@ def test_tpch_query_customer_orders(tpch_setup: DorisConnector):
         },
         result_format="list",
     )
+
     assert result.success
-    assert len(result.sql_return) > 0
-    assert "order_count" in result.sql_return[0]
-    assert "total_spent" in result.sql_return[0]
-
-
-# ==================== Multi-Format Output Tests ====================
+    assert result.sql_return
+    assert {"order_count", "total_spent"}.issubset(result.sql_return[0])
 
 
 @pytest.mark.integration
-def test_tpch_query_csv_format(tpch_setup: DorisConnector):
-    """Test CSV result format with TPC-H data."""
+@pytest.mark.parametrize("result_format", ["csv", "arrow", "pandas"])
+def test_tpch_result_formats(
+    tpch_setup: DorisConnector,
+    result_format: str,
+):
     result = tpch_setup.execute(
-        {"sql_query": "SELECT regionkey, name FROM `tpch_region` ORDER BY regionkey"},
-        result_format="csv",
+        {"sql_query": ("SELECT regionkey, name FROM `tpch_region` ORDER BY regionkey")},
+        result_format=result_format,
     )
+
     assert result.success
-    assert "AFRICA" in result.sql_return
-    assert "ASIA" in result.sql_return
-
-
-@pytest.mark.integration
-def test_tpch_query_arrow_format(tpch_setup: DorisConnector):
-    """Test Arrow result format with TPC-H data."""
-    result = tpch_setup.execute(
-        {"sql_query": "SELECT regionkey, name FROM `tpch_region` ORDER BY regionkey"},
-        result_format="arrow",
-    )
-    assert result.success
-    arrow_table = result.sql_return
-    assert arrow_table.num_rows == 5
-    assert "regionkey" in arrow_table.column_names
-    assert "name" in arrow_table.column_names
-
-
-@pytest.mark.integration
-def test_tpch_query_pandas_format(tpch_setup: DorisConnector):
-    """Test Pandas DataFrame result format with TPC-H data."""
-    result = tpch_setup.execute(
-        {"sql_query": "SELECT regionkey, name FROM `tpch_region` ORDER BY regionkey"},
-        result_format="pandas",
-    )
-    assert result.success
-    df = result.sql_return
-    assert len(df) == 5
-    assert "regionkey" in df.columns
-    assert "name" in df.columns
+    if result_format == "csv":
+        assert "AFRICA" in result.sql_return
+        assert "ASIA" in result.sql_return
+    elif result_format == "arrow":
+        assert result.sql_return.num_rows == 5
+        assert result.sql_return.column_names == ["regionkey", "name"]
+    else:
+        assert len(result.sql_return) == 5
+        assert list(result.sql_return.columns) == ["regionkey", "name"]
