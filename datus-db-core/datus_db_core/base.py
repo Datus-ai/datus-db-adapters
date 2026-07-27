@@ -266,6 +266,17 @@ class BaseSqlConnector(ABC):
     def get_type(self) -> str:
         return self.dialect
 
+    def get_effective_capabilities(self) -> Set[str]:
+        """Return capabilities for this configured connector instance.
+
+        Most adapters use their registered static capabilities. Adapters whose
+        namespace model depends on the connected service may override this
+        method without requiring callers to know the database type.
+        """
+        from datus_db_core.registry import connector_registry
+
+        return connector_registry.get_capabilities(self.dialect)
+
     @abstractmethod
     def execute_queries(self, queries: List[str]) -> List[Any]:
         raise NotImplementedError()
