@@ -1,0 +1,21 @@
+services:
+  oracle:
+    # Official Oracle Database Free image; pin the tag (no floating latest)
+    image: container-registry.oracle.com/database/free:23.8.0.0
+    environment:
+      ORACLE_PWD: ${ORACLE_SYS_PASSWORD:-test_sys_password}
+    ports:
+      - "${ORACLE_HOST_PORT:-1521}:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 300s
+    volumes:
+      # Runs once after database creation: creates the DATUS_TEST app user
+      - ./docker/init:/opt/oracle/scripts/setup:ro
+      - oracle_data:/opt/oracle/oradata
+
+volumes:
+  oracle_data:

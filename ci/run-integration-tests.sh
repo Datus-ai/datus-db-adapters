@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark)
+ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark oracle)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 CURRENT_ADAPTER=""
@@ -153,6 +153,7 @@ adapter_services() {
     greenplum) echo "greenplum:600" ;;
     hive) echo "hive-metastore:600 hive-server:900" ;;
     spark) echo "spark-thrift:900" ;;
+    oracle) echo "oracle:1200" ;;
     *) echo "Unknown adapter '$1'" >&2; return 1 ;;
   esac
 }
@@ -256,6 +257,16 @@ export_adapter_env() {
       export SPARK_DATABASE="default"
       export SPARK_AUTH_MECHANISM="NONE"
       ;;
+    oracle)
+      export ORACLE_HOST_PORT="${ORACLE_HOST_PORT:-21521}"
+      export ORACLE_HOST="127.0.0.1"
+      export ORACLE_PORT="$ORACLE_HOST_PORT"
+      export ORACLE_USER="datus_test"
+      export ORACLE_PASSWORD="test_password"
+      export ORACLE_SERVICE_NAME="FREEPDB1"
+      export ORACLE_SCHEMA="DATUS_TEST"
+      export ORACLE_SYS_PASSWORD="${ORACLE_SYS_PASSWORD:-test_sys_password}"
+      ;;
   esac
 }
 
@@ -270,6 +281,7 @@ adapter_env_summary() {
     greenplum) echo "env: GREENPLUM_HOST=$GREENPLUM_HOST GREENPLUM_PORT=$GREENPLUM_PORT GREENPLUM_DATABASE=$GREENPLUM_DATABASE GREENPLUM_SCHEMA=$GREENPLUM_SCHEMA" ;;
     hive) echo "env: HIVE_HOST=$HIVE_HOST HIVE_PORT=$HIVE_PORT HIVE_DATABASE=$HIVE_DATABASE" ;;
     spark) echo "env: SPARK_HOST=$SPARK_HOST SPARK_PORT=$SPARK_PORT SPARK_DATABASE=$SPARK_DATABASE SPARK_AUTH_MECHANISM=$SPARK_AUTH_MECHANISM" ;;
+    oracle) echo "env: ORACLE_HOST=$ORACLE_HOST ORACLE_PORT=$ORACLE_PORT ORACLE_SERVICE_NAME=$ORACLE_SERVICE_NAME ORACLE_SCHEMA=$ORACLE_SCHEMA" ;;
   esac
 }
 
@@ -469,6 +481,9 @@ wait_for_adapter_client_readiness() {
     spark)
       wait_for_python_connector_readiness "spark" "datus-spark"
       ;;
+    oracle)
+      wait_for_python_connector_readiness "oracle" "datus-oracle"
+      ;;
   esac
 }
 
@@ -583,6 +598,19 @@ elif adapter == "spark":
         timeout_seconds=5,
     )
     connector = SparkConnector(config)
+elif adapter == "oracle":
+    from datus_oracle import OracleConfig, OracleConnector
+
+    config = OracleConfig(
+        host=os.getenv("ORACLE_HOST", "127.0.0.1"),
+        port=int(os.getenv("ORACLE_PORT", "1521")),
+        username=os.getenv("ORACLE_USER", "datus_test"),
+        password=os.getenv("ORACLE_PASSWORD", "test_password"),
+        service_name=os.getenv("ORACLE_SERVICE_NAME", "FREEPDB1"),
+        schema_name=os.getenv("ORACLE_SCHEMA", "DATUS_TEST"),
+        timeout_seconds=5,
+    )
+    connector = OracleConnector(config)
 else:
     raise RuntimeError(f"unsupported adapter readiness probe: {adapter}")
 

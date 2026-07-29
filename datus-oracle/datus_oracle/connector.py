@@ -11,6 +11,7 @@ from datus_db_core import (
     TABLE_TYPE,
     DatusDbException,
     ErrorCode,
+    ExecuteSQLResult,
     get_logger,
 )
 from datus_sqlalchemy import SQLAlchemyConnector
@@ -132,6 +133,32 @@ class OracleConnector(SQLAlchemyConnector):
         """Apply schema context. The service/PDB is fixed per connection."""
         if schema_name:
             conn.execute(text(f"ALTER SESSION SET CURRENT_SCHEMA = {self.quote_identifier(schema_name)}"))
+
+    @override
+    def execute_insert(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
+        """Execute INSERT without probing lastrowid/inserted_primary_key.
+
+        The base implementation reads ``lastrowid`` after commit;
+        python-oracledb raises DPY-1006 on the closed DBAPI cursor, marking
+        a successfully committed INSERT as failed. Oracle has no meaningful
+        lastrowid for Datus, so capture the row count before commit instead.
+        """
+        try:
+            with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
+                res = conn.execute(text(sql))
+                row_count = res.rowcount
+                conn.commit()
+                return ExecuteSQLResult(
+                    success=True,
+                    sql_query=sql,
+                    sql_return=str(row_count),
+                    row_count=row_count,
+                )
+        except Exception as e:
+            ex = e if isinstance(e, DatusDbException) else self._handle_exception(e, sql)
+            return ExecuteSQLResult(success=False, error=str(ex), sql_query=sql, sql_return="", row_count=0)
 
     # ==================== Error Mapping ====================
 
