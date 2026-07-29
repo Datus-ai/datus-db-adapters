@@ -23,6 +23,7 @@ class AdapterMetadata:
         parser_dialect: Optional[str] = None,
         identifier_parser: Optional[Callable] = None,
         sql_generation_notes: Optional[Any] = None,
+        dialect_operations: Optional[Any] = None,
     ):
         self.db_type = db_type
         self.connector_class = connector_class
@@ -31,6 +32,7 @@ class AdapterMetadata:
         self.parser_dialect = parser_dialect
         self.identifier_parser = identifier_parser
         self.sql_generation_notes = sql_generation_notes
+        self.dialect_operations = dialect_operations
 
     def get_config_fields(self) -> Dict[str, Dict[str, Any]]:
         if not self.config_class:
@@ -99,6 +101,7 @@ class ConnectorRegistry:
         parser_dialect: Optional[str] = None,
         identifier_parser: Optional[Callable] = None,
         sql_generation_notes: Optional[Any] = None,
+        dialect_operations: Optional[Any] = None,
     ):
         key = cls._resolve_key(db_type)
         with cls._lock:
@@ -120,6 +123,7 @@ class ConnectorRegistry:
                 parser_dialect=parser_dialect,
                 identifier_parser=identifier_parser,
                 sql_generation_notes=sql_generation_notes,
+                dialect_operations=dialect_operations,
             )
         logger.debug(f"Registered connector: {db_type} -> {connector_class.__name__}")
 
@@ -219,6 +223,7 @@ class ConnectorRegistry:
         parser_dialect: Optional[str] = None,
         identifier_parser: Optional[Callable] = None,
         sql_generation_notes: Optional[Any] = None,
+        dialect_operations: Optional[Any] = None,
     ):
         key = cls._resolve_key(db_type)
         if capabilities is not None:
@@ -235,6 +240,8 @@ class ConnectorRegistry:
                 metadata.identifier_parser = identifier_parser
             if sql_generation_notes is not None:
                 metadata.sql_generation_notes = sql_generation_notes
+            if dialect_operations is not None:
+                metadata.dialect_operations = dialect_operations
 
     @classmethod
     def has_capabilities(cls, db_type: str) -> bool:
@@ -278,6 +285,11 @@ class ConnectorRegistry:
     def get_sql_generation_notes(cls, db_type: str) -> Optional[Any]:
         metadata = cls.get_metadata(db_type)
         return metadata.sql_generation_notes if metadata else None
+
+    @classmethod
+    def get_dialect_operations(cls, db_type: str) -> Optional[Any]:
+        metadata = cls.get_metadata(db_type)
+        return metadata.dialect_operations if metadata else None
 
 
 # Global instance
