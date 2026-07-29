@@ -19,6 +19,7 @@ PACKAGE_SPECS=(
   "datus-snowflake:datus-snowflake/tests"
   "datus-clickzetta:datus-clickzetta/tests/unit"
   "datus-maxcompute:datus-maxcompute/tests/unit"
+  "datus-hologres:datus-hologres/tests/unit"
 )
 
 usage() {
