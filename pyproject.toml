@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 license = {file = "LICENSE"}
 
 [tool.uv.workspace]
-members = ["datus-db-core", "datus-mysql", "datus-postgresql", "datus-sqlalchemy", "datus-starrocks", "datus-doris", "datus-snowflake", "datus-clickzetta", "datus-clickhouse", "datus-hive", "datus-redshift", "datus-spark", "datus-trino", "datus-greenplum", "datus-maxcompute", "datus-hologres"]
+members = ["datus-db-core", "datus-mysql", "datus-postgresql", "datus-sqlalchemy", "datus-starrocks", "datus-doris", "datus-snowflake", "datus-clickzetta", "datus-clickhouse", "datus-hive", "datus-redshift", "datus-spark", "datus-trino", "datus-greenplum", "datus-maxcompute", "datus-hologres", "datus-oracle"]
 
 [dependency-groups]
 
