@@ -16,8 +16,14 @@ services:
           -e "s/-Xmx[0-9]+[mMgG]/-Xmx$${DORIS_FE_JAVA_XMX}/" \
           -e "s/-Xms[0-9]+[mMgG]/-Xms$${DORIS_FE_JAVA_XMS}/" \
           /opt/apache-doris/fe/conf/fe.conf
+        if ! grep -q -- "-XX:-UseContainerSupport" /opt/apache-doris/fe/conf/fe.conf; then
+          sed -i -E \
+            's/^([[:space:]]*JAVA_OPTS_FOR_JDK_17=")/\1-XX:-UseContainerSupport /' \
+            /opt/apache-doris/fe/conf/fe.conf
+        fi
         grep -q -- "-Xmx$${DORIS_FE_JAVA_XMX}" /opt/apache-doris/fe/conf/fe.conf
         grep -q -- "-Xms$${DORIS_FE_JAVA_XMS}" /opt/apache-doris/fe/conf/fe.conf
+        grep -q -- "-XX:-UseContainerSupport" /opt/apache-doris/fe/conf/fe.conf
         exec bash /usr/local/bin/init_fe.sh
     ports:
       - "${DORIS_QUERY_HOST_PORT:-9030}:9030"
