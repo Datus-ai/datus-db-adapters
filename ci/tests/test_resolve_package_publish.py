@@ -1,29 +1,39 @@
 from __future__ import annotations
 
+import io
+import json
+import shlex
 import subprocess
+import urllib.error
 from pathlib import Path
 
 import pytest
 from packaging.version import Version
 
 from ci.resolve_package_publish import (
+    PyPIReleaseStatus,
     next_patch_version,
+    pypi_release_status,
     resolve_automatic_version,
     resolve_publish_state,
     resolve_requested_version,
+    run_git,
 )
 
 PACKAGE = "datus-db-core"
 
 
 def git(repo: Path, *args: str) -> str:
+    command = ["git", *args]
     result = subprocess.run(
-        ["git", *args],
+        command,
         cwd=repo,
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        details = result.stderr.strip() or result.stdout.strip() or "<no output>"
+        raise RuntimeError(f"{shlex.join(command)} failed with exit code {result.returncode}: {details}")
     return result.stdout.strip()
 
 
@@ -71,12 +81,26 @@ def latest_release(version: str):
     return lookup
 
 
-def release_missing(_package: str, _version: Version) -> bool:
-    return False
+def release_missing(_package: str, _version: Version) -> PyPIReleaseStatus:
+    return PyPIReleaseStatus(exists=False, complete=False, artifact_types=())
 
 
-def release_present(_package: str, _version: Version) -> bool:
-    return True
+def release_partial(_package: str, _version: Version) -> PyPIReleaseStatus:
+    return PyPIReleaseStatus(exists=True, complete=False, artifact_types=("sdist",))
+
+
+def release_complete(_package: str, _version: Version) -> PyPIReleaseStatus:
+    return PyPIReleaseStatus(
+        exists=True,
+        complete=True,
+        artifact_types=("bdist_wheel", "sdist"),
+    )
+
+
+def current_release_complete(_package: str, version: Version) -> PyPIReleaseStatus:
+    if version == Version("0.1.5"):
+        return release_complete(_package, version)
+    return release_missing(_package, version)
 
 
 def create_release_tag(
@@ -142,12 +166,94 @@ def test_auto_aliases_use_automatic_resolution(requested: str) -> None:
     assert resolve_requested_version(Version("0.1.5"), Version("0.1.4"), requested) == Version("0.1.5")
 
 
+def test_run_git_exposes_stderr(repo: Path) -> None:
+    with pytest.raises(RuntimeError, match="definitely-missing-ref"):
+        run_git(repo, "rev-parse", "definitely-missing-ref")
+
+
+def test_git_test_helper_exposes_stderr(repo: Path) -> None:
+    with pytest.raises(RuntimeError, match="definitely-missing-ref"):
+        git(repo, "rev-parse", "definitely-missing-ref")
+
+
+def test_pypi_release_status_returns_missing_for_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_not_found(_url: str, timeout: int) -> io.BytesIO:
+        assert timeout == 20
+        raise urllib.error.HTTPError(_url, 404, "Not Found", None, None)
+
+    monkeypatch.setattr("ci.resolve_package_publish.urllib.request.urlopen", raise_not_found)
+
+    assert pypi_release_status(PACKAGE, Version("0.1.5")) == PyPIReleaseStatus(
+        exists=False,
+        complete=False,
+        artifact_types=(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("published_name", "published_version"),
+    [
+        ("unexpected-package", "0.1.5"),
+        (PACKAGE, "0.1.6"),
+    ],
+)
+def test_pypi_release_status_rejects_unexpected_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    published_name: str,
+    published_version: str,
+) -> None:
+    payload = {
+        "info": {"name": published_name, "version": published_version},
+        "urls": [],
+    }
+
+    def respond(_url: str, timeout: int) -> io.BytesIO:
+        assert timeout == 20
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr("ci.resolve_package_publish.urllib.request.urlopen", respond)
+
+    with pytest.raises(ValueError, match="Unexpected PyPI response"):
+        pypi_release_status(PACKAGE, Version("0.1.5"))
+
+
+@pytest.mark.parametrize(
+    ("artifact_types", "complete"),
+    [
+        (("sdist",), False),
+        (("bdist_wheel",), False),
+        (("bdist_wheel", "sdist"), True),
+    ],
+)
+def test_pypi_release_status_requires_wheel_and_sdist(
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_types: tuple[str, ...],
+    complete: bool,
+) -> None:
+    payload = {
+        "info": {"name": PACKAGE, "version": "0.1.5"},
+        "urls": [{"packagetype": artifact_type} for artifact_type in artifact_types],
+    }
+
+    def respond(_url: str, timeout: int) -> io.BytesIO:
+        assert timeout == 20
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr("ci.resolve_package_publish.urllib.request.urlopen", respond)
+
+    status = pypi_release_status(PACKAGE, Version("0.1.5"))
+
+    assert status.exists is True
+    assert status.complete is complete
+    assert status.artifact_types == tuple(sorted(artifact_types))
+
+
 def test_new_release_can_publish_version_already_declared_on_main(repo: Path) -> None:
     state = resolve_publish_state(
         repo,
         PACKAGE,
         latest_release=latest_release("0.1.4"),
-        release_exists=release_missing,
+        release_status=release_missing,
     )
 
     assert state.state == "new"
@@ -158,6 +264,7 @@ def test_new_release_can_publish_version_already_declared_on_main(repo: Path) ->
     assert state.tag == f"{PACKAGE}-v0.1.5"
     assert state.branch == f"release/{PACKAGE}-0.1.5"
     assert state.pypi_exists is False
+    assert state.pypi_complete is False
 
 
 def test_new_first_release_uses_declared_main_version(repo: Path) -> None:
@@ -165,7 +272,7 @@ def test_new_first_release_uses_declared_main_version(repo: Path) -> None:
         repo,
         PACKAGE,
         latest_release=no_latest_release,
-        release_exists=release_missing,
+        release_status=release_missing,
     )
 
     assert state.state == "new"
@@ -179,7 +286,7 @@ def test_explicit_release_version_is_used(repo: Path) -> None:
         PACKAGE,
         "0.2.0",
         latest_release=latest_release("0.1.4"),
-        release_exists=release_missing,
+        release_status=release_missing,
     )
 
     assert state.state == "new"
@@ -193,7 +300,7 @@ def test_new_release_must_not_precede_main_version(repo: Path) -> None:
             PACKAGE,
             "0.1.4",
             latest_release=latest_release("0.1.4"),
-            release_exists=release_missing,
+            release_status=release_missing,
         )
 
 
@@ -204,12 +311,46 @@ def test_existing_tag_without_pypi_resumes_from_tagged_commit(repo: Path) -> Non
         repo,
         PACKAGE,
         latest_release=latest_release("0.1.5"),
-        release_exists=release_missing,
+        release_status=release_missing,
     )
 
     assert state.state == "retry"
     assert state.release_commit == release_commit
     assert state.version == "0.1.6"
+
+
+def test_partial_pypi_release_retries_from_tagged_commit(repo: Path) -> None:
+    release_commit = create_release_tag(repo, "0.1.6")
+
+    state = resolve_publish_state(
+        repo,
+        PACKAGE,
+        latest_release=latest_release("0.1.6"),
+        release_status=release_partial,
+    )
+
+    assert state.state == "retry"
+    assert state.release_commit == release_commit
+    assert state.pypi_exists is True
+    assert state.pypi_complete is False
+
+
+def test_partial_current_release_retries_even_when_tag_is_on_main(repo: Path) -> None:
+    release_commit = git(repo, "rev-parse", "HEAD")
+    git(repo, "tag", "-a", f"{PACKAGE}-v0.1.5", "-m", "release")
+
+    state = resolve_publish_state(
+        repo,
+        PACKAGE,
+        latest_release=latest_release("0.1.5"),
+        release_status=release_partial,
+    )
+
+    assert state.state == "retry"
+    assert state.version == "0.1.5"
+    assert state.release_commit == release_commit
+    assert state.pypi_exists is True
+    assert state.pypi_complete is False
 
 
 def test_existing_tag_and_pypi_release_is_complete(repo: Path) -> None:
@@ -219,11 +360,12 @@ def test_existing_tag_and_pypi_release_is_complete(repo: Path) -> None:
         repo,
         PACKAGE,
         latest_release=latest_release("0.1.6"),
-        release_exists=release_present,
+        release_status=release_complete,
     )
 
     assert state.state == "complete"
     assert state.pypi_exists is True
+    assert state.pypi_complete is True
     assert state.version == "0.1.6"
 
 
@@ -234,7 +376,7 @@ def test_complete_release_with_pending_metadata_pr_is_reused(repo: Path) -> None
         repo,
         PACKAGE,
         latest_release=latest_release("0.1.5"),
-        release_exists=release_present,
+        release_status=release_complete,
     )
 
     assert state.state == "complete"
@@ -254,7 +396,7 @@ def test_merged_current_release_is_not_mistaken_for_pending_pr(repo: Path) -> No
         repo,
         PACKAGE,
         latest_release=latest_release("0.1.5"),
-        release_exists=release_missing,
+        release_status=current_release_complete,
     )
 
     assert state.state == "new"
@@ -267,7 +409,7 @@ def test_pypi_release_without_tag_requires_investigation(repo: Path) -> None:
             repo,
             PACKAGE,
             latest_release=latest_release("0.1.6"),
-            release_exists=release_present,
+            release_status=release_complete,
         )
 
 
@@ -279,5 +421,5 @@ def test_tag_must_point_to_requested_package_version(repo: Path) -> None:
             repo,
             PACKAGE,
             latest_release=latest_release("0.1.5"),
-            release_exists=release_missing,
+            release_status=release_missing,
         )

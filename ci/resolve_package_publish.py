@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -34,6 +35,16 @@ except ModuleNotFoundError:  # Imported as ci.resolve_package_publish in tests.
     )
 
 
+REQUIRED_PYPI_ARTIFACT_TYPES = frozenset({"bdist_wheel", "sdist"})
+
+
+@dataclass(frozen=True)
+class PyPIReleaseStatus:
+    exists: bool
+    complete: bool
+    artifact_types: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class PublishState:
     package: str
@@ -45,16 +56,21 @@ class PublishState:
     state: str
     release_commit: str
     pypi_exists: bool
+    pypi_complete: bool
 
 
 def run_git(repo_root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
+    command = ["git", *args]
+    result = subprocess.run(
+        command,
         cwd=repo_root,
-        check=check,
         capture_output=True,
         text=True,
     )
+    if check and result.returncode != 0:
+        details = result.stderr.strip() or result.stdout.strip() or "<no output>"
+        raise RuntimeError(f"{shlex.join(command)} failed with exit code {result.returncode}: {details}")
+    return result
 
 
 def next_patch_version(current_version: Version) -> Version:
@@ -116,10 +132,10 @@ def latest_pypi_version(package_name: str) -> Version | None:
     return Version(str(payload["info"]["version"]))
 
 
-def pypi_release_exists(package_name: str, version: Version) -> bool:
+def pypi_release_status(package_name: str, version: Version) -> PyPIReleaseStatus:
     payload = pypi_json(f"{package_name}/{version}")
     if payload is None:
-        return False
+        return PyPIReleaseStatus(exists=False, complete=False, artifact_types=())
 
     published_name = str(payload.get("info", {}).get("name", ""))
     published_version = Version(str(payload.get("info", {}).get("version", "")))
@@ -128,7 +144,22 @@ def pypi_release_exists(package_name: str, version: Version) -> bool:
             f"Unexpected PyPI response for {package_name} {version}: "
             f"found {published_name or '<missing>'} {published_version}"
         )
-    return True
+
+    artifact_types = tuple(
+        sorted(
+            {
+                str(artifact.get("packagetype", ""))
+                for artifact in payload.get("urls", [])
+                if isinstance(artifact, dict) and artifact.get("packagetype")
+            }
+        )
+    )
+    complete = REQUIRED_PYPI_ARTIFACT_TYPES.issubset(artifact_types)
+    return PyPIReleaseStatus(
+        exists=True,
+        complete=complete,
+        artifact_types=artifact_types,
+    )
 
 
 def tag_commit(repo_root: Path, tag: str) -> str | None:
@@ -169,7 +200,7 @@ def resolve_publish_state(
     requested_version: str = "",
     *,
     latest_release: Callable[[str], Version | None] = latest_pypi_version,
-    release_exists: Callable[[str, Version], bool] = pypi_release_exists,
+    release_status: Callable[[str, Version], PyPIReleaseStatus] = pypi_release_status,
 ) -> PublishState:
     repo_root = repo_root.resolve()
     packages = load_workspace_packages(repo_root)
@@ -178,11 +209,20 @@ def resolve_publish_state(
     automatic = not requested_version.strip() or requested_version.strip().lower() == "auto"
     current_tag = f"{target.name}-v{target.version}"
     current_tag_commit = tag_commit(repo_root, current_tag)
+    current_release_status = (
+        release_status(target.name, target.version)
+        if automatic and latest_version == target.version and current_tag_commit is not None
+        else None
+    )
     pending_current_release = (
         automatic
         and latest_version == target.version
         and current_tag_commit is not None
-        and not release_commit_is_ancestor(repo_root, current_tag_commit)
+        and (
+            current_release_status is None
+            or not current_release_status.complete
+            or not release_commit_is_ancestor(repo_root, current_tag_commit)
+        )
     )
     version = (
         target.version
@@ -192,9 +232,13 @@ def resolve_publish_state(
     tag = f"{target.name}-v{version}"
     branch = f"release/{target.name}-{version}"
     existing_tag_commit = tag_commit(repo_root, tag)
-    exists_on_pypi = release_exists(target.name, version)
+    pypi_status = (
+        current_release_status
+        if current_release_status is not None and version == target.version
+        else release_status(target.name, version)
+    )
 
-    if exists_on_pypi and existing_tag_commit is None:
+    if pypi_status.exists and existing_tag_commit is None:
         raise ValueError(
             f"{target.name} {version} exists on PyPI but release tag {tag} is missing; "
             "investigate the published artifact before repairing the tag manually"
@@ -204,7 +248,7 @@ def resolve_publish_state(
         tagged_version = package_version_at_commit(repo_root, target.path, existing_tag_commit)
         if tagged_version != version:
             raise ValueError(f"Release tag {tag} points to {target.name} {tagged_version}, expected {version}")
-        state = "complete" if exists_on_pypi else "retry"
+        state = "complete" if pypi_status.complete else "retry"
         release_commit = existing_tag_commit
     else:
         if version < target.version:
@@ -223,13 +267,15 @@ def resolve_publish_state(
         branch=branch,
         state=state,
         release_commit=release_commit,
-        pypi_exists=exists_on_pypi,
+        pypi_exists=pypi_status.exists,
+        pypi_complete=pypi_status.complete,
     )
 
 
 def write_github_output(path: Path, state: PublishState) -> None:
     values = asdict(state)
     values["pypi_exists"] = str(state.pypi_exists).lower()
+    values["pypi_complete"] = str(state.pypi_complete).lower()
     with path.open("a", encoding="utf-8") as output:
         for key, value in values.items():
             print(f"{key}={value}", file=output)

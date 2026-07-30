@@ -193,6 +193,7 @@ jobs:
           release_dir="dist/release/${PACKAGE}"
           python -m twine upload \
             --non-interactive \
+            --skip-existing \
             --username "${username}" \
             --password "${password}" \
             "${release_dir}"/*
@@ -206,25 +207,28 @@ jobs:
           python - <<'PY'
           from __future__ import annotations
 
-          import json
           import os
           import time
-          import urllib.request
 
-          package = os.environ["PACKAGE"]
-          version = os.environ["VERSION"]
-          url = f"https://pypi.org/pypi/{package}/{version}/json"
+          from packaging.version import Version
+
+          from ci.resolve_package_publish import pypi_release_status
 
           for attempt in range(12):
               try:
-                  with urllib.request.urlopen(url, timeout=20) as response:
-                      payload = json.loads(response.read().decode("utf-8"))
-                  published_version = str(payload.get("info", {}).get("version", ""))
-                  if published_version != version:
+                  status = pypi_release_status(
+                      os.environ["PACKAGE"],
+                      Version(os.environ["VERSION"]),
+                  )
+                  if not status.complete:
                       raise ValueError(
-                          f"PyPI returned {package} {published_version}, expected {version}"
+                          "PyPI release is missing required artifacts; "
+                          f"found {status.artifact_types or '<none>'}"
                       )
-                  print(f"Verified {package} {version} on PyPI")
+                  print(
+                      f"Verified {os.environ['PACKAGE']} {os.environ['VERSION']} "
+                      f"on PyPI with {status.artifact_types}"
+                  )
                   break
               except Exception as exc:
                   if attempt == 11:
@@ -242,7 +246,7 @@ jobs:
           VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          git fetch origin main
+          git fetch origin "+refs/heads/main:refs/remotes/origin/main"
 
           if git diff --quiet "origin/main" HEAD -- ./*/pyproject.toml; then
             echo "Release metadata is already present on main; no PR is needed."
@@ -306,6 +310,7 @@ jobs:
           fi
 
       - name: Summarize release
+        if: always()
         env:
           BRANCH: ${{ steps.resolve.outputs.branch }}
           CURRENT_VERSION: ${{ steps.resolve.outputs.current_version }}
@@ -314,6 +319,7 @@ jobs:
           VERSION: ${{ steps.resolve.outputs.version }}
           TAG: ${{ steps.resolve.outputs.tag }}
           STATE: ${{ steps.resolve.outputs.state }}
+          PYPI_COMPLETE: ${{ steps.resolve.outputs.pypi_complete }}
         run: |
           {
             echo "### Package release"
@@ -324,4 +330,5 @@ jobs:
             echo "- Tag: \`${TAG}\`"
             echo "- Release branch: \`${BRANCH}\`"
             echo "- Initial state: \`${STATE}\`"
+            echo "- PyPI artifacts complete: \`${PYPI_COMPLETE:-unknown}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
