@@ -83,7 +83,7 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
                 pool_timeout=self.timeout_seconds,
                 pool_recycle=3600,
                 pool_pre_ping=True,
-                connect_args={"verify": self._verify_ssl,"http_scheme": self._http_scheme},
+                connect_args={"verify": self._verify_ssl, "http_scheme": self._http_scheme},
             )
             self._owns_engine = True
             return self.engine

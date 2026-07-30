@@ -140,6 +140,43 @@ def test_connector_connection_string_without_password():
         assert ":@" not in conn_string or "user:@" not in conn_string
 
 
+# ==================== _ensure_engine() Tests ====================
+
+
+def test_ensure_engine_forwards_http_scheme_and_verify():
+    """Regression: the Trino SQLAlchemy dialect ignores ?http_scheme=... in the URL,
+    so _ensure_engine() must forward the scheme via connect_args (see PR #80)."""
+    config = TrinoConfig(
+        host="localhost",
+        port=8443,  # non-standard TLS port: 443 may infer HTTPS and mask a broken impl
+        username="user",
+        http_scheme="https",
+        verify=False,
+    )
+    connector = TrinoConnector(config)
+
+    with patch("datus_trino.connector.create_engine") as mock_create_engine:
+        engine = connector._ensure_engine()
+
+        mock_create_engine.assert_called_once()
+        connect_args = mock_create_engine.call_args.kwargs["connect_args"]
+        assert connect_args == {"verify": False, "http_scheme": "https"}
+        assert engine is mock_create_engine.return_value
+        assert connector._owns_engine is True
+
+
+def test_ensure_engine_default_http_scheme():
+    """Default config (http, verify=True) is forwarded through connect_args unchanged."""
+    config = TrinoConfig(host="localhost", port=8080, username="user")
+    connector = TrinoConnector(config)
+
+    with patch("datus_trino.connector.create_engine") as mock_create_engine:
+        connector._ensure_engine()
+
+        connect_args = mock_create_engine.call_args.kwargs["connect_args"]
+        assert connect_args == {"verify": True, "http_scheme": "http"}
+
+
 # ==================== Catalog Functionality Unit Tests ====================
 
 
