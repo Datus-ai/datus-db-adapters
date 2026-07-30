@@ -5,7 +5,7 @@
 """Generic Agent integration hooks exposed by the Hologres adapter."""
 
 from typing import Any, Dict, Tuple
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from .config import normalize_hologres_endpoint
 
@@ -44,13 +44,14 @@ def build_hologres_uri(db_config) -> str:
     host, port = normalize_hologres_endpoint(host, _config_value(db_config, "port"))
     schema = _config_value(db_config, "schema_name", "schema") or "public"
     sslmode = _config_value(db_config, "sslmode") or "prefer"
-    return f"hologres://{host}:{port}/{database}?{urlencode({'schema': schema, 'sslmode': sslmode})}"
+    database_path = quote(database, safe="")
+    return f"hologres://{host}:{port}/{database_path}?{urlencode({'schema': schema, 'sslmode': sslmode})}"
 
 
 def resolve_hologres_context(db_config, uri: str) -> Tuple[str, str, str, str]:
     parsed = urlparse(uri)
     params = parse_qs(parsed.query)
-    database = parsed.path.lstrip("/") or _config_value(db_config, "database")
+    database = unquote(parsed.path.lstrip("/")) or _config_value(db_config, "database")
     schema = (params.get("schema") or [""])[0] or _config_value(db_config, "schema_name", "schema") or "public"
     return "hologres", "", database, schema
 

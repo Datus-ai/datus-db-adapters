@@ -49,6 +49,14 @@ def test_result_formats(connector: HologresConnector):
     pandas_result = connector.execute(query, result_format="pandas")
     arrow_result = connector.execute(query, result_format="arrow")
 
+    for name, result in (
+        ("list", list_result),
+        ("csv", csv_result),
+        ("pandas", pandas_result),
+        ("arrow", arrow_result),
+    ):
+        _assert_success(result, f"{name} format query")
+
     assert list_result.sql_return == [{"id": 1, "name": "alpha"}]
     assert "id,name" in csv_result.sql_return
     assert isinstance(pandas_result.sql_return, pd.DataFrame)

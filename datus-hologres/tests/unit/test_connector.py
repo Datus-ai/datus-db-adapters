@@ -278,6 +278,69 @@ def test_foreign_table_ddl_includes_server_and_options(connector):
     )
 
 
+def test_foreign_table_ddl_accepts_array_like_options(connector):
+    details = pd.DataFrame(
+        [
+            {
+                "server_name": "odps_server",
+                "table_options": pd.Series(
+                    ["project_name=MAXCOMPUTE_PUBLIC_DATA", "table_name=orders"],
+                    dtype=object,
+                ),
+            }
+        ]
+    )
+    columns = [{"name": "order_id", "type": "bigint", "nullable": False, "default_value": None}]
+    with (
+        patch.object(connector, "_execute_pandas", return_value=details),
+        patch.object(connector, "get_schema", return_value=columns),
+    ):
+        ddl = connector._get_foreign_table_ddl("public", "orders_ext")
+
+    assert "\"project_name\" 'MAXCOMPUTE_PUBLIC_DATA'" in ddl
+    assert "\"table_name\" 'orders'" in ddl
+
+
+def test_bulk_table_ddl_batches_foreign_table_lookup(connector):
+    base_metadata = [
+        {
+            "identifier": "analytics.public.orders",
+            "catalog_name": "",
+            "database_name": "analytics",
+            "schema_name": "public",
+            "table_name": "orders",
+            "table_type": "table",
+        }
+    ]
+    with (
+        patch.object(PostgreSQLConnector, "_get_metadata", return_value=base_metadata),
+        patch.object(
+            connector,
+            "_query_foreign_tables",
+            return_value=(("public", "external_orders"),),
+        ) as query_foreign_tables,
+        patch.object(
+            PostgreSQLConnector,
+            "_get_ddl",
+            return_value='CREATE TABLE "analytics"."public"."orders" ("id" bigint);',
+        ),
+        patch.object(
+            connector,
+            "_get_foreign_table_ddl",
+            return_value='CREATE FOREIGN TABLE "analytics"."public"."external_orders" ("id" bigint);',
+        ),
+        patch.object(connector, "_get_table_properties", return_value={}),
+    ):
+        metadata = connector.get_tables_with_ddl(
+            database_name="analytics",
+            schema_name="public",
+        )
+
+    assert query_foreign_tables.call_count == 1
+    assert [item["table_name"] for item in metadata] == ["orders", "external_orders"]
+    assert metadata[1]["definition"].startswith("CREATE FOREIGN TABLE")
+
+
 def test_view_ddl_does_not_query_table_properties(connector):
     with (
         patch.object(PostgreSQLConnector, "_get_ddl", return_value="CREATE VIEW public.v AS SELECT 1"),

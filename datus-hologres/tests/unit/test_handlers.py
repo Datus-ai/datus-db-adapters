@@ -62,6 +62,28 @@ def test_build_uri_normalizes_console_endpoint_with_embedded_port():
     )
 
 
+def test_build_uri_round_trips_reserved_database_characters():
+    config = SimpleNamespace(
+        host="example.hologres.aliyuncs.com",
+        port=80,
+        database="analytics/#daily?source",
+        schema="public",
+        sslmode="require",
+    )
+
+    uri = build_hologres_uri(config)
+
+    assert uri == (
+        "hologres://example.hologres.aliyuncs.com:80/analytics%2F%23daily%3Fsource?schema=public&sslmode=require"
+    )
+    assert resolve_hologres_context(config, uri) == (
+        "hologres",
+        "",
+        "analytics/#daily?source",
+        "public",
+    )
+
+
 @pytest.mark.parametrize(
     ("identifier", "expected"),
     [

@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import re
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Set, Union, override
 
 from datus_db_core import TABLE_TYPE, DatusDbException, ErrorCode, SQLType, parse_sql_type
@@ -56,6 +57,9 @@ class HologresConnector(PostgreSQLConnector):
         # capabilities, parsing, and prompts through the adapter's public dialect.
         self.dialect = "hologres"
         self.config = config
+        self._foreign_tables_var: ContextVar[Optional[tuple[str, str, tuple[tuple[str, str], ...]]]] = ContextVar(
+            f"hologres_foreign_tables_{id(self)}", default=None
+        )
 
     @override
     def _sys_databases(self) -> Set[str]:
@@ -90,8 +94,8 @@ class HologresConnector(PostgreSQLConnector):
             return schemas
         return [schema for schema in schemas if not self._is_system_schema(schema)]
 
-    @override
     @staticmethod
+    @override
     def _qualify_name(meta, arg_db, arg_schema):
         """Return an unambiguous Hologres table name for the caller's scope."""
         database = meta.get("database_name", "")
@@ -133,6 +137,33 @@ class HologresConnector(PostgreSQLConnector):
 
         database_name = database_name or self.database_name
         schema_name = schema_name or self.schema_name
+        foreign_tables = self._get_foreign_tables(database_name, schema_name)
+
+        existing = {(item["schema_name"], item["table_name"]) for item in metadata}
+        for schema, table in foreign_tables:
+            if (schema, table) in existing:
+                continue
+            metadata.append(
+                {
+                    "identifier": self.identifier(
+                        database_name=database_name,
+                        schema_name=schema,
+                        table_name=table,
+                    ),
+                    "catalog_name": "",
+                    "database_name": database_name,
+                    "schema_name": schema,
+                    "table_name": table,
+                    "table_type": "table",
+                }
+            )
+        return metadata
+
+    def _query_foreign_tables(
+        self,
+        database_name: str,
+        schema_name: str,
+    ) -> tuple[tuple[str, str], ...]:
         safe_database = _escape_literal(database_name)
         safe_schema = _escape_literal(schema_name)
         query = f"""
@@ -152,27 +183,55 @@ class HologresConnector(PostgreSQLConnector):
             )
             self._raise_if_ambiguous_schema(foreign_tables, schema_name)
 
-        existing = {(item["schema_name"], item["table_name"]) for item in metadata}
+        result = []
         for _, row in foreign_tables.iterrows():
             schema = str(row["table_schema"])
             table = str(row["table_name"])
-            if (schema, table) in existing:
-                continue
-            metadata.append(
-                {
-                    "identifier": self.identifier(
-                        database_name=database_name,
-                        schema_name=schema,
-                        table_name=table,
-                    ),
-                    "catalog_name": "",
-                    "database_name": database_name,
-                    "schema_name": schema,
-                    "table_name": table,
-                    "table_type": "table",
-                }
+            result.append((schema, table))
+        return tuple(result)
+
+    def _get_foreign_tables(
+        self,
+        database_name: str,
+        schema_name: str,
+    ) -> tuple[tuple[str, str], ...]:
+        cached = self._foreign_tables_var.get()
+        if cached is not None and cached[:2] == (database_name, schema_name):
+            return cached[2]
+        return self._query_foreign_tables(database_name, schema_name)
+
+    @override
+    def _get_objects_with_ddl(
+        self,
+        table_type: TABLE_TYPE = "table",
+        tables: Optional[List[str]] = None,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+    ) -> List[Dict[str, str]]:
+        if table_type != "table":
+            return super()._get_objects_with_ddl(
+                table_type,
+                tables,
+                catalog_name,
+                database_name,
+                schema_name,
             )
-        return metadata
+
+        database_name = database_name or self.database_name
+        schema_name = schema_name or self.schema_name
+        foreign_tables = self._query_foreign_tables(database_name, schema_name)
+        token = self._foreign_tables_var.set((database_name, schema_name, foreign_tables))
+        try:
+            return super()._get_objects_with_ddl(
+                table_type,
+                tables,
+                catalog_name,
+                database_name,
+                schema_name,
+            )
+        finally:
+            self._foreign_tables_var.reset(token)
 
     def _get_table_properties(
         self,
@@ -212,21 +271,7 @@ class HologresConnector(PostgreSQLConnector):
         database_name: str = "",
     ) -> bool:
         database_name = database_name or self.database_name
-        safe_schema = _escape_literal(schema_name)
-        safe_table = _escape_literal(table_name)
-        result = self._execute_pandas(
-            f"""
-            SELECT 1 AS is_foreign
-            FROM pg_catalog.pg_foreign_table ft
-            JOIN pg_catalog.pg_class c ON c.oid = ft.ftrelid
-            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = '{safe_schema}'
-              AND c.relname = '{safe_table}'
-            LIMIT 1
-            """,
-            database_name=database_name,
-        )
-        return not result.empty
+        return (schema_name, table_name) in self._get_foreign_tables(database_name, schema_name)
 
     def _get_foreign_table_ddl(
         self,
@@ -277,8 +322,10 @@ class HologresConnector(PostgreSQLConnector):
         raw_options = details["table_options"].iloc[0]
         if isinstance(raw_options, str):
             raw_options = [part for part in raw_options.strip("{}").split(",") if part]
+        elif raw_options is None:
+            raw_options = []
         options = []
-        for raw_option in raw_options or []:
+        for raw_option in raw_options:
             key, separator, value = str(raw_option).partition("=")
             if not separator:
                 continue
