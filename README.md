@@ -16,7 +16,8 @@ Plugin Adapters (Independent packages, install as needed)
 │   ├── datus-mysql
 │   ├── datus-starrocks
 │   ├── datus-postgresql
-│   └── datus-hologres
+│   ├── datus-hologres
+│   └── datus-doris
 │
 └── Native SDK Adapters
     ├── datus-snowflake
@@ -75,7 +76,23 @@ pip install datus-starrocks
 
 ---
 
-### 4. datus-snowflake
+### 4. datus-doris
+Apache Doris database adapter (MySQL protocol compatible).
+
+**Installation**:
+```bash
+pip install datus-doris
+```
+
+**Features**:
+- Inherits MySQL query and connection functionality
+- Multi-Catalog support with the built-in `internal` catalog
+- Asynchronous materialized view metadata and DDL support
+- Doris-specific migration and table-layout guidance
+
+---
+
+### 5. datus-snowflake
 Snowflake database adapter (native SDK).
 
 **Installation**:
@@ -92,7 +109,7 @@ pip install datus-snowflake
 
 ---
 
-### 5. datus-clickzetta
+### 6. datus-clickzetta
 ClickZetta Lakehouse database adapter (native SDK).
 
 **Installation**:
@@ -162,6 +179,7 @@ uv sync
 pip install -e datus-sqlalchemy
 pip install -e datus-mysql
 pip install -e datus-starrocks
+pip install -e datus-doris
 pip install -e datus-snowflake
 pip install -e datus-maxcompute
 pip install -e datus-hologres

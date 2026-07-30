@@ -10,6 +10,7 @@ from datus_db_core.constants import SQLType
 from datus_db_core.registry import ConnectorRegistry
 from datus_db_core.sql_utils import (
     _first_statement,
+    mask_sql_quoted_regions,
     metadata_identifier,
     parse_context_switch,
     parse_dialect,
@@ -22,12 +23,18 @@ from datus_db_core.sql_utils import (
 @pytest.fixture(autouse=True)
 def restore_registry_metadata():
     saved_connectors = ConnectorRegistry._connectors.copy()
+    saved_factories = ConnectorRegistry._factories.copy()
     saved_metadata = ConnectorRegistry._metadata.copy()
     saved_capabilities = ConnectorRegistry._capabilities.copy()
+    saved_uri_builders = ConnectorRegistry._uri_builders.copy()
+    saved_context_resolvers = ConnectorRegistry._context_resolvers.copy()
     yield
     ConnectorRegistry._connectors = saved_connectors
+    ConnectorRegistry._factories = saved_factories
     ConnectorRegistry._metadata = saved_metadata
     ConnectorRegistry._capabilities = saved_capabilities
+    ConnectorRegistry._uri_builders = saved_uri_builders
+    ConnectorRegistry._context_resolvers = saved_context_resolvers
 
 
 class TestParseReadDialect:
@@ -95,6 +102,25 @@ class TestStripSqlComments:
         result = strip_sql_comments(sql)
         assert "multiline" not in result
         assert "1" in result
+
+    def test_comment_markers_inside_backtick_identifier(self):
+        sql = "SELECT `dash--name`, `block/*name*/` -- real comment\nFROM t"
+        result = strip_sql_comments(sql)
+        assert "`dash--name`" in result
+        assert "`block/*name*/`" in result
+        assert "real comment" not in result
+        assert "FROM t" in result
+
+
+class TestMaskSqlQuotedRegions:
+    def test_masks_literals_and_quoted_identifiers(self):
+        sql = "CREATE TABLE `FULLTEXT` (note VARCHAR DEFAULT 'CHECK(id)') DUPLICATE KEY(id)"
+        masked = mask_sql_quoted_regions(sql)
+
+        assert len(masked) == len(sql)
+        assert "FULLTEXT" not in masked
+        assert "CHECK" not in masked
+        assert "DUPLICATE KEY" in masked
 
 
 class TestFirstStatement:
@@ -207,6 +233,9 @@ class TestParseSqlType:
     def test_set(self):
         assert parse_sql_type("SET search_path TO my_schema", "postgres") == SQLType.CONTENT_SET
         assert parse_sql_type("SET catalog my_cat", "starrocks") == SQLType.CONTENT_SET
+
+    def test_switch_catalog_doris(self):
+        assert parse_sql_type("SWITCH internal", "doris") == SQLType.CONTENT_SET
 
     def test_with_cte_select(self):
         assert parse_sql_type("WITH cte AS (SELECT 1) SELECT * FROM cte", "snowflake") == SQLType.SELECT
@@ -354,6 +383,26 @@ class TestParseContextSwitch:
         assert result is not None
         assert result["database_name"] == "my_db"
         assert result["target"] == "database"
+
+    def test_use_doris_database(self):
+        result = parse_context_switch("USE my_db", "doris")
+        assert result is not None
+        assert result["database_name"] == "my_db"
+        assert result["target"] == "database"
+
+    def test_use_doris_catalog_database(self):
+        result = parse_context_switch("USE external_catalog.analytics", "doris")
+        assert result is not None
+        assert result["catalog_name"] == "external_catalog"
+        assert result["database_name"] == "analytics"
+        assert result["target"] == "database"
+
+    def test_switch_doris_catalog(self):
+        result = parse_context_switch("SWITCH `external-catalog`;", "doris")
+        assert result is not None
+        assert result["command"] == "SWITCH"
+        assert result["catalog_name"] == "external-catalog"
+        assert result["target"] == "catalog"
 
     def test_raw_preserved(self):
         result = parse_context_switch("USE my_db", "mysql")

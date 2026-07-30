@@ -92,42 +92,24 @@ def strip_sql_comments(sql: str) -> str:
     result = []
     i = 0
     length = len(sql)
-    in_single_quote = False
-    in_double_quote = False
+    quote_char: Optional[str] = None
 
     while i < length:
         ch = sql[i]
 
-        if in_single_quote:
+        if quote_char is not None:
             result.append(ch)
-            if ch == "'" and not _is_escaped(sql, i):
-                if i + 1 < length and sql[i + 1] == "'":
+            if ch == quote_char and not _is_escaped(sql, i):
+                if i + 1 < length and sql[i + 1] == quote_char:
                     result.append(sql[i + 1])
                     i += 2
                     continue
-                in_single_quote = False
+                quote_char = None
             i += 1
             continue
 
-        if in_double_quote:
-            result.append(ch)
-            if ch == '"' and not _is_escaped(sql, i):
-                if i + 1 < length and sql[i + 1] == '"':
-                    result.append(sql[i + 1])
-                    i += 2
-                    continue
-                in_double_quote = False
-            i += 1
-            continue
-
-        if ch == "'":
-            in_single_quote = True
-            result.append(ch)
-            i += 1
-            continue
-
-        if ch == '"':
-            in_double_quote = True
+        if ch in ("'", '"', "`"):
+            quote_char = ch
             result.append(ch)
             i += 1
             continue
@@ -160,6 +142,37 @@ def strip_sql_comments(sql: str) -> str:
             continue
 
         result.append(ch)
+        i += 1
+
+    return "".join(result)
+
+
+def mask_sql_quoted_regions(sql: str) -> str:
+    """Replace SQL string literals and quoted identifiers with whitespace."""
+    result = []
+    i = 0
+    length = len(sql)
+    quote_char: Optional[str] = None
+
+    while i < length:
+        ch = sql[i]
+
+        if quote_char is None:
+            if ch in ("'", '"', "`"):
+                quote_char = ch
+                result.append(" ")
+            else:
+                result.append(ch)
+            i += 1
+            continue
+
+        result.append("\n" if ch == "\n" else " ")
+        if ch == quote_char and not _is_escaped(sql, i):
+            if i + 1 < length and sql[i + 1] == quote_char:
+                result.append(" ")
+                i += 2
+                continue
+            quote_char = None
         i += 1
 
     return "".join(result)
@@ -318,6 +331,7 @@ _KEYWORD_SQL_TYPE_MAP: Dict[str, SQLType] = {
     "PRAGMA": SQLType.METADATA_SHOW,
     "EXPLAIN": SQLType.EXPLAIN,
     "USE": SQLType.CONTENT_SET,
+    "SWITCH": SQLType.CONTENT_SET,
     "SET": SQLType.CONTENT_SET,
     "CALL": SQLType.CONTENT_SET,
     "EXEC": SQLType.CONTENT_SET,
@@ -445,7 +459,7 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     return inferred if inferred else SQLType.UNKNOWN
 
 
-_CONTEXT_CMD_RE = re.compile(r"^\s*(use|set)\b", flags=re.IGNORECASE)
+_CONTEXT_CMD_RE = re.compile(r"^\s*(use|set|switch)\b", flags=re.IGNORECASE)
 
 
 def _identifier_name(value: Any) -> str:
@@ -507,6 +521,18 @@ def parse_context_switch(sql: str, dialect: str) -> Optional[Dict[str, Any]]:
         "raw": statement,
     }
 
+    if command == "SWITCH":
+        switch_match = re.match(r"^\s*SWITCH\s+(.+)$", statement, flags=re.IGNORECASE)
+        if not switch_match:
+            return None
+        remainder = switch_match.group(1).rstrip(";").strip()
+        if not remainder:
+            return None
+        parts = _parse_identifier_sequence(remainder, normalized_dialect)
+        result["catalog_name"] = parts["identifier"] or parts["database"] or parts["catalog"]
+        result["target"] = "catalog"
+        return result
+
     if command == "USE":
         expression = sqlglot.parse_one(statement, dialect=normalized_dialect, error_level=sqlglot.ErrorLevel.IGNORE)
         if not isinstance(expression, expressions.Use):
@@ -557,7 +583,7 @@ def parse_context_switch(sql: str, dialect: str) -> Optional[Dict[str, Any]]:
             result["target"] = "database"
             return result
 
-        if normalized_dialect == "starrocks":
+        if normalized_dialect in ("starrocks", "doris"):
             if catalog or (database and not catalog):
                 result["catalog_name"] = catalog or database
                 result["database_name"] = identifier

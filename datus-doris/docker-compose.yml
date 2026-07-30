@@ -1,0 +1,94 @@
+services:
+  doris-fe:
+    image: apache/doris:fe-4.0.7
+    environment:
+      FE_SERVERS: "fe1:10.77.80.2:9010"
+      FE_ID: "1"
+      DORIS_FE_JAVA_XMS: "${DORIS_FE_JAVA_XMS:-1024m}"
+      DORIS_FE_JAVA_XMX: "${DORIS_FE_JAVA_XMX:-2048m}"
+      TZ: Asia/Shanghai
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        sed -i -E \
+          -e "s/-Xmx[0-9]+[mMgG]/-Xmx$${DORIS_FE_JAVA_XMX}/" \
+          -e "s/-Xms[0-9]+[mMgG]/-Xms$${DORIS_FE_JAVA_XMS}/" \
+          /opt/apache-doris/fe/conf/fe.conf
+        if ! grep -q -- "-XX:-UseContainerSupport" /opt/apache-doris/fe/conf/fe.conf; then
+          sed -i -E \
+            's/^([[:space:]]*JAVA_OPTS_FOR_JDK_17=")/\1-XX:-UseContainerSupport /' \
+            /opt/apache-doris/fe/conf/fe.conf
+        fi
+        grep -q -- "-Xmx$${DORIS_FE_JAVA_XMX}" /opt/apache-doris/fe/conf/fe.conf
+        grep -q -- "-Xms$${DORIS_FE_JAVA_XMS}" /opt/apache-doris/fe/conf/fe.conf
+        grep -q -- "-XX:-UseContainerSupport" /opt/apache-doris/fe/conf/fe.conf
+        exec bash /usr/local/bin/init_fe.sh
+    ports:
+      - "${DORIS_QUERY_HOST_PORT:-9030}:9030"
+      - "${DORIS_HTTP_HOST_PORT:-8030}:8030"
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW FRONTENDS' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    volumes:
+      - doris_fe_data:/opt/apache-doris/fe/doris-meta
+    networks:
+      doris-test:
+        ipv4_address: 10.77.80.2
+
+  doris-be:
+    image: apache/doris:be-4.0.7
+    environment:
+      FE_SERVERS: "fe1:10.77.80.2:9010"
+      BE_ADDR: "10.77.80.3:9050"
+      TZ: Asia/Shanghai
+    depends_on:
+      doris-fe:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysql -h10.77.80.2 -P9030 -uroot -N -e 'SHOW BACKENDS' 2>/dev/null | grep -w 10.77.80.3 | grep -w true >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    volumes:
+      - doris_be_data:/opt/apache-doris/be/storage
+    networks:
+      doris-test:
+        ipv4_address: 10.77.80.3
+
+  hive-metastore:
+    image: apache/hive:4.0.1
+    environment:
+      SERVICE_NAME: metastore
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/9083) 2>/dev/null || exit 1'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    volumes:
+      - hive_warehouse:/opt/hive/data/warehouse
+    networks:
+      doris-test:
+        ipv4_address: 10.77.80.4
+
+networks:
+  doris-test:
+    name: datus-doris-test-network
+    ipam:
+      config:
+        - subnet: 10.77.80.0/24
+
+volumes:
+  doris_fe_data:
+  doris_be_data:
+  hive_warehouse:
