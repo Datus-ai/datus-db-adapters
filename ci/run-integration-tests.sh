@@ -4,9 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ALL_ADAPTERS=(postgresql mysql clickhouse starrocks trino greenplum hive spark)
+ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
+CURRENT_ADAPTER=""
 
 usage() {
   cat <<'USAGE'
@@ -147,6 +148,7 @@ adapter_services() {
     mysql) echo "mysql:300" ;;
     clickhouse) echo "clickhouse:300" ;;
     starrocks) echo "starrocks:600" ;;
+    doris) echo "doris-fe:600 doris-be:600 hive-metastore:600" ;;
     trino) echo "trino:300" ;;
     greenplum) echo "greenplum:600" ;;
     hive) echo "hive-metastore:600 hive-server:900" ;;
@@ -204,6 +206,17 @@ export_adapter_env() {
       export STARROCKS_CATALOG="default_catalog"
       export STARROCKS_DATABASE="test"
       ;;
+    doris)
+      export DORIS_QUERY_HOST_PORT="${DORIS_QUERY_HOST_PORT:-49030}"
+      export DORIS_HTTP_HOST_PORT="${DORIS_HTTP_HOST_PORT:-48030}"
+      export DORIS_HOST="127.0.0.1"
+      export DORIS_PORT="$DORIS_QUERY_HOST_PORT"
+      export DORIS_USER="root"
+      export DORIS_PASSWORD=""
+      export DORIS_CATALOG="internal"
+      export DORIS_DATABASE="test"
+      export HIVE_METASTORE_URI="thrift://hive-metastore:9083"
+      ;;
     trino)
       export TRINO_HOST_PORT="${TRINO_HOST_PORT:-28080}"
       export TRINO_HOST="127.0.0.1"
@@ -252,6 +265,7 @@ adapter_env_summary() {
     mysql) echo "env: MYSQL_HOST=$MYSQL_HOST MYSQL_PORT=$MYSQL_PORT MYSQL_DATABASE=$MYSQL_DATABASE" ;;
     clickhouse) echo "env: CLICKHOUSE_HOST=$CLICKHOUSE_HOST CLICKHOUSE_PORT=$CLICKHOUSE_PORT CLICKHOUSE_DATABASE=$CLICKHOUSE_DATABASE" ;;
     starrocks) echo "env: STARROCKS_HOST=$STARROCKS_HOST STARROCKS_PORT=$STARROCKS_PORT STARROCKS_CATALOG=$STARROCKS_CATALOG STARROCKS_DATABASE=$STARROCKS_DATABASE" ;;
+    doris) echo "env: DORIS_HOST=$DORIS_HOST DORIS_PORT=$DORIS_PORT DORIS_CATALOG=$DORIS_CATALOG DORIS_DATABASE=$DORIS_DATABASE" ;;
     trino) echo "env: TRINO_HOST=$TRINO_HOST TRINO_PORT=$TRINO_PORT TRINO_CATALOG=$TRINO_CATALOG TRINO_SCHEMA=$TRINO_SCHEMA" ;;
     greenplum) echo "env: GREENPLUM_HOST=$GREENPLUM_HOST GREENPLUM_PORT=$GREENPLUM_PORT GREENPLUM_DATABASE=$GREENPLUM_DATABASE GREENPLUM_SCHEMA=$GREENPLUM_SCHEMA" ;;
     hive) echo "env: HIVE_HOST=$HIVE_HOST HIVE_PORT=$HIVE_PORT HIVE_DATABASE=$HIVE_DATABASE" ;;
@@ -280,6 +294,61 @@ cleanup_started() {
   for adapter in "${STARTED_ADAPTERS[@]}"; do
     compose_down "$adapter"
   done
+}
+
+dump_adapter_diagnostics() {
+  local adapter="$1"
+  local compose_file
+  local spec
+  local service_name
+  local container_id
+
+  compose_file="$(adapter_compose "$adapter")"
+  echo ""
+  echo "=== Failure diagnostics: $adapter ===" >&2
+  docker_compose -f "$compose_file" ps -a >&2 || true
+
+  for spec in $(adapter_services "$adapter"); do
+    service_name="${spec%%:*}"
+    container_id="$(docker_compose -f "$compose_file" ps -a -q "$service_name" 2>/dev/null || true)"
+    if [ -z "$container_id" ]; then
+      echo "No container found for service '$service_name'." >&2
+      continue
+    fi
+
+    printf "service=%s " "$service_name" >&2
+    docker inspect --format \
+      'container={{.Name}} status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{.State.Error}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      "$container_id" >&2 || true
+
+    echo "--- Logs: $service_name ---" >&2
+    docker_compose -f "$compose_file" logs --no-color --tail=300 "$service_name" >&2 || true
+  done
+
+  echo "--- Runner memory ---" >&2
+  if command -v free >/dev/null 2>&1; then
+    free -h >&2 || true
+  elif command -v vm_stat >/dev/null 2>&1; then
+    vm_stat >&2 || true
+  else
+    echo "No supported memory-reporting command found." >&2
+  fi
+
+  echo "--- Docker disk usage ---" >&2
+  docker system df >&2 || true
+  echo "--- Runner filesystem ---" >&2
+  df -h "$ROOT_DIR" >&2 || true
+}
+
+cleanup_on_exit() {
+  local exit_status=$?
+  trap - EXIT
+
+  if [ "$exit_status" -ne 0 ] && [ -n "$CURRENT_ADAPTER" ]; then
+    dump_adapter_diagnostics "$CURRENT_ADAPTER"
+  fi
+  cleanup_started
+  exit "$exit_status"
 }
 
 cleanup_only=0
@@ -384,6 +453,9 @@ wait_for_adapter_client_readiness() {
       ;;
     starrocks)
       uv run --package datus-starrocks python datus-starrocks/scripts/wait_for_starrocks.py --timeout "${STARROCKS_READY_TIMEOUT:-300}"
+      ;;
+    doris)
+      uv run --package datus-doris python datus-doris/scripts/wait_for_doris.py --timeout "${DORIS_READY_TIMEOUT:-600}"
       ;;
     trino)
       wait_for_python_connector_readiness "trino" "datus-trino"
@@ -536,14 +608,36 @@ PY
 
 adapters_from_changed_files() {
   local base_ref="$1"
+  local base_changed_files=""
+  local staged_files=""
+  local unstaged_files=""
+  local untracked_files=""
   local changed_files=""
+
+  if ! base_changed_files="$(git diff --name-only "${base_ref}...HEAD")"; then
+    echo "Unable to determine changed adapters from base ref '$base_ref'." >&2
+    return 1
+  fi
+  if ! staged_files="$(git diff --name-only --cached)"; then
+    echo "Unable to determine staged adapter changes." >&2
+    return 1
+  fi
+  if ! unstaged_files="$(git diff --name-only)"; then
+    echo "Unable to determine unstaged adapter changes." >&2
+    return 1
+  fi
+  if ! untracked_files="$(git ls-files --others --exclude-standard)"; then
+    echo "Unable to determine untracked adapter changes." >&2
+    return 1
+  fi
+
   changed_files="$(
-    {
-      git diff --name-only "${base_ref}...HEAD"
-      git diff --name-only --cached
-      git diff --name-only
-      git ls-files --others --exclude-standard
-    } | awk 'NF && !seen[$0]++'
+    printf '%s\n' \
+      "$base_changed_files" \
+      "$staged_files" \
+      "$unstaged_files" \
+      "$untracked_files" |
+      awk 'NF && !seen[$0]++'
   )"
 
   if [ -z "$changed_files" ]; then
@@ -565,11 +659,17 @@ adapters_from_changed_files() {
 
 selected_adapters=()
 if [ "$changed_mode" -eq 1 ]; then
+  changed_adapters=""
+  if ! changed_adapters="$(adapters_from_changed_files "$changed_base")"; then
+    exit 1
+  fi
   while IFS= read -r adapter; do
     [ -n "$adapter" ] && selected_adapters+=("$adapter")
-  done < <(adapters_from_changed_files "$changed_base" | awk '!seen[$0]++')
+  done < <(printf '%s\n' "$changed_adapters" | awk '!seen[$0]++')
 else
-  selected_adapters=("${requested_adapters[@]}")
+  if [ "${#requested_adapters[@]}" -gt 0 ]; then
+    selected_adapters=("${requested_adapters[@]}")
+  fi
 fi
 
 if [ "${#selected_adapters[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
@@ -603,9 +703,10 @@ if [ "$dry_run" -eq 1 ]; then
 fi
 
 preflight
-trap cleanup_started EXIT
+trap cleanup_on_exit EXIT
 
 for adapter in "${selected_adapters[@]}"; do
+  CURRENT_ADAPTER="$adapter"
   compose_file="$(adapter_compose "$adapter")"
   test_path="$(adapter_test_path "$adapter")"
   package="$(adapter_package "$adapter")"
@@ -636,4 +737,5 @@ for adapter in "${selected_adapters[@]}"; do
   uv run --package "$package" --with pytest --with pandas --with pyarrow pytest "$test_path" -m integration --tb=short --verbose
 
   compose_down "$adapter"
+  CURRENT_ADAPTER=""
 done

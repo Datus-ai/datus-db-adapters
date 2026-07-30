@@ -11,6 +11,7 @@ PACKAGE_SPECS=(
   "datus-postgresql:datus-postgresql/tests/unit"
   "datus-clickhouse:datus-clickhouse/tests/unit"
   "datus-starrocks:datus-starrocks/tests/unit"
+  "datus-doris:datus-doris/tests/unit"
   "datus-trino:datus-trino/tests/unit"
   "datus-greenplum:datus-greenplum/tests/unit"
   "datus-hive:datus-hive/tests/unit"
@@ -110,14 +111,36 @@ all_packages() {
 
 packages_from_changed_files() {
   local base_ref="$1"
+  local base_changed_files=""
+  local staged_files=""
+  local unstaged_files=""
+  local untracked_files=""
   local changed_files=""
+
+  if ! base_changed_files="$(git diff --name-only "${base_ref}...HEAD")"; then
+    echo "Unable to determine changed packages from base ref '$base_ref'." >&2
+    return 1
+  fi
+  if ! staged_files="$(git diff --name-only --cached)"; then
+    echo "Unable to determine staged package changes." >&2
+    return 1
+  fi
+  if ! unstaged_files="$(git diff --name-only)"; then
+    echo "Unable to determine unstaged package changes." >&2
+    return 1
+  fi
+  if ! untracked_files="$(git ls-files --others --exclude-standard)"; then
+    echo "Unable to determine untracked package changes." >&2
+    return 1
+  fi
+
   changed_files="$(
-    {
-      git diff --name-only "${base_ref}...HEAD"
-      git diff --name-only --cached
-      git diff --name-only
-      git ls-files --others --exclude-standard
-    } | awk 'NF && !seen[$0]++'
+    printf '%s\n' \
+      "$base_changed_files" \
+      "$staged_files" \
+      "$unstaged_files" \
+      "$untracked_files" |
+      awk 'NF && !seen[$0]++'
   )"
 
   if [ -z "$changed_files" ]; then
@@ -139,11 +162,17 @@ packages_from_changed_files() {
 }
 
 if [ "$changed_mode" -eq 1 ]; then
+  changed_packages=""
+  if ! changed_packages="$(packages_from_changed_files "$changed_base")"; then
+    exit 1
+  fi
   while IFS= read -r package; do
     [ -n "$package" ] && selected_packages+=("$package")
-  done < <(packages_from_changed_files "$changed_base" | awk '!seen[$0]++')
+  done < <(printf '%s\n' "$changed_packages" | awk '!seen[$0]++')
 else
-  selected_packages=("${requested_packages[@]}")
+  if [ "${#requested_packages[@]}" -gt 0 ]; then
+    selected_packages=("${requested_packages[@]}")
+  fi
 fi
 
 if [ "${#selected_packages[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
