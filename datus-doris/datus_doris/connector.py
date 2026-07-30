@@ -762,9 +762,9 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
     def validate_ddl(self, ddl: str) -> List[str]:
         """Return Doris compatibility errors for a proposed table DDL."""
         errors: List[str] = []
-        from datus_db_core.sql_utils import strip_sql_comments
+        from datus_db_core.sql_utils import mask_sql_quoted_regions, strip_sql_comments
 
-        upper = strip_sql_comments(ddl).upper()
+        upper = mask_sql_quoted_regions(strip_sql_comments(ddl)).upper()
         has_duplicate_key = bool(re.search(r"\bDUPLICATE\s+KEY\b", upper)) and not re.search(
             r"\bON\s+DUPLICATE\s+KEY\b", upper
         )

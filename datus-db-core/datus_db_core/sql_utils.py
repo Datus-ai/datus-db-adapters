@@ -92,42 +92,24 @@ def strip_sql_comments(sql: str) -> str:
     result = []
     i = 0
     length = len(sql)
-    in_single_quote = False
-    in_double_quote = False
+    quote_char: Optional[str] = None
 
     while i < length:
         ch = sql[i]
 
-        if in_single_quote:
+        if quote_char is not None:
             result.append(ch)
-            if ch == "'" and not _is_escaped(sql, i):
-                if i + 1 < length and sql[i + 1] == "'":
+            if ch == quote_char and not _is_escaped(sql, i):
+                if i + 1 < length and sql[i + 1] == quote_char:
                     result.append(sql[i + 1])
                     i += 2
                     continue
-                in_single_quote = False
+                quote_char = None
             i += 1
             continue
 
-        if in_double_quote:
-            result.append(ch)
-            if ch == '"' and not _is_escaped(sql, i):
-                if i + 1 < length and sql[i + 1] == '"':
-                    result.append(sql[i + 1])
-                    i += 2
-                    continue
-                in_double_quote = False
-            i += 1
-            continue
-
-        if ch == "'":
-            in_single_quote = True
-            result.append(ch)
-            i += 1
-            continue
-
-        if ch == '"':
-            in_double_quote = True
+        if ch in ("'", '"', "`"):
+            quote_char = ch
             result.append(ch)
             i += 1
             continue
@@ -160,6 +142,37 @@ def strip_sql_comments(sql: str) -> str:
             continue
 
         result.append(ch)
+        i += 1
+
+    return "".join(result)
+
+
+def mask_sql_quoted_regions(sql: str) -> str:
+    """Replace SQL string literals and quoted identifiers with whitespace."""
+    result = []
+    i = 0
+    length = len(sql)
+    quote_char: Optional[str] = None
+
+    while i < length:
+        ch = sql[i]
+
+        if quote_char is None:
+            if ch in ("'", '"', "`"):
+                quote_char = ch
+                result.append(" ")
+            else:
+                result.append(ch)
+            i += 1
+            continue
+
+        result.append("\n" if ch == "\n" else " ")
+        if ch == quote_char and not _is_escaped(sql, i):
+            if i + 1 < length and sql[i + 1] == quote_char:
+                result.append(" ")
+                i += 2
+                continue
+            quote_char = None
         i += 1
 
     return "".join(result)

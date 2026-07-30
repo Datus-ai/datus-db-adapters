@@ -10,6 +10,7 @@ from datus_db_core.constants import SQLType
 from datus_db_core.registry import ConnectorRegistry
 from datus_db_core.sql_utils import (
     _first_statement,
+    mask_sql_quoted_regions,
     metadata_identifier,
     parse_context_switch,
     parse_dialect,
@@ -22,12 +23,18 @@ from datus_db_core.sql_utils import (
 @pytest.fixture(autouse=True)
 def restore_registry_metadata():
     saved_connectors = ConnectorRegistry._connectors.copy()
+    saved_factories = ConnectorRegistry._factories.copy()
     saved_metadata = ConnectorRegistry._metadata.copy()
     saved_capabilities = ConnectorRegistry._capabilities.copy()
+    saved_uri_builders = ConnectorRegistry._uri_builders.copy()
+    saved_context_resolvers = ConnectorRegistry._context_resolvers.copy()
     yield
     ConnectorRegistry._connectors = saved_connectors
+    ConnectorRegistry._factories = saved_factories
     ConnectorRegistry._metadata = saved_metadata
     ConnectorRegistry._capabilities = saved_capabilities
+    ConnectorRegistry._uri_builders = saved_uri_builders
+    ConnectorRegistry._context_resolvers = saved_context_resolvers
 
 
 class TestParseReadDialect:
@@ -95,6 +102,25 @@ class TestStripSqlComments:
         result = strip_sql_comments(sql)
         assert "multiline" not in result
         assert "1" in result
+
+    def test_comment_markers_inside_backtick_identifier(self):
+        sql = "SELECT `dash--name`, `block/*name*/` -- real comment\nFROM t"
+        result = strip_sql_comments(sql)
+        assert "`dash--name`" in result
+        assert "`block/*name*/`" in result
+        assert "real comment" not in result
+        assert "FROM t" in result
+
+
+class TestMaskSqlQuotedRegions:
+    def test_masks_literals_and_quoted_identifiers(self):
+        sql = "CREATE TABLE `FULLTEXT` (note VARCHAR DEFAULT 'CHECK(id)') DUPLICATE KEY(id)"
+        masked = mask_sql_quoted_regions(sql)
+
+        assert len(masked) == len(sql)
+        assert "FULLTEXT" not in masked
+        assert "CHECK" not in masked
+        assert "DUPLICATE KEY" in masked
 
 
 class TestFirstStatement:

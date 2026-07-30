@@ -94,6 +94,46 @@ def test_validate_ddl_ignores_keywords_inside_identifiers_and_comments(connector
 
 
 @pytest.mark.parametrize(
+    "ddl",
+    [
+        """
+        CREATE TABLE db.t (`FULLTEXT` VARCHAR(20), id BIGINT)
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        """,
+        """
+        CREATE TABLE db.t ("FULLTEXT" VARCHAR(20), id BIGINT)
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        """,
+        """
+        CREATE TABLE db.t (
+            id BIGINT,
+            note VARCHAR(255) DEFAULT 'FULLTEXT CHECK(id) FOREIGN KEY AUTO_INCREMENT ON DUPLICATE KEY'
+        )
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        """,
+    ],
+)
+def test_validate_ddl_ignores_keywords_inside_quoted_regions(connector, ddl):
+    assert connector.validate_ddl(ddl) == []
+
+
+def test_validate_ddl_does_not_accept_required_clauses_inside_string_literals(connector):
+    ddl = """
+    CREATE TABLE db.t (
+        note VARCHAR(255) DEFAULT 'DUPLICATE KEY(id) DISTRIBUTED BY HASH(id)'
+    )
+    """
+
+    errors = connector.validate_ddl(ddl)
+
+    assert any("must define one of" in error for error in errors)
+    assert any("DISTRIBUTED BY" in error for error in errors)
+
+
+@pytest.mark.parametrize(
     ("columns", "expected_keys"),
     [
         ([], []),
