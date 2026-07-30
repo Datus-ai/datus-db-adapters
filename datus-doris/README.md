@@ -119,6 +119,8 @@ queries, and list/CSV/Pandas/Arrow output.
 | `DORIS_PASSWORD` | empty | Password |
 | `DORIS_CATALOG` | `internal` | Initial catalog |
 | `DORIS_DATABASE` | `test` | Test database |
+| `DORIS_FE_JAVA_XMS` | `1024m` | Initial FE JVM heap for the Docker test environment |
+| `DORIS_FE_JAVA_XMX` | `2048m` | Maximum FE JVM heap for the Docker test environment |
 | `HIVE_METASTORE_URI` | `thrift://hive-metastore:9083` | Hive catalog metastore URI |
 
 ## License

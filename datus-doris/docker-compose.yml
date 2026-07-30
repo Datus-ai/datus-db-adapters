@@ -4,7 +4,21 @@ services:
     environment:
       FE_SERVERS: "fe1:10.77.80.2:9010"
       FE_ID: "1"
+      DORIS_FE_JAVA_XMS: "${DORIS_FE_JAVA_XMS:-1024m}"
+      DORIS_FE_JAVA_XMX: "${DORIS_FE_JAVA_XMX:-2048m}"
       TZ: Asia/Shanghai
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        sed -i -E \
+          -e "s/-Xmx[0-9]+[mMgG]/-Xmx$${DORIS_FE_JAVA_XMX}/" \
+          -e "s/-Xms[0-9]+[mMgG]/-Xms$${DORIS_FE_JAVA_XMS}/" \
+          /opt/apache-doris/fe/conf/fe.conf
+        grep -q -- "-Xmx$${DORIS_FE_JAVA_XMX}" /opt/apache-doris/fe/conf/fe.conf
+        grep -q -- "-Xms$${DORIS_FE_JAVA_XMS}" /opt/apache-doris/fe/conf/fe.conf
+        exec bash /usr/local/bin/init_fe.sh
     ports:
       - "${DORIS_QUERY_HOST_PORT:-9030}:9030"
       - "${DORIS_HTTP_HOST_PORT:-8030}:8030"
