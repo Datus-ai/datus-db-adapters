@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
+CURRENT_ADAPTER=""
 
 usage() {
   cat <<'USAGE'
@@ -293,6 +294,61 @@ cleanup_started() {
   for adapter in "${STARTED_ADAPTERS[@]}"; do
     compose_down "$adapter"
   done
+}
+
+dump_adapter_diagnostics() {
+  local adapter="$1"
+  local compose_file
+  local spec
+  local service_name
+  local container_id
+
+  compose_file="$(adapter_compose "$adapter")"
+  echo ""
+  echo "=== Failure diagnostics: $adapter ===" >&2
+  docker_compose -f "$compose_file" ps -a >&2 || true
+
+  for spec in $(adapter_services "$adapter"); do
+    service_name="${spec%%:*}"
+    container_id="$(docker_compose -f "$compose_file" ps -a -q "$service_name" 2>/dev/null || true)"
+    if [ -z "$container_id" ]; then
+      echo "No container found for service '$service_name'." >&2
+      continue
+    fi
+
+    printf "service=%s " "$service_name" >&2
+    docker inspect --format \
+      'container={{.Name}} status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{.State.Error}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      "$container_id" >&2 || true
+
+    echo "--- Logs: $service_name ---" >&2
+    docker_compose -f "$compose_file" logs --no-color --tail=300 "$service_name" >&2 || true
+  done
+
+  echo "--- Runner memory ---" >&2
+  if command -v free >/dev/null 2>&1; then
+    free -h >&2 || true
+  elif command -v vm_stat >/dev/null 2>&1; then
+    vm_stat >&2 || true
+  else
+    echo "No supported memory-reporting command found." >&2
+  fi
+
+  echo "--- Docker disk usage ---" >&2
+  docker system df >&2 || true
+  echo "--- Runner filesystem ---" >&2
+  df -h "$ROOT_DIR" >&2 || true
+}
+
+cleanup_on_exit() {
+  local exit_status=$?
+  trap - EXIT
+
+  if [ "$exit_status" -ne 0 ] && [ -n "$CURRENT_ADAPTER" ]; then
+    dump_adapter_diagnostics "$CURRENT_ADAPTER"
+  fi
+  cleanup_started
+  exit "$exit_status"
 }
 
 cleanup_only=0
@@ -647,9 +703,10 @@ if [ "$dry_run" -eq 1 ]; then
 fi
 
 preflight
-trap cleanup_started EXIT
+trap cleanup_on_exit EXIT
 
 for adapter in "${selected_adapters[@]}"; do
+  CURRENT_ADAPTER="$adapter"
   compose_file="$(adapter_compose "$adapter")"
   test_path="$(adapter_test_path "$adapter")"
   package="$(adapter_package "$adapter")"
@@ -680,4 +737,5 @@ for adapter in "${selected_adapters[@]}"; do
   uv run --package "$package" --with pytest --with pandas --with pyarrow pytest "$test_path" -m integration --tb=short --verbose
 
   compose_down "$adapter"
+  CURRENT_ADAPTER=""
 done
