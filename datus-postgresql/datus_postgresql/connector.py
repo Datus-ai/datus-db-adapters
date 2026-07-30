@@ -144,7 +144,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         Args:
             table_type: Type of object (table, view, mv)
             catalog_name: Catalog name (unused in PostgreSQL)
-            database_name: Database name (unused, uses current database)
+            database_name: Database in which to inspect the objects
             schema_name: Schema name to query
 
         Returns:
@@ -211,7 +211,11 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             tb_name = query_result["table_name"][i]
             result.append(
                 {
-                    "identifier": self.identifier(schema_name=schema, table_name=tb_name),
+                    "identifier": self.identifier(
+                        database_name=database_name,
+                        schema_name=schema,
+                        table_name=tb_name,
+                    ),
                     "catalog_name": "",
                     "database_name": database_name,
                     "schema_name": schema,
@@ -221,7 +225,13 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             )
         return result
 
-    def _get_ddl(self, schema_name: str, table_name: str, object_type: str = "TABLE") -> str:
+    def _get_ddl(
+        self,
+        schema_name: str,
+        table_name: str,
+        object_type: str = "TABLE",
+        database_name: str = "",
+    ) -> str:
         """
         Get DDL for a table/view using pg_get_tabledef or reconstructing from metadata.
 
@@ -229,11 +239,17 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             schema_name: Schema name
             table_name: Table name
             object_type: Object type (TABLE, VIEW, MATERIALIZED VIEW)
+            database_name: Database in which to inspect the object
 
         Returns:
             DDL statement as string
         """
-        full_name = self.full_name(schema_name=schema_name, table_name=table_name)
+        database_name = database_name or self.database_name
+        full_name = self.full_name(
+            database_name=database_name,
+            schema_name=schema_name,
+            table_name=table_name,
+        )
 
         safe_schema = schema_name.replace("'", "''") if schema_name else ""
         safe_table = table_name.replace("'", "''") if table_name else ""
@@ -243,7 +259,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             sql = f"""
                 SELECT pg_get_viewdef('{safe_schema}.{safe_table}'::regclass, true) as definition
             """
-            result = self._execute_pandas(sql)
+            result = self._execute_pandas(sql, database_name=database_name)
             if not result.empty and result["definition"][0]:
                 return f"CREATE VIEW {full_name} AS\n{result['definition'][0]}"
             return f"-- DDL not available for {full_name}"
@@ -255,14 +271,18 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 FROM pg_matviews
                 WHERE schemaname = '{safe_schema}' AND matviewname = '{safe_table}'
             """
-            result = self._execute_pandas(sql)
+            result = self._execute_pandas(sql, database_name=database_name)
             if not result.empty and result["definition"][0]:
                 return f"CREATE MATERIALIZED VIEW {full_name} AS\n{result['definition'][0]}"
             return f"-- DDL not available for {full_name}"
 
         else:
             # For tables, reconstruct DDL from column info
-            columns = self.get_schema(schema_name=schema_name, table_name=table_name)
+            columns = self.get_schema(
+                database_name=database_name,
+                schema_name=schema_name,
+                table_name=table_name,
+            )
             if not columns:
                 return f"-- DDL not available for {full_name}"
 
@@ -301,7 +321,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             table_type: Type of object
             tables: Optional list of specific tables to retrieve
             catalog_name: Catalog name (unused)
-            database_name: Database name (unused)
+            database_name: Database name
             schema_name: Schema name
 
         Returns:
@@ -318,7 +338,12 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         object_type = object_type_map.get(table_type, "TABLE")
 
         for meta in self._get_metadata(table_type, catalog_name, database_name, schema_name):
-            full_name = self.full_name(schema_name=meta["schema_name"], table_name=meta["table_name"])
+            metadata_database = meta["database_name"]
+            full_name = self.full_name(
+                database_name=metadata_database,
+                schema_name=meta["schema_name"],
+                table_name=meta["table_name"],
+            )
 
             # Skip if not in filter list
             if filter_tables and full_name not in filter_tables:
@@ -326,7 +351,19 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
 
             # Get DDL
             try:
-                ddl = self._get_ddl(meta["schema_name"], meta["table_name"], object_type)
+                # Keep the legacy three-argument _get_ddl dispatch compatible
+                # with independently released PostgreSQL subclasses. The
+                # ContextVar is task-local and makes the target database visible
+                # to both the base implementation and subclass metadata queries.
+                token = self._database_var.set(metadata_database)
+                try:
+                    ddl = self._get_ddl(
+                        meta["schema_name"],
+                        meta["table_name"],
+                        object_type,
+                    )
+                finally:
+                    self._database_var.reset(token)
             except Exception as e:
                 logger.warning(f"Could not get DDL for {full_name}: {e}")
                 ddl = f"-- DDL not available for {meta['table_name']}"
@@ -408,7 +445,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
 
         Args:
             catalog_name: Catalog name (unused)
-            database_name: Database name (unused)
+            database_name: Database name
             schema_name: Schema name
             table_name: Table name
 
@@ -469,9 +506,9 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 ORDER BY c.table_schema, c.table_name, c.ordinal_position
             """
 
-        query_result = self._execute_pandas(_build_sql(False))
+        query_result = self._execute_pandas(_build_sql(False), database_name=database_name)
         if len(query_result) == 0:
-            query_result = self._execute_pandas(_build_sql(True))
+            query_result = self._execute_pandas(_build_sql(True), database_name=database_name)
             self._raise_if_ambiguous_table(query_result, schema_name, table_name)
 
         result = []
@@ -543,7 +580,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         database_name = database_name or self.database_name
         safe_db = database_name.replace("'", "''") if database_name else ""
         sql = f"SELECT schema_name FROM information_schema.schemata WHERE catalog_name = '{safe_db}'"
-        result = self._execute_pandas(sql)
+        result = self._execute_pandas(sql, database_name=database_name)
         schemas = result["schema_name"].tolist()
 
         if not include_sys:
@@ -672,15 +709,23 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         # If specific tables provided, query those
         if tables:
             for table_name in tables:
-                full_name = self.full_name(schema_name=schema_name, table_name=table_name)
+                full_name = self.full_name(
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    table_name=table_name,
+                )
                 sql = f"SELECT * FROM {full_name} LIMIT {top_n}"
-                df = self._execute_pandas(sql)
+                df = self._execute_pandas(sql, database_name=database_name)
                 if not df.empty:
                     result.append(
                         {
-                            "identifier": self.identifier(schema_name=schema_name, table_name=table_name),
+                            "identifier": self.identifier(
+                                database_name=database_name,
+                                schema_name=schema_name,
+                                table_name=table_name,
+                            ),
                             "catalog_name": "",
-                            "database_name": self.database_name,
+                            "database_name": database_name or self.database_name,
                             "schema_name": schema_name,
                             "table_name": table_name,
                             "sample_rows": df.to_csv(index=False),
@@ -691,15 +736,20 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         # Otherwise get metadata and query all tables
         metadata = self._get_metadata(table_type, "", database_name, schema_name)
         for meta in metadata:
-            full_name = self.full_name(schema_name=meta["schema_name"], table_name=meta["table_name"])
+            metadata_database = meta["database_name"]
+            full_name = self.full_name(
+                database_name=metadata_database,
+                schema_name=meta["schema_name"],
+                table_name=meta["table_name"],
+            )
             sql = f"SELECT * FROM {full_name} LIMIT {top_n}"
-            df = self._execute_pandas(sql)
+            df = self._execute_pandas(sql, database_name=metadata_database)
             if not df.empty:
                 result.append(
                     {
                         "identifier": meta["identifier"],
                         "catalog_name": "",
-                        "database_name": self.database_name,
+                        "database_name": metadata_database,
                         "schema_name": meta["schema_name"],
                         "table_name": meta["table_name"],
                         "sample_rows": df.to_csv(index=False),

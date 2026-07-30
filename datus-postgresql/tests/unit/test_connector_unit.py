@@ -544,6 +544,17 @@ def _df(rows, columns):
     return pd.DataFrame(rows, columns=columns)
 
 
+def test_get_schemas_executes_in_requested_database():
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector._execute_pandas = MagicMock(return_value=_df([("reporting",)], ["schema_name"]))
+
+    result = connector.get_schemas(database_name="other_db")
+
+    assert result == ["reporting"]
+    connector._execute_pandas.assert_called_once()
+    assert connector._execute_pandas.call_args.kwargs["database_name"] == "other_db"
+
+
 def test_get_schema_strict_match_hits_no_fallback():
     """Exact case match returns rows from first query and never executes the lower() fallback."""
     connector = _make_pg_connector_for_metadata()
@@ -561,6 +572,17 @@ def test_get_schema_strict_match_hits_no_fallback():
     assert connector._execute_pandas.call_count == 1
     assert [c["name"] for c in result] == ["id", "name"]
     assert result[0]["pk"] is True
+
+
+def test_get_schema_executes_in_requested_database():
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    empty = _df([], _SCHEMA_COLS)
+    connector._execute_pandas = MagicMock(side_effect=[empty, empty])
+
+    connector.get_schema(database_name="other_db", schema_name="public", table_name="users")
+
+    assert connector._execute_pandas.call_count == 2
+    assert all(call.kwargs["database_name"] == "other_db" for call in connector._execute_pandas.call_args_list)
 
 
 def test_get_schema_falls_back_to_lower_when_strict_empty():
@@ -621,6 +643,82 @@ def test_get_schema_empty_table_name_short_circuit():
     connector._execute_pandas.assert_not_called()
 
 
+def test_get_ddl_uses_requested_database_for_table_schema():
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector.get_schema = MagicMock(return_value=[])
+
+    ddl = connector._get_ddl("public", "orders", database_name="other_db")
+
+    connector.get_schema.assert_called_once_with(
+        database_name="other_db",
+        schema_name="public",
+        table_name="orders",
+    )
+    assert '"other_db"."public"."orders"' in ddl
+
+
+@pytest.mark.parametrize("object_type", ["VIEW", "MATERIALIZED VIEW"])
+def test_get_ddl_uses_requested_database_for_view_queries(object_type):
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector._execute_pandas = MagicMock(return_value=_df([], ["definition"]))
+
+    connector._get_ddl("public", "orders", object_type, database_name="other_db")
+
+    connector._execute_pandas.assert_called_once()
+    assert connector._execute_pandas.call_args.kwargs["database_name"] == "other_db"
+
+
+def test_get_objects_with_ddl_propagates_metadata_database():
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    metadata = [
+        {
+            "identifier": "other_db.public.orders",
+            "catalog_name": "",
+            "database_name": "other_db",
+            "schema_name": "public",
+            "table_name": "orders",
+            "table_type": "table",
+        }
+    ]
+    connector._get_metadata = MagicMock(return_value=metadata)
+    observed_databases = []
+
+    def get_ddl(*_args):
+        observed_databases.append(connector.database_name)
+        return "CREATE TABLE orders (id INT);"
+
+    connector._get_ddl = MagicMock(side_effect=get_ddl)
+
+    result = connector._get_objects_with_ddl("table", database_name="other_db", schema_name="public")
+
+    connector._get_ddl.assert_called_once_with(
+        "public",
+        "orders",
+        "TABLE",
+    )
+    assert observed_databases == ["other_db"]
+    assert connector.database_name == "default_db"
+    assert result[0]["definition"] == "CREATE TABLE orders (id INT);"
+
+
+def test_get_sample_rows_executes_in_requested_database():
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector._execute_pandas = MagicMock(return_value=_df([(1,)], ["id"]))
+
+    rows = connector.get_sample_rows(
+        database_name="other_db",
+        schema_name="public",
+        tables=["orders"],
+        top_n=1,
+    )
+
+    connector._execute_pandas.assert_called_once()
+    assert connector._execute_pandas.call_args.kwargs["database_name"] == "other_db"
+    assert '"other_db"."public"."orders"' in connector._execute_pandas.call_args.args[0]
+    assert rows[0]["database_name"] == "other_db"
+    assert rows[0]["identifier"] == "other_db.public.orders"
+
+
 def test_get_metadata_strict_hit_no_fallback():
     """_get_metadata uses only the strict query when it returns rows."""
     connector = _make_pg_connector_for_metadata(schema_name="public")
@@ -631,6 +729,15 @@ def test_get_metadata_strict_hit_no_fallback():
 
     assert connector._execute_pandas.call_count == 1
     assert [m["table_name"] for m in result] == ["t1", "t2"]
+
+
+def test_get_metadata_identifier_uses_requested_database():
+    connector = _make_pg_connector_for_metadata(database_name="default_db", schema_name="public")
+    connector._execute_pandas = MagicMock(return_value=_df([("public", "orders")], ["table_schema", "table_name"]))
+
+    result = connector._get_metadata("table", database_name="other_db", schema_name="public")
+
+    assert result[0]["identifier"] == "other_db.public.orders"
 
 
 def test_get_metadata_falls_back_to_lower_when_strict_empty():

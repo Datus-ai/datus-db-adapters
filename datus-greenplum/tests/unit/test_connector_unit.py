@@ -493,6 +493,45 @@ def test_get_ddl_skips_distribution_on_error():
             assert ddl.endswith(";")
 
 
+def test_get_objects_with_ddl_keeps_legacy_override_compatible_for_other_database():
+    config = GreenplumConfig(username="gpadmin", database="default_db")
+
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
+        connector = GreenplumConnector(config)
+        connector._get_metadata = MagicMock(
+            return_value=[
+                {
+                    "identifier": "other_db.public.orders",
+                    "catalog_name": "",
+                    "database_name": "other_db",
+                    "schema_name": "public",
+                    "table_name": "orders",
+                    "table_type": "table",
+                }
+            ]
+        )
+        observed_databases = []
+
+        def get_distribution_policy(*_args):
+            observed_databases.append(connector.database_name)
+            return 'DISTRIBUTED BY ("id")'
+
+        connector._get_distribution_policy = MagicMock(side_effect=get_distribution_policy)
+        with patch(
+            "datus_postgresql.PostgreSQLConnector._get_ddl",
+            return_value='CREATE TABLE "other_db"."public"."orders" (\n    "id" integer\n);',
+        ):
+            result = connector._get_objects_with_ddl(
+                "table",
+                database_name="other_db",
+                schema_name="public",
+            )
+
+    assert observed_databases == ["other_db"]
+    assert connector.database_name == "default_db"
+    assert result[0]["definition"].endswith('DISTRIBUTED BY ("id");')
+
+
 # ==================== get_storage_info Tests ====================
 
 

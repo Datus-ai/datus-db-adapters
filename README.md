@@ -15,6 +15,8 @@ Plugin Adapters (Independent packages, install as needed)
 ├── datus-sqlalchemy (SQLAlchemy base layer)
 │   ├── datus-mysql
 │   ├── datus-starrocks
+│   ├── datus-postgresql
+│   ├── datus-hologres
 │   └── datus-doris
 │
 └── Native SDK Adapters
@@ -142,6 +144,23 @@ pip install datus-maxcompute
 
 ---
 
+### 7. datus-hologres
+Alibaba Cloud Hologres adapter (PostgreSQL wire protocol).
+
+**Installation**:
+```bash
+pip install datus-hologres
+```
+
+**Features**:
+- Database, schema, and table namespace support
+- Hologres internal and foreign table discovery
+- Hologres storage properties in generated DDL
+- PostgreSQL-compatible SQL execution with Hologres transaction safeguards
+- Tiny TPC-H cloud integration coverage on a real Hologres instance
+
+---
+
 ## Development Guide
 
 ### Development Environment Setup
@@ -163,6 +182,7 @@ pip install -e datus-starrocks
 pip install -e datus-doris
 pip install -e datus-snowflake
 pip install -e datus-maxcompute
+pip install -e datus-hologres
 ```
 
 **Note**: The root `pyproject.toml` is only for development environment management. End users should install individual packages.

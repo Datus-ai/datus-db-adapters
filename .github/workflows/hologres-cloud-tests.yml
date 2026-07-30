@@ -1,0 +1,66 @@
+name: Hologres Cloud Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 18 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hologres-cloud-tests
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HOLOGRES_HOST: ${{ secrets.HOLOGRES_HOST }}
+      HOLOGRES_PORT: ${{ secrets.HOLOGRES_PORT }}
+      HOLOGRES_DATABASE: ${{ secrets.HOLOGRES_DATABASE }}
+      HOLOGRES_SCHEMA: ${{ secrets.HOLOGRES_SCHEMA }}
+      HOLOGRES_ACCESS_KEY_ID: ${{ secrets.HOLOGRES_ACCESS_KEY_ID }}
+      HOLOGRES_ACCESS_KEY_SECRET: ${{ secrets.HOLOGRES_ACCESS_KEY_SECRET }}
+      HOLOGRES_SSLMODE: ${{ secrets.HOLOGRES_SSLMODE }}
+      HOLOGRES_TEST_MATERIALIZED_VIEW: ${{ secrets.HOLOGRES_TEST_MATERIALIZED_VIEW }}
+      HOLOGRES_SECONDARY_DATABASE: ${{ secrets.HOLOGRES_SECONDARY_DATABASE }}
+      HOLOGRES_SECONDARY_SCHEMA: ${{ secrets.HOLOGRES_SECONDARY_SCHEMA }}
+      HOLOGRES_TEST_FOREIGN_TABLE: ${{ secrets.HOLOGRES_TEST_FOREIGN_TABLE }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Verify cloud test configuration
+        shell: bash
+        run: |
+          required=(
+            HOLOGRES_HOST
+            HOLOGRES_DATABASE
+            HOLOGRES_ACCESS_KEY_ID
+            HOLOGRES_ACCESS_KEY_SECRET
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required repository secret: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Run Hologres contract and Tiny TPC-H tests
+        run: |
+          uv run --all-packages --with pytest \
+            pytest datus-hologres/tests/integration -m integration --verbose

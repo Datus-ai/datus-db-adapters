@@ -23,6 +23,7 @@ on:
           - datus-trino
           - datus-greenplum
           - datus-maxcompute
+          - datus-hologres
       version:
         description: "New canonical package version, for example 0.1.5"
         required: true
