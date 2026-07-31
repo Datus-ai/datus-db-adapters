@@ -66,44 +66,52 @@ def _private_key_to_der(private_key: str, private_key_file_pwd: Optional[str] = 
 
 def _handle_snowflake_exception(e: Exception, sql: str = "") -> DatusDbException:
     """Handle Snowflake exceptions and map to appropriate Datus ErrorCode."""
+    error_message = getattr(e, "raw_msg", None) or getattr(e, "msg", None) or str(e)
+    logger.error(
+        "Snowflake SQL execution failed; sql=%s; error_type=%s; error=%r",
+        sql,
+        type(e).__name__,
+        e,
+        exc_info=(type(e), e, e.__traceback__),
+    )
 
     if isinstance(e, ProgrammingError):
         return DatusDbException(
             ErrorCode.DB_EXECUTION_SYNTAX_ERROR,
-            message_args={"sql": sql, "error_message": e.raw_msg},
+            message_args={"sql": sql, "error_message": error_message},
         )
 
     elif isinstance(e, (OperationalError, DatabaseError)):
         return DatusDbException(
             ErrorCode.DB_EXECUTION_ERROR,
-            message_args={"sql": sql, "error_message": e.raw_msg},
+            message_args={"sql": sql, "error_message": error_message},
         )
 
     elif isinstance(e, IntegrityError):
         return DatusDbException(
             ErrorCode.DB_CONSTRAINT_VIOLATION,
-            message_args={"sql": sql, "error_message": e.raw_msg},
+            message_args={"sql": sql, "error_message": error_message},
         )
 
     elif isinstance(e, (RequestTimeoutError, ServiceUnavailableError)):
         return DatusDbException(
             ErrorCode.DB_EXECUTION_TIMEOUT,
-            message_args={"sql": sql, "error_message": e.raw_msg},
+            message_args={"sql": sql, "error_message": error_message},
         )
 
     elif isinstance(e, (InterfaceError, InternalError)):
-        return DatusDbException(ErrorCode.DB_CONNECTION_FAILED, message_args={"error_message": e.raw_msg})
+        return DatusDbException(ErrorCode.DB_CONNECTION_FAILED, message_args={"error_message": error_message})
 
     elif isinstance(e, ForbiddenError):
         return DatusDbException(
             ErrorCode.DB_PERMISSION_DENIED,
-            message_args={"operation": "query execution", "error_message": e.raw_msg},
+            message_args={"operation": "query execution", "error_message": error_message},
         )
 
     elif isinstance(e, (DataError, NotSupportedError)):
         return DatusDbException(
             ErrorCode.DB_EXECUTION_ERROR,
-            message_args={"sql": sql, "error_message": e.raw_msg},
+            message_args={"sql": sql, "error_message": error_message},
         )
 
     else:
@@ -247,24 +255,30 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         params: Sequence[Any] | dict[Any, Any] | None = None,
     ) -> DataFrame:
         """Execute query and return pandas DataFrame."""
-        with self.connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            return cursor.fetch_pandas_all()
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                return cursor.fetch_pandas_all()
+        except Exception as e:
+            raise _handle_snowflake_exception(e, sql) from e
 
     def execute_query_to_dict(self, sql: str) -> List[Dict[str, Any]]:
         """Execute query and return list of dictionaries."""
-        with self.connection.cursor() as cursor:
-            cursor.execute(sql)
-            query_result = cursor.fetchall()
-            if not query_result or isinstance(query_result[0], dict):
-                return query_result
-            result = []
-            for item in query_result:
-                item_dict = {}
-                for i, col in enumerate(cursor.description):
-                    item_dict[col.name] = item[i]
-                result.append(item_dict)
-        return result
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql)
+                query_result = cursor.fetchall()
+                if not query_result or isinstance(query_result[0], dict):
+                    return query_result
+                result = []
+                for item in query_result:
+                    item_dict = {}
+                    for i, col in enumerate(cursor.description):
+                        item_dict[col.name] = item[i]
+                    result.append(item_dict)
+            return result
+        except Exception as e:
+            raise _handle_snowflake_exception(e, sql) from e
 
     @override
     def execute_ddl(
@@ -470,6 +484,8 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
                 error=None,
                 result_format="pandas",
             )
+        except DatusDbException as e:
+            return ExecuteSQLResult(success=False, sql_query=sql, result_format="pandas", error=str(e))
         except Exception as e:
             ex = _handle_snowflake_exception(e, sql)
             return ExecuteSQLResult(success=False, sql_query=sql, result_format="pandas", error=str(ex))

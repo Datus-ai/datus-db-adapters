@@ -170,6 +170,14 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Map SQLAlchemy exceptions to Datus exceptions."""
         if isinstance(e, DatusDbException):
             return e
+        logger.error(
+            "%s failed; sql=%s; error_type=%s; error=%r",
+            operation,
+            sql,
+            type(e).__name__,
+            e,
+            exc_info=(type(e), e, e.__traceback__),
+        )
 
         # Extract error message
         if hasattr(e, "detail") and e.detail:
@@ -767,7 +775,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                         yield ()
                     yield from []
         except Exception as e:
-            raise self._handle_exception(e) from e
+            raise self._handle_exception(e, sql, "streaming query") from e
 
     # ==================== MigrationTargetMixin (generic fallback) ====================
     #

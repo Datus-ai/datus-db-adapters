@@ -4,11 +4,12 @@
 
 """Pure-Pydantic SnowflakeConfig tests — no live Snowflake required."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from snowflake.connector.errors import ProgrammingError
 
 from datus_snowflake import SnowflakeConfig, SnowflakeConnector
 
@@ -31,6 +32,25 @@ def _private_key_material(encryption_password: bytes | None = None) -> tuple[str
         encryption_algorithm=serialization.NoEncryption(),
     )
     return pem, der
+
+
+def test_snowflake_execution_error_logs_original_exception(caplog):
+    connector = object.__new__(SnowflakeConnector)
+    connector.connection = MagicMock()
+    error = ProgrammingError("syntax error")
+    error.raw_msg = None
+    cursor = connector.connection.cursor.return_value.__enter__.return_value
+    cursor.execute.side_effect = error
+
+    result = connector.execute_pandas("SELECT bad")
+
+    assert result.success is False
+    assert "syntax error" in result.error
+    assert "Error details: None" not in result.error
+    assert "Snowflake SQL execution failed; sql=SELECT bad" in caplog.text
+    matching_records = [record for record in caplog.records if "Snowflake SQL execution failed" in record.message]
+    assert len(matching_records) == 1
+    assert matching_records[0].exc_info[1] is error
 
 
 def test_config_requires_password_or_key():

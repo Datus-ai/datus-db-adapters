@@ -62,6 +62,13 @@ def _handle_redshift_exception(e: Exception, sql: str = "") -> DatusDbException:
     Returns:
         DatusDbException with appropriate error code and message
     """
+    logger.error(
+        "Redshift SQL execution failed; sql=%s; error_type=%s; error=%r",
+        sql,
+        type(e).__name__,
+        e,
+        exc_info=(type(e), e, e.__traceback__),
+    )
 
     # Check subclasses before parent classes to ensure correct error mapping.
     # IntegrityError, InternalError, DataError are all subclasses of DatabaseError,

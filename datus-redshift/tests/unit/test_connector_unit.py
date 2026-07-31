@@ -354,11 +354,14 @@ def test_validate_starts_with_digit():
 
 
 @pytest.mark.acceptance
-def test_handle_programming_error():
+def test_handle_programming_error(caplog):
     """Test ProgrammingError maps to DB_EXECUTION_SYNTAX_ERROR."""
-    ex = _handle_redshift_exception(ProgrammingError("syntax error"), "SELECT bad")
+    error = ProgrammingError("syntax error")
+    ex = _handle_redshift_exception(error, "SELECT bad")
     assert isinstance(ex, DatusDbException)
     assert ex.code == ErrorCode.DB_EXECUTION_SYNTAX_ERROR
+    assert "Redshift SQL execution failed; sql=SELECT bad" in caplog.text
+    assert caplog.records[-1].exc_info[1] is error
 
 
 def test_handle_operational_error():

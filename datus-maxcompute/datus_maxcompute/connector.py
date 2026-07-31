@@ -338,6 +338,13 @@ class MaxComputeConnector(BaseSqlConnector):
             table = self._query_arrow(sql, catalog_name, database_name, schema_name)
             return self._query_result(sql, table, result_format)
         except Exception as exc:
+            logger.error(
+                "MaxCompute query execution failed; sql=%s; error_type=%s; error=%r",
+                sql,
+                type(exc).__name__,
+                exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             return ExecuteSQLResult(
                 success=False,
                 error=str(exc),
@@ -384,6 +391,13 @@ class MaxComputeConnector(BaseSqlConnector):
                 result_format="",
             )
         except Exception as exc:
+            logger.error(
+                "MaxCompute SQL execution failed; sql=%s; error_type=%s; error=%r",
+                sql,
+                type(exc).__name__,
+                exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql, result_format="")
 
     @override
@@ -430,6 +444,13 @@ class MaxComputeConnector(BaseSqlConnector):
         try:
             table = self._query_arrow(query, max_rows=max(0, int(max_rows)))
         except Exception as exc:
+            logger.error(
+                "MaxCompute query execution failed; sql=%s; error_type=%s; error=%r",
+                query,
+                type(exc).__name__,
+                exc,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             raise DatusDbException(ErrorCode.DB_EXECUTION_ERROR, message=str(exc)) from exc
         if with_header:
             yield tuple(table.column_names)
