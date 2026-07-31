@@ -265,7 +265,22 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             with self.connection.cursor() as cursor:
                 cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT='ARROW'")
                 cursor.execute(sql_query, params)
-                return cursor.fetch_arrow_all(force_return_table=True), cursor.rowcount
+                try:
+                    arrow_table = cursor.fetch_arrow_all(force_return_table=True)
+                except NotSupportedError:
+                    # Snowflake can return JSON for statements such as EXPLAIN
+                    # even when Arrow is requested for the session. In that case
+                    # fetch_arrow_all() rejects the result before consuming it,
+                    # so fetch the rows normally and materialize the requested
+                    # Arrow result locally.
+                    rows = cursor.fetchall()
+                    column_names = [getattr(column, "name", None) or column[0] for column in (cursor.description or [])]
+                    arrays = [
+                        pa.array([row.get(column_name) if isinstance(row, dict) else row[index] for row in rows])
+                        for index, column_name in enumerate(column_names)
+                    ]
+                    arrow_table = pa.Table.from_arrays(arrays, names=column_names)
+                return arrow_table, cursor.rowcount
         except Exception as e:
             raise _handle_snowflake_exception(e, sql_query)
 
