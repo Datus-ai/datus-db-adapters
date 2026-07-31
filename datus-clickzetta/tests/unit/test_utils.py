@@ -85,6 +85,23 @@ class TestUtilityFunctions:
         count = ClickZettaConnector._extract_row_count(None)
         assert count == 0
 
+    def test_sql_execution_error_logs_original_exception(self, caplog):
+        from datus_clickzetta.connector import ClickZettaConnector
+        from datus_db_core import DatusDbException
+
+        connector = object.__new__(ClickZettaConnector)
+        error = RuntimeError("query failed")
+
+        try:
+            raise error
+        except RuntimeError as exc:
+            with pytest.raises(DatusDbException):
+                connector._wrap_exception(exc, "SELECT bad")
+
+        assert "ClickZetta SQL execution failed; sql_preview='SELECT bad'; sql_chars=10" in caplog.text
+        assert "query failed" in caplog.text
+        assert caplog.records[-1].exc_info[2] is error.__traceback__
+
     def test_normalize_volume_uri(self):
         """Test volume URI normalization."""
         from datus_clickzetta.connector import ClickZettaConnector

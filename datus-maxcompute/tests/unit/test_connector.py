@@ -47,6 +47,19 @@ def make_instance(table=None):
     return instance, reader
 
 
+def test_execute_query_logs_original_exception(config, caplog):
+    connector, _ = make_connector(config)
+    error = RuntimeError("query failed")
+
+    with patch.object(connector, "_query_arrow", side_effect=error):
+        result = connector.execute_query("SELECT bad")
+
+    assert result.success is False
+    assert "MaxCompute query execution failed; sql_preview='SELECT bad'; sql_chars=10" in caplog.text
+    assert "query failed" in caplog.text
+    assert caplog.records[-1].exc_info[2] is error.__traceback__
+
+
 def test_auto_detects_and_caches_three_level(config):
     connector, odps = make_connector(config)
 

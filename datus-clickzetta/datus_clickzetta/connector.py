@@ -35,6 +35,7 @@ else:
 
 logger = get_logger(__name__)
 
+_SQL_PREVIEW_CHARS = 50
 _DEFAULT_HINTS: Dict[str, Any] = {
     "sdk.job.timeout": 300,
     "query_tag": "Query from Datus Agent",
@@ -47,6 +48,30 @@ _DEFAULT_HINTS: Dict[str, Any] = {
     "cz.sql.index.prewhere.enabled": "true",
     "cz.storage.parquet.enable.io.prefetch": "false",
 }
+
+
+def _log_sql_exception(event: str, sql: str, exc: Exception) -> None:
+    """Log a SQL failure with a bounded preview instead of the full statement."""
+    statement = sql or ""
+    normalized_sql = " ".join(statement.split())
+    sql_preview = normalized_sql[:_SQL_PREVIEW_CHARS]
+    if len(normalized_sql) > _SQL_PREVIEW_CHARS:
+        sql_preview += "..."
+    driver_error = str(getattr(exc, "orig", None) or exc) or type(exc).__name__
+    if statement:
+        driver_error = driver_error.replace(statement, "<sql>")
+    if normalized_sql and normalized_sql != statement:
+        driver_error = driver_error.replace(normalized_sql, "<sql>")
+    safe_exception = RuntimeError(driver_error)
+    logger.error(
+        "%s; sql_preview=%r; sql_chars=%d; error_type=%s; error=%s",
+        event,
+        sql_preview,
+        len(statement),
+        type(exc).__name__,
+        driver_error,
+        exc_info=(type(safe_exception), safe_exception, exc.__traceback__),
+    )
 
 
 def _safe_escape(value: Optional[str]) -> str:
@@ -236,6 +261,7 @@ class ClickZettaConnector:
     ):
         if isinstance(exc, DatusDbException):
             raise exc
+        _log_sql_exception("ClickZetta SQL execution failed", sql, exc)
         raise DatusDbException(error_code, message_args={"error_message": str(exc), "sql": sql}) from exc
 
     def _run_query(self, sql: str) -> pd.DataFrame:
@@ -479,8 +505,10 @@ class ClickZettaConnector:
             if max_rows is not None and len(df) > max_rows:
                 df = df.head(max_rows)
             return df
+        except DatusDbException:
+            raise
         except Exception as e:
-            logger.error(f"Error executing query to DataFrame: {sql}, error: {str(e)}")
+            _log_sql_exception("ClickZetta DataFrame query failed", sql, e)
             raise DatusDbException(
                 code=ErrorCode.DB_EXECUTION_ERROR,
                 message=f"Failed to execute query to DataFrame: {str(e)}",
@@ -494,8 +522,10 @@ class ClickZettaConnector:
                 return []
             # Convert DataFrame to list of dictionaries with records orientation
             return df.to_dict(orient="records")
+        except DatusDbException:
+            raise
         except Exception as e:
-            logger.error(f"Error executing query to dict: {sql}, error: {str(e)}")
+            _log_sql_exception("ClickZetta dictionary query failed", sql, e)
             raise DatusDbException(
                 code=ErrorCode.DB_EXECUTION_ERROR,
                 message=f"Failed to execute query to dict: {str(e)}",
@@ -539,8 +569,10 @@ class ClickZettaConnector:
                 row_count=len(df),
                 result_format="arrow",
             )
+        except DatusDbException:
+            raise
         except Exception as e:
-            logger.error(f"Error executing Arrow query: {sql}, error: {str(e)}")
+            _log_sql_exception("ClickZetta Arrow query failed", sql, e)
             raise DatusDbException(
                 code=ErrorCode.DB_EXECUTION_ERROR,
                 message=f"Failed to execute Arrow query: {str(e)}",
