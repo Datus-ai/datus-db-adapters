@@ -19,7 +19,7 @@ classifiers = [
 
 dependencies = [
     "datus-db-core>=0.1.5",
-    "datus-sqlalchemy>=0.1.7",
+    "datus-sqlalchemy>=0.1.8",
     "pyhive>=0.7.0",
     "pure-sasl>=0.6.2",
     "thrift>=0.16.0",
