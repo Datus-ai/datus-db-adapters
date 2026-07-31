@@ -98,8 +98,9 @@ class TestUtilityFunctions:
             with pytest.raises(DatusDbException):
                 connector._wrap_exception(exc, "SELECT bad")
 
-        assert "ClickZetta SQL execution failed; sql=SELECT bad" in caplog.text
-        assert caplog.records[-1].exc_info[1] is error
+        assert "ClickZetta SQL execution failed; sql_preview='SELECT bad'; sql_chars=10" in caplog.text
+        assert "query failed" in caplog.text
+        assert caplog.records[-1].exc_info[2] is error.__traceback__
 
     def test_normalize_volume_uri(self):
         """Test volume URI normalization."""

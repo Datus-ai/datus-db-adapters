@@ -360,8 +360,8 @@ def test_handle_programming_error(caplog):
     ex = _handle_redshift_exception(error, "SELECT bad")
     assert isinstance(ex, DatusDbException)
     assert ex.code == ErrorCode.DB_EXECUTION_SYNTAX_ERROR
-    assert "Redshift SQL execution failed; sql=SELECT bad" in caplog.text
-    assert caplog.records[-1].exc_info[1] is error
+    assert "Redshift SQL execution failed; sql_preview='SELECT bad'; sql_chars=10" in caplog.text
+    assert "syntax error" in caplog.text
 
 
 def test_handle_operational_error():

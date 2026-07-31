@@ -39,11 +39,36 @@ else:
 
 logger = get_logger(__name__)
 
+_SQL_PREVIEW_CHARS = 50
 _NOT_THREE_LEVEL_MARKER = "is not 3-tier model project"
 _UNSUPPORTED_SQL_RE = re.compile(
     r"^\s*(?:begin(?:\s+transaction)?|start\s+transaction|commit|rollback|grant|revoke)\b",
     flags=re.IGNORECASE,
 )
+
+
+def _log_sql_exception(event: str, sql: str, exc: Exception) -> None:
+    """Log a SQL failure with a bounded preview instead of the full statement."""
+    statement = sql or ""
+    normalized_sql = " ".join(statement.split())
+    sql_preview = normalized_sql[:_SQL_PREVIEW_CHARS]
+    if len(normalized_sql) > _SQL_PREVIEW_CHARS:
+        sql_preview += "..."
+    driver_error = str(getattr(exc, "orig", None) or exc) or type(exc).__name__
+    if statement:
+        driver_error = driver_error.replace(statement, "<sql>")
+    if normalized_sql and normalized_sql != statement:
+        driver_error = driver_error.replace(normalized_sql, "<sql>")
+    safe_exception = RuntimeError(driver_error)
+    logger.error(
+        "%s; sql_preview=%r; sql_chars=%d; error_type=%s; error=%s",
+        event,
+        sql_preview,
+        len(statement),
+        type(exc).__name__,
+        driver_error,
+        exc_info=(type(safe_exception), safe_exception, exc.__traceback__),
+    )
 
 
 def _secret_value(value: Union[SecretStr, str]) -> str:
@@ -338,13 +363,7 @@ class MaxComputeConnector(BaseSqlConnector):
             table = self._query_arrow(sql, catalog_name, database_name, schema_name)
             return self._query_result(sql, table, result_format)
         except Exception as exc:
-            logger.error(
-                "MaxCompute query execution failed; sql=%s; error_type=%s; error=%r",
-                sql,
-                type(exc).__name__,
-                exc,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+            _log_sql_exception("MaxCompute query execution failed", sql, exc)
             return ExecuteSQLResult(
                 success=False,
                 error=str(exc),
@@ -391,13 +410,7 @@ class MaxComputeConnector(BaseSqlConnector):
                 result_format="",
             )
         except Exception as exc:
-            logger.error(
-                "MaxCompute SQL execution failed; sql=%s; error_type=%s; error=%r",
-                sql,
-                type(exc).__name__,
-                exc,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+            _log_sql_exception("MaxCompute SQL execution failed", sql, exc)
             return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql, result_format="")
 
     @override
@@ -444,13 +457,7 @@ class MaxComputeConnector(BaseSqlConnector):
         try:
             table = self._query_arrow(query, max_rows=max(0, int(max_rows)))
         except Exception as exc:
-            logger.error(
-                "MaxCompute query execution failed; sql=%s; error_type=%s; error=%r",
-                query,
-                type(exc).__name__,
-                exc,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+            _log_sql_exception("MaxCompute query execution failed", query, exc)
             raise DatusDbException(ErrorCode.DB_EXECUTION_ERROR, message=str(exc)) from exc
         if with_header:
             yield tuple(table.column_names)

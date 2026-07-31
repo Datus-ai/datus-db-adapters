@@ -43,6 +43,32 @@ from .config import SnowflakeConfig
 
 logger = get_logger(__name__)
 
+_SQL_PREVIEW_CHARS = 50
+
+
+def _log_sql_exception(event: str, sql: str, exc: Exception) -> None:
+    """Log a SQL failure with a bounded preview instead of the full statement."""
+    statement = sql or ""
+    normalized_sql = " ".join(statement.split())
+    sql_preview = normalized_sql[:_SQL_PREVIEW_CHARS]
+    if len(normalized_sql) > _SQL_PREVIEW_CHARS:
+        sql_preview += "..."
+    driver_error = str(getattr(exc, "orig", None) or exc) or type(exc).__name__
+    if statement:
+        driver_error = driver_error.replace(statement, "<sql>")
+    if normalized_sql and normalized_sql != statement:
+        driver_error = driver_error.replace(normalized_sql, "<sql>")
+    safe_exception = RuntimeError(driver_error)
+    logger.error(
+        "%s; sql_preview=%r; sql_chars=%d; error_type=%s; error=%s",
+        event,
+        sql_preview,
+        len(statement),
+        type(exc).__name__,
+        driver_error,
+        exc_info=(type(safe_exception), safe_exception, exc.__traceback__),
+    )
+
 
 def _private_key_to_der(private_key: str, private_key_file_pwd: Optional[str] = None) -> bytes:
     """Convert a PEM private key string into DER bytes accepted by Snowflake."""
@@ -67,13 +93,7 @@ def _private_key_to_der(private_key: str, private_key_file_pwd: Optional[str] = 
 def _handle_snowflake_exception(e: Exception, sql: str = "") -> DatusDbException:
     """Handle Snowflake exceptions and map to appropriate Datus ErrorCode."""
     error_message = getattr(e, "raw_msg", None) or getattr(e, "msg", None) or str(e)
-    logger.error(
-        "Snowflake SQL execution failed; sql=%s; error_type=%s; error=%r",
-        sql,
-        type(e).__name__,
-        e,
-        exc_info=(type(e), e, e.__traceback__),
-    )
+    _log_sql_exception("Snowflake SQL execution failed", sql, e)
 
     if isinstance(e, ProgrammingError):
         return DatusDbException(
@@ -115,7 +135,7 @@ def _handle_snowflake_exception(e: Exception, sql: str = "") -> DatusDbException
         )
 
     else:
-        return DatusDbException(ErrorCode.DB_FAILED, message_args={"error_message": str(e)})
+        return DatusDbException(ErrorCode.DB_FAILED, message_args={"error_message": error_message})
 
 
 class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedViewSupportMixin, MigrationTargetMixin):

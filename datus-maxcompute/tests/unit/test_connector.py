@@ -55,8 +55,9 @@ def test_execute_query_logs_original_exception(config, caplog):
         result = connector.execute_query("SELECT bad")
 
     assert result.success is False
-    assert "MaxCompute query execution failed; sql=SELECT bad" in caplog.text
-    assert caplog.records[-1].exc_info[1] is error
+    assert "MaxCompute query execution failed; sql_preview='SELECT bad'; sql_chars=10" in caplog.text
+    assert "query failed" in caplog.text
+    assert caplog.records[-1].exc_info[2] is error.__traceback__
 
 
 def test_auto_detects_and_caches_three_level(config):

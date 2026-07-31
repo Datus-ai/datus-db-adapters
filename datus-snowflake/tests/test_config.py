@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from snowflake.connector.errors import ProgrammingError
 
 from datus_snowflake import SnowflakeConfig, SnowflakeConnector
+from datus_snowflake.connector import _handle_snowflake_exception
 
 
 def _private_key_material(encryption_password: bytes | None = None) -> tuple[str, bytes]:
@@ -41,16 +42,29 @@ def test_snowflake_execution_error_logs_original_exception(caplog):
     error.raw_msg = None
     cursor = connector.connection.cursor.return_value.__enter__.return_value
     cursor.execute.side_effect = error
+    sql = "SELECT " + ("x" * 220) + " FROM sensitive_tail"
 
-    result = connector.execute_pandas("SELECT bad")
+    result = connector.execute_pandas(sql)
 
     assert result.success is False
     assert "syntax error" in result.error
     assert "Error details: None" not in result.error
-    assert "Snowflake SQL execution failed; sql=SELECT bad" in caplog.text
+    assert "Snowflake SQL execution failed; sql_preview='SELECT " in caplog.text
+    assert f"sql_chars={len(sql)}" in caplog.text
+    assert "sensitive_tail" not in caplog.text
     matching_records = [record for record in caplog.records if "Snowflake SQL execution failed" in record.message]
     assert len(matching_records) == 1
-    assert matching_records[0].exc_info[1] is error
+    assert matching_records[0].exc_info[2] is error.__traceback__
+
+
+def test_snowflake_unclassified_error_uses_normalized_raw_message():
+    error = RuntimeError("generic fallback")
+    error.raw_msg = "driver raw message"
+
+    result = _handle_snowflake_exception(error)
+
+    assert "driver raw message" in str(result)
+    assert "generic fallback" not in str(result)
 
 
 def test_config_requires_password_or_key():

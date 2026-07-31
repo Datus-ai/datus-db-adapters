@@ -262,8 +262,9 @@ def test_handle_exception_classifies_and_logs_common_failures(exception, expecte
     classified = connector._handle_exception(exception, "SELECT 1", "query")
 
     assert classified.code == expected_code
-    assert "query failed; sql=SELECT 1" in caplog.text
-    assert caplog.records[-1].exc_info[1] is exception
+    assert "query failed; sql_preview='SELECT 1'; sql_chars=8" in caplog.text
+    assert caplog.text.count("SELECT 1") == 1
+    assert caplog.records[-1].exc_info[2] is exception.__traceback__
 
 
 def test_ensure_engine_classifies_connection_creation_failure():
