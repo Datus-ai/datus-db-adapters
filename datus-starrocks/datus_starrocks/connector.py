@@ -294,7 +294,7 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         ]
 
         if table_type == "mv":
-            rows = self._try_show(targets, "SHOW MATERIALIZED VIEWS FROM")
+            rows = self._try_show(targets, "SHOW MATERIALIZED VIEWS FROM", catalog_name)
             if rows is None:
                 return None
             names = self._pick_name_column(rows)
@@ -303,34 +303,29 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         if table_type not in ("table", "view"):
             return None
 
-        # SHOW FULL TABLES carries a Table_type column, so tables and views stay separable.
-        rows = self._try_show(targets, "SHOW FULL TABLES FROM")
-        if rows is not None and len(rows.columns) >= 2:
-            wanted = "VIEW" if table_type == "view" else "BASE TABLE"
-            name_col, type_col = rows.columns[0], rows.columns[1]
-            return [
-                self._metadata_row(catalog_name, database_name, str(rows[name_col][i]), table_type)
-                for i in range(len(rows))
-                if str(rows[type_col][i]).upper() == wanted
-            ]
+        # Only SHOW FULL TABLES carries a Table_type column. Plain SHOW TABLES lumps views
+        # in with tables, so there is no honest way to answer either request from it.
+        rows = self._try_show(targets, "SHOW FULL TABLES FROM", catalog_name)
+        if rows is None or len(rows.columns) < 2:
+            return None
 
-        # Plain SHOW TABLES cannot distinguish views, so only tables may use it — and it
-        # over-reports by including views, which is still better than reporting nothing.
-        if table_type == "view":
-            return None
-        rows = self._try_show(targets, "SHOW TABLES FROM")
-        if rows is None:
-            return None
+        wanted = "VIEW" if table_type == "view" else "BASE TABLE"
+        name_col, type_col = rows.columns[0], rows.columns[1]
         return [
-            self._metadata_row(catalog_name, database_name, str(rows[rows.columns[0]][i]), "table")
+            self._metadata_row(catalog_name, database_name, str(rows[name_col][i]), table_type)
             for i in range(len(rows))
+            if str(rows[type_col][i]).upper() == wanted
         ]
 
-    def _try_show(self, targets: List[str], statement: str):
-        """Run ``statement`` against each target until one succeeds; None if all fail."""
+    def _try_show(self, targets: List[str], statement: str, catalog_name: str = ""):
+        """Run ``statement`` against each target until one succeeds; None if all fail.
+
+        ``catalog_name`` is applied to the connection, so the unqualified spellings
+        resolve in the requested catalog rather than whatever the session is on.
+        """
         for target in targets:
             try:
-                return self._execute_pandas(f"{statement} {target}")
+                return self._execute_pandas(f"{statement} {target}", catalog_name=catalog_name)
             except Exception as e:
                 logger.debug(f"'{statement} {target}' failed: {e}")
         return None
@@ -378,7 +373,7 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             f"{quoted_db}.{quoted_table}",
             f"{quoted_table} FROM {quoted_db}",
         ]
-        rows = self._try_show(targets, "SHOW FULL COLUMNS FROM")
+        rows = self._try_show(targets, "SHOW FULL COLUMNS FROM", catalog_name)
         if rows is None:
             return None
 
@@ -620,9 +615,10 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
         Connectors are cached and shared across callers, so disposing the engine here
         would drop the pool other threads are using. Only an engine this probe itself
-        brought up gets torn down.
+        brought up gets torn down — ownership is deliberately not consulted, since an
+        engine attached from elsewhere is even less ours to dispose.
         """
-        engine_was_live = bool(self.engine and self._owns_engine)
+        engine_was_live = self.engine is not None
         try:
             return super().test_connection()
         finally:

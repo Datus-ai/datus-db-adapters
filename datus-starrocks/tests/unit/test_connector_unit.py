@@ -660,7 +660,7 @@ def test_get_tables_falls_back_to_show_when_information_schema_fails():
     """information_schema can time out server-side; SHOW still answers."""
     connector = _connector_for_metadata()
 
-    def fake_execute(sql):
+    def fake_execute(sql, **kwargs):
         if "information_schema" in sql:
             raise RuntimeError("call frontend service failed: THRIFT_EAGAIN (timed out)")
         if sql.startswith("SHOW FULL TABLES"):
@@ -674,18 +674,19 @@ def test_get_tables_falls_back_to_show_when_information_schema_fails():
 
 
 @pytest.mark.acceptance
-def test_get_tables_falls_back_to_plain_show_tables():
-    """Older clusters reject SHOW FULL TABLES; plain SHOW TABLES still lists tables."""
+def test_get_tables_reraises_when_show_full_tables_is_rejected():
+    """Plain SHOW TABLES cannot tell a view from a table, so it is not an answer."""
     connector = _connector_for_metadata()
 
-    def fake_execute(sql):
+    def fake_execute(sql, **kwargs):
         if sql.startswith("SHOW TABLES"):
-            return pd.DataFrame({"Tables_in_testdb": ["orders", "items"]})
-        raise RuntimeError("unsupported")
+            return pd.DataFrame({"Tables_in_testdb": ["orders", "v_orders"]})
+        raise RuntimeError("thrift timeout")
 
     connector._execute_pandas = MagicMock(side_effect=fake_execute)
 
-    assert connector.get_tables(database_name="testdb") == ["orders", "items"]
+    with pytest.raises(RuntimeError, match="thrift timeout"):
+        connector.get_tables(database_name="testdb")
 
 
 @pytest.mark.acceptance
@@ -714,7 +715,7 @@ def test_show_fallback_retries_without_catalog_qualifier():
     connector = _connector_for_metadata()
     seen = []
 
-    def fake_execute(sql):
+    def fake_execute(sql, **kwargs):
         seen.append(sql)
         if "information_schema" in sql or "`default_catalog`." in sql:
             raise RuntimeError("rejected")
@@ -764,7 +765,7 @@ def test_get_schema_falls_back_to_show_full_columns():
     """Column lookups hit the same FE thrift path; SHOW answers when it times out."""
     connector = _connector_for_metadata()
 
-    def fake_execute(sql):
+    def fake_execute(sql, **kwargs):
         if "INFORMATION_SCHEMA" in sql.upper():
             raise RuntimeError("call frontend service failed: THRIFT_EAGAIN (timed out)")
         if sql.startswith("SHOW FULL COLUMNS FROM `default_catalog`.`testdb`.`orders`"):
@@ -800,3 +801,52 @@ def test_get_schema_reraises_when_show_also_fails():
 
     with pytest.raises(RuntimeError, match="connection reset"):
         connector.get_schema(database_name="testdb", table_name="orders")
+
+
+@pytest.mark.acceptance
+def test_show_fallback_stays_inside_the_requested_catalog():
+    """Two catalogs can hold a same-named database; the fallback must not cross over."""
+    connector = _connector_for_metadata(database="dbx", catalog="catalog_a")
+    tables_by_catalog = {
+        "catalog_a": ["orders_a"],
+        "catalog_b": ["orders_b"],
+    }
+
+    def fake_execute(sql, catalog_name="", **kwargs):
+        if "information_schema" in sql:
+            raise RuntimeError("thrift timeout")
+        if not sql.startswith("SHOW FULL TABLES"):
+            raise AssertionError(f"unexpected query: {sql}")
+        # A qualified name wins; otherwise the session catalog decides, and that is
+        # exactly what catalog_name has to carry.
+        for catalog in tables_by_catalog:
+            if f"`{catalog}`." in sql:
+                effective = catalog
+                break
+        else:
+            effective = catalog_name
+        if effective not in tables_by_catalog:
+            raise AssertionError(f"query ran without a catalog: {sql!r} catalog_name={catalog_name!r}")
+        names = tables_by_catalog[effective]
+        return pd.DataFrame({"Tables_in_dbx": names, "Table_type": ["BASE TABLE"] * len(names)})
+
+    connector._execute_pandas = MagicMock(side_effect=fake_execute)
+
+    assert connector.get_tables(catalog_name="catalog_b", database_name="dbx") == ["orders_b"]
+    assert connector.get_tables(catalog_name="catalog_a", database_name="dbx") == ["orders_a"]
+    show_calls = [c for c in connector._execute_pandas.call_args_list if c.args[0].startswith("SHOW")]
+    assert show_calls and all(c.kwargs.get("catalog_name") for c in show_calls)
+
+
+@pytest.mark.acceptance
+def test_test_connection_keeps_an_engine_it_does_not_own():
+    """An engine attached from elsewhere is even less ours to dispose."""
+    connector = _connector_for_metadata()
+    connector.engine = MagicMock()
+    connector._owns_engine = False
+    connector.close = MagicMock()
+
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.test_connection", return_value=True):
+        assert connector.test_connection() is True
+
+    connector.close.assert_not_called()
