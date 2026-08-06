@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from contextlib import contextmanager
-from typing import Any, Dict, List, Set, Union, override
+from typing import Any, Dict, List, Optional, Set, Union, override
 
 from sqlalchemy import text
 
@@ -245,25 +245,103 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             f"WHERE {where} {type_filter}"
         )
 
-        query_result = self._execute_pandas(query)
+        try:
+            query_result = self._execute_pandas(query)
+        except Exception as e:
+            # information_schema is scanned by the BE through a thrift call back to the FE,
+            # which times out (THRIFT_EAGAIN) once a database holds enough objects. SHOW is
+            # answered by the FE directly, so it still works when this query does not.
+            fallback = self._show_metadata(table_type, current_catalog, database_name)
+            if fallback is None:
+                raise
+            logger.warning(f"information_schema listing failed ({e}); fell back to SHOW for {table_type}")
+            return fallback
 
         result = []
         for i in range(len(query_result)):
             db_name = query_result["TABLE_SCHEMA"][i]
             tb_name = query_result["TABLE_NAME"][i]
-            result.append(
-                {
-                    "identifier": self.identifier(
-                        catalog_name=current_catalog, database_name=db_name, table_name=tb_name
-                    ),
-                    "catalog_name": current_catalog,
-                    "schema_name": "",
-                    "database_name": db_name,
-                    "table_name": tb_name,
-                    "table_type": table_type,
-                }
-            )
+            result.append(self._metadata_row(current_catalog, db_name, tb_name, table_type))
         return result
+
+    def _metadata_row(self, catalog_name: str, database_name: str, table_name: str, table_type: str) -> Dict[str, str]:
+        """Build one metadata entry in the shape callers of ``_get_metadata`` expect."""
+        return {
+            "identifier": self.identifier(
+                catalog_name=catalog_name, database_name=database_name, table_name=table_name
+            ),
+            "catalog_name": catalog_name,
+            "schema_name": "",
+            "database_name": database_name,
+            "table_name": table_name,
+            "table_type": table_type,
+        }
+
+    def _show_metadata(self, table_type: str, catalog_name: str, database_name: str) -> Optional[List[Dict[str, str]]]:
+        """Enumerate objects with SHOW as a fallback for a failing information_schema query.
+
+        Returns None when SHOW cannot answer the request — a database-less listing, an
+        unsupported object type, or a cluster that rejects every SHOW variant — so the
+        caller re-raises the original error instead of reporting an empty database.
+        """
+        if not database_name:
+            return None
+
+        # Catalog-qualified SHOW is only understood by newer versions; retry bare.
+        targets = [
+            f"{self.quote_identifier(catalog_name)}.{self.quote_identifier(database_name)}",
+            self.quote_identifier(database_name),
+        ]
+
+        if table_type == "mv":
+            rows = self._try_show(targets, "SHOW MATERIALIZED VIEWS FROM")
+            if rows is None:
+                return None
+            names = self._pick_name_column(rows)
+            return [self._metadata_row(catalog_name, database_name, name, "mv") for name in names]
+
+        if table_type not in ("table", "view"):
+            return None
+
+        # SHOW FULL TABLES carries a Table_type column, so tables and views stay separable.
+        rows = self._try_show(targets, "SHOW FULL TABLES FROM")
+        if rows is not None and len(rows.columns) >= 2:
+            wanted = "VIEW" if table_type == "view" else "BASE TABLE"
+            name_col, type_col = rows.columns[0], rows.columns[1]
+            return [
+                self._metadata_row(catalog_name, database_name, str(rows[name_col][i]), table_type)
+                for i in range(len(rows))
+                if str(rows[type_col][i]).upper() == wanted
+            ]
+
+        # Plain SHOW TABLES cannot distinguish views, so only tables may use it — and it
+        # over-reports by including views, which is still better than reporting nothing.
+        if table_type == "view":
+            return None
+        rows = self._try_show(targets, "SHOW TABLES FROM")
+        if rows is None:
+            return None
+        return [
+            self._metadata_row(catalog_name, database_name, str(rows[rows.columns[0]][i]), "table")
+            for i in range(len(rows))
+        ]
+
+    def _try_show(self, targets: List[str], statement: str):
+        """Run ``statement`` against each target until one succeeds; None if all fail."""
+        for target in targets:
+            try:
+                return self._execute_pandas(f"{statement} {target}")
+            except Exception as e:
+                logger.debug(f"'{statement} {target}' failed: {e}")
+        return None
+
+    @staticmethod
+    def _pick_name_column(rows) -> List[str]:
+        """Extract object names from a SHOW result whose column order is version-dependent."""
+        for column in rows.columns:
+            if str(column).lower() in ("name", "table_name"):
+                return [str(v) for v in rows[column].tolist()]
+        return [str(v) for v in rows.iloc[:, 0].tolist()] if len(rows.columns) else []
 
     @override
     @staticmethod
@@ -470,15 +548,21 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
     @override
     def test_connection(self) -> bool:
-        """Test the database connection with proper cleanup."""
+        """Test the database connection, leaving an existing engine untouched.
+
+        Connectors are cached and shared across callers, so disposing the engine here
+        would drop the pool other threads are using. Only an engine this probe itself
+        brought up gets torn down.
+        """
+        engine_was_live = bool(self.engine and self._owns_engine)
         try:
             return super().test_connection()
         finally:
-            # Ensure connection is closed after test
-            try:
-                self.close()
-            except Exception as e:
-                logger.debug(f"Ignoring cleanup error during test: {e}")
+            if not engine_was_live:
+                try:
+                    self.close()
+                except Exception as e:
+                    logger.debug(f"Ignoring cleanup error during test: {e}")
 
     # ==================== MigrationTargetMixin ====================
 

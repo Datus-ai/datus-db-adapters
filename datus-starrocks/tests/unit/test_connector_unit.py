@@ -4,6 +4,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from datus_db_core import CatalogSupportMixin, MaterializedViewSupportMixin
@@ -637,3 +638,122 @@ def test_implements_materialized_view_support_mixin():
         connector = StarRocksConnector(config)
 
         assert isinstance(connector, MaterializedViewSupportMixin)
+
+
+# ==================== Metadata Fallback Tests ====================
+
+
+def _connector_for_metadata(database="testdb", catalog="default_catalog"):
+    """Build a connector whose SQL execution is fully mocked."""
+    config = StarRocksConfig(username="test_user", catalog=catalog, database=database)
+    with patch("datus_mysql.MySQLConnector.__init__", return_value=None):
+        connector = StarRocksConnector(config)
+    connector.dialect = "starrocks"
+    connector.catalog_name = catalog
+    connector.database_name = database
+    connector.connect = MagicMock()
+    return connector
+
+
+@pytest.mark.acceptance
+def test_get_tables_falls_back_to_show_when_information_schema_fails():
+    """information_schema can time out server-side; SHOW still answers."""
+    connector = _connector_for_metadata()
+
+    def fake_execute(sql):
+        if "information_schema" in sql:
+            raise RuntimeError("call frontend service failed: THRIFT_EAGAIN (timed out)")
+        if sql.startswith("SHOW FULL TABLES"):
+            return pd.DataFrame({"Tables_in_testdb": ["orders", "v_orders"], "Table_type": ["BASE TABLE", "VIEW"]})
+        raise AssertionError(f"unexpected query: {sql}")
+
+    connector._execute_pandas = MagicMock(side_effect=fake_execute)
+
+    assert connector.get_tables(database_name="testdb") == ["orders"]
+    assert connector.get_views(database_name="testdb") == ["v_orders"]
+
+
+@pytest.mark.acceptance
+def test_get_tables_falls_back_to_plain_show_tables():
+    """Older clusters reject SHOW FULL TABLES; plain SHOW TABLES still lists tables."""
+    connector = _connector_for_metadata()
+
+    def fake_execute(sql):
+        if sql.startswith("SHOW TABLES"):
+            return pd.DataFrame({"Tables_in_testdb": ["orders", "items"]})
+        raise RuntimeError("unsupported")
+
+    connector._execute_pandas = MagicMock(side_effect=fake_execute)
+
+    assert connector.get_tables(database_name="testdb") == ["orders", "items"]
+
+
+@pytest.mark.acceptance
+def test_get_tables_reraises_when_show_also_fails():
+    """A blanket failure must surface, not masquerade as an empty database."""
+    connector = _connector_for_metadata()
+    connector._execute_pandas = MagicMock(side_effect=RuntimeError("connection reset"))
+
+    with pytest.raises(RuntimeError, match="connection reset"):
+        connector.get_tables(database_name="testdb")
+
+
+@pytest.mark.acceptance
+def test_get_tables_reraises_without_database_to_show():
+    """SHOW needs a database; without one the original error is the only truth."""
+    connector = _connector_for_metadata(database="")
+    connector._execute_pandas = MagicMock(side_effect=RuntimeError("thrift timeout"))
+
+    with pytest.raises(RuntimeError, match="thrift timeout"):
+        connector.get_tables()
+
+
+@pytest.mark.acceptance
+def test_show_fallback_retries_without_catalog_qualifier():
+    """Catalog-qualified SHOW is version-dependent; the bare form is retried."""
+    connector = _connector_for_metadata()
+    seen = []
+
+    def fake_execute(sql):
+        seen.append(sql)
+        if "information_schema" in sql or "`default_catalog`." in sql:
+            raise RuntimeError("rejected")
+        if sql == "SHOW FULL TABLES FROM `testdb`":
+            return pd.DataFrame({"Tables_in_testdb": ["orders"], "Table_type": ["BASE TABLE"]})
+        raise AssertionError(f"unexpected query: {sql}")
+
+    connector._execute_pandas = MagicMock(side_effect=fake_execute)
+
+    assert connector.get_tables(database_name="testdb") == ["orders"]
+    assert "SHOW FULL TABLES FROM `default_catalog`.`testdb`" in seen
+
+
+# ==================== Connection Reuse Tests ====================
+
+
+@pytest.mark.acceptance
+def test_test_connection_keeps_a_shared_engine_alive():
+    """Connectors are cached and shared — the probe must not dispose the engine."""
+    connector = _connector_for_metadata()
+    connector.engine = MagicMock()
+    connector._owns_engine = True
+    connector.close = MagicMock()
+
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.test_connection", return_value=True):
+        assert connector.test_connection() is True
+
+    connector.close.assert_not_called()
+
+
+@pytest.mark.acceptance
+def test_test_connection_closes_an_engine_it_opened():
+    """A probe that brought the engine up itself still cleans up after."""
+    connector = _connector_for_metadata()
+    connector.engine = None
+    connector._owns_engine = False
+    connector.close = MagicMock()
+
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.test_connection", return_value=True):
+        assert connector.test_connection() is True
+
+    connector.close.assert_called_once()
