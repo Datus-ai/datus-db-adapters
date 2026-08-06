@@ -335,6 +335,74 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
                 logger.debug(f"'{statement} {target}' failed: {e}")
         return None
 
+    @override
+    def get_schema(
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_name: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Column metadata, falling back to SHOW when information_schema fails.
+
+        Column lookups reach the FE through the same thrift call as the object
+        listing above, so they time out under the same conditions.
+        """
+        try:
+            return super().get_schema(
+                catalog_name=catalog_name,
+                database_name=database_name,
+                schema_name=schema_name,
+                table_name=table_name,
+            )
+        except Exception as e:
+            columns = self._show_columns(
+                self._resolve_catalog(catalog_name), database_name or self.database_name, table_name
+            )
+            if columns is None:
+                raise
+            logger.warning(f"information_schema columns failed ({e}); fell back to SHOW for {table_name}")
+            return columns
+
+    def _show_columns(self, catalog_name: str, database_name: str, table_name: str) -> Optional[List[Dict[str, Any]]]:
+        """Describe one table with SHOW FULL COLUMNS; None when SHOW cannot answer."""
+        if not (database_name and table_name):
+            return None
+
+        quoted_table = self.quote_identifier(table_name)
+        quoted_db = self.quote_identifier(database_name)
+        # The catalog-qualified and `FROM <table> FROM <db>` spellings are both
+        # version-dependent, so try each until one is accepted.
+        targets = [
+            f"{self.quote_identifier(catalog_name)}.{quoted_db}.{quoted_table}",
+            f"{quoted_db}.{quoted_table}",
+            f"{quoted_table} FROM {quoted_db}",
+        ]
+        rows = self._try_show(targets, "SHOW FULL COLUMNS FROM")
+        if rows is None:
+            return None
+
+        by_name = {str(column).lower(): column for column in rows.columns}
+        if "field" not in by_name or "type" not in by_name:
+            return None
+
+        def cell(row: int, key: str, default=None):
+            column = by_name.get(key)
+            return rows[column][row] if column is not None else default
+
+        return [
+            {
+                "cid": i,
+                "name": cell(i, "field"),
+                "type": cell(i, "type"),
+                "nullable": str(cell(i, "null", "YES")).upper() == "YES",
+                "default_value": cell(i, "default"),
+                "pk": str(cell(i, "key", "")).upper() == "PRI",
+                "comment": cell(i, "comment"),
+            }
+            for i in range(len(rows))
+        ]
+
     @staticmethod
     def _pick_name_column(rows) -> List[str]:
         """Extract object names from a SHOW result whose column order is version-dependent."""

@@ -757,3 +757,46 @@ def test_test_connection_closes_an_engine_it_opened():
         assert connector.test_connection() is True
 
     connector.close.assert_called_once()
+
+
+@pytest.mark.acceptance
+def test_get_schema_falls_back_to_show_full_columns():
+    """Column lookups hit the same FE thrift path; SHOW answers when it times out."""
+    connector = _connector_for_metadata()
+
+    def fake_execute(sql):
+        if "INFORMATION_SCHEMA" in sql.upper():
+            raise RuntimeError("call frontend service failed: THRIFT_EAGAIN (timed out)")
+        if sql.startswith("SHOW FULL COLUMNS FROM `default_catalog`.`testdb`.`orders`"):
+            return pd.DataFrame(
+                {
+                    "Field": ["id", "amount"],
+                    "Type": ["bigint(20)", "decimal(10,2)"],
+                    "Null": ["NO", "YES"],
+                    "Key": ["PRI", ""],
+                    "Default": [None, "0.00"],
+                    "Comment": ["primary key", ""],
+                }
+            )
+        raise AssertionError(f"unexpected query: {sql}")
+
+    connector._execute_pandas = MagicMock(side_effect=fake_execute)
+
+    columns = connector.get_schema(database_name="testdb", table_name="orders")
+
+    assert [c["name"] for c in columns] == ["id", "amount"]
+    assert columns[0]["pk"] is True
+    assert columns[0]["nullable"] is False
+    assert columns[1]["nullable"] is True
+    assert columns[1]["default_value"] == "0.00"
+    assert columns[0]["comment"] == "primary key"
+
+
+@pytest.mark.acceptance
+def test_get_schema_reraises_when_show_also_fails():
+    """A blanket failure must surface, not masquerade as a column-less table."""
+    connector = _connector_for_metadata()
+    connector._execute_pandas = MagicMock(side_effect=RuntimeError("connection reset"))
+
+    with pytest.raises(RuntimeError, match="connection reset"):
+        connector.get_schema(database_name="testdb", table_name="orders")
