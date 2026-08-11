@@ -4,6 +4,7 @@
 
 from .config import DorisConfig
 from .connector import DorisConnector
+from .skills import get_doris_sql_generation_notes
 
 __version__ = "0.1.0"
 __all__ = ["DorisConnector", "DorisConfig", "register"]
@@ -18,4 +19,5 @@ def register():
         DorisConnector,
         config_class=DorisConfig,
         capabilities={"catalog", "database"},
+        sql_generation_notes=get_doris_sql_generation_notes,
     )

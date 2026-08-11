@@ -2,6 +2,7 @@
 
 from .config import SnowflakeConfig
 from .connector import SnowflakeConnector
+from .skills import get_snowflake_sql_generation_notes
 
 __version__ = "0.1.0"
 __all__ = ["SnowflakeConnector", "SnowflakeConfig", "register"]
@@ -16,4 +17,5 @@ def register():
         SnowflakeConnector,
         config_class=SnowflakeConfig,
         capabilities={"database", "schema"},
+        sql_generation_notes=get_snowflake_sql_generation_notes,
     )

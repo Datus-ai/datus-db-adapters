@@ -37,6 +37,9 @@ Issues = "https://github.com/Datus-ai/datus-db-adapters/issues"
 [project.entry-points."datus.adapters"]
 starrocks = "datus_starrocks:register"
 
+[project.entry-points."datus.skills"]
+starrocks = "datus_starrocks.skills:get_skills_dir"
+
 [tool.uv.sources]
 datus-db-core = { workspace = true }
 datus-mysql = { workspace = true }

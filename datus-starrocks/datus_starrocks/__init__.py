@@ -4,6 +4,7 @@
 
 from .config import StarRocksConfig
 from .connector import StarRocksConnector
+from .skills import get_starrocks_sql_generation_notes
 
 __version__ = "0.1.0"
 __all__ = ["StarRocksConnector", "StarRocksConfig", "register"]
@@ -18,4 +19,5 @@ def register():
         StarRocksConnector,
         config_class=StarRocksConfig,
         capabilities={"catalog", "database"},
+        sql_generation_notes=get_starrocks_sql_generation_notes,
     )

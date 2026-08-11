@@ -30,6 +30,9 @@ dev = [
 [project.entry-points."datus.adapters"]
 snowflake = "datus_snowflake:register"
 
+[project.entry-points."datus.skills"]
+snowflake = "datus_snowflake.skills:get_skills_dir"
+
 [tool.uv.sources]
 datus-db-core = { workspace = true }
 

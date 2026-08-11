@@ -39,6 +39,9 @@ Issues = "https://github.com/Datus-ai/datus-db-adapters/issues"
 [project.entry-points."datus.adapters"]
 doris = "datus_doris:register"
 
+[project.entry-points."datus.skills"]
+doris = "datus_doris.skills:get_skills_dir"
+
 [tool.uv.sources]
 datus-db-core = { workspace = true }
 datus-mysql = { workspace = true }

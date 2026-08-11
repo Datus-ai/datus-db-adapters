@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apache Doris SQL"
+  short_description: "Generate and understand Doris SQL, tables, and data loading"
+  default_prompt: "Use $db-doris-sql to work with this Apache Doris SQL task."
