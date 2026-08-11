@@ -1,4 +1,0 @@
-interface:
-  display_name: "Snowflake SQL"
-  short_description: "Generate and understand Snowflake SQL and data loading"
-  default_prompt: "Use $db-snowflake-sql to work with this Snowflake SQL task."

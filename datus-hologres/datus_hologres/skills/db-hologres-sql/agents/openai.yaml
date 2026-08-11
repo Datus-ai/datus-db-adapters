@@ -1,4 +1,0 @@
-interface:
-  display_name: "Hologres SQL"
-  short_description: "Generate and understand Hologres SQL and table design"
-  default_prompt: "Use $db-hologres-sql to work with this Hologres SQL task."

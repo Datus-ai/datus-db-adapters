@@ -1,4 +1,0 @@
-interface:
-  display_name: "StarRocks SQL"
-  short_description: "Generate and understand StarRocks SQL, tables, and loading"
-  default_prompt: "Use $db-starrocks-sql to work with this StarRocks SQL task."
