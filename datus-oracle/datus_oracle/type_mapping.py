@@ -10,7 +10,8 @@ Oracle 19c has no SQL BOOLEAN column type; Datus booleans are stored as
 
 from typing import Any
 
-_TEXT_TYPE = "VARCHAR2(4000)"
+_VARCHAR2_MAX_BYTES = 4000
+_TEXT_TYPE = f"VARCHAR2({_VARCHAR2_MAX_BYTES})"
 
 
 def infer_oracle_type(series: Any) -> str:
@@ -56,4 +57,7 @@ def infer_oracle_type(series: Any) -> str:
         return _TEXT_TYPE
     if isinstance(value, bytes):
         return "BLOB"
+    if isinstance(value, str):
+        max_bytes = max(len(item.encode("utf-8")) for item in sample if isinstance(item, str))
+        return _TEXT_TYPE if max_bytes <= _VARCHAR2_MAX_BYTES else "CLOB"
     return _TEXT_TYPE

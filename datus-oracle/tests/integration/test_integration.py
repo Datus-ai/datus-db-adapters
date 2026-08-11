@@ -18,17 +18,19 @@ from .conftest import drop_table_sql
 @pytest.mark.acceptance
 def test_connection_with_config_object(config: OracleConfig):
     """Test connection using config object (SELECT 1 FROM DUAL)."""
+    conn = None
     try:
         conn = OracleConnector(config)
         assert conn.test_connection()
-        conn.close()
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @pytest.mark.integration
 def test_connection_with_dict():
     """Test connection using dict config with the database compatibility alias."""
+    conn = None
     try:
         conn = OracleConnector(
             {
@@ -40,9 +42,9 @@ def test_connection_with_dict():
             }
         )
         assert conn.test_connection()
-        conn.close()
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 # ==================== Namespace Tests ====================

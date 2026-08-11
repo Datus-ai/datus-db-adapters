@@ -340,20 +340,20 @@ def config() -> OracleConfig:
 @pytest.fixture
 def connector(config: OracleConfig) -> Generator[OracleConnector, None, None]:
     """Create and cleanup Oracle connector for integration tests."""
-    conn = None
     try:
         conn = OracleConnector(config)
         if not conn.test_connection():
             pytest.skip("Database connection test failed")
-        yield conn
     except Exception as e:
         pytest.skip(f"Database not available: {e}")
+
+    try:
+        yield conn
     finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @pytest.fixture(scope="session")

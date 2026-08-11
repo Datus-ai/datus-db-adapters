@@ -56,8 +56,8 @@ class TestQuoteIdentifier:
     def test_already_upper(self, ops):
         assert ops.quote_identifier("ORDERS") == '"ORDERS"'
 
-    def test_strips_embedded_quotes(self, ops):
-        assert quote_oracle_identifier('or"ders') == '"ORDERS"'
+    def test_escapes_embedded_quotes(self, ops):
+        assert quote_oracle_identifier('or"ders') == '"OR""DERS"'
 
 
 class TestInferTransferType:
@@ -80,6 +80,12 @@ class TestInferTransferType:
 
     def test_string(self, ops):
         assert ops.infer_transfer_type(pd.Series(["a", "b"])) == "VARCHAR2(4000)"
+
+    def test_long_string_uses_clob(self, ops):
+        assert ops.infer_transfer_type(pd.Series(["x" * 4001])) == "CLOB"
+
+    def test_multibyte_string_uses_clob_when_encoded_size_exceeds_limit(self, ops):
+        assert ops.infer_transfer_type(pd.Series(["界" * 1334])) == "CLOB"
 
     def test_object_date(self, ops):
         assert ops.infer_transfer_type(pd.Series([date(2026, 1, 1)])) == "DATE"
@@ -159,3 +165,14 @@ class TestWriteDataframe:
         assert written == 0
         conn.execute.assert_not_called()
         conn.commit.assert_called_once()
+
+    @pytest.mark.parametrize("batch_size", [0, -1])
+    def test_rejects_non_positive_batch_size(self, batch_size):
+        ops = OracleDialectOperations()
+        connector = MagicMock()
+        df = pd.DataFrame({"id": [1]})
+
+        with pytest.raises(ValueError, match="batch_size must be greater than zero"):
+            ops.write_dataframe(connector, "T", df, batch_size=batch_size)
+
+        connector._conn.assert_not_called()

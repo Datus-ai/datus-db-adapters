@@ -382,8 +382,12 @@ class OracleConnector(SQLAlchemyConnector):
 
         query_result = self._execute_pandas(sql)
 
+        import pandas as pd
+
         result = []
         for i in range(len(query_result)):
+            default_value = query_result["default_value"][i]
+            comment = query_result["col_comment"][i]
             result.append(
                 {
                     "cid": i,
@@ -395,9 +399,9 @@ class OracleConnector(SQLAlchemyConnector):
                         query_result["data_scale"][i],
                     ),
                     "nullable": query_result["nullable"][i] == "Y",
-                    "default_value": query_result["default_value"][i],
+                    "default_value": None if pd.isna(default_value) else default_value,
                     "pk": bool(query_result["is_pk"][i]),
-                    "comment": query_result["col_comment"][i] if query_result["col_comment"][i] else None,
+                    "comment": None if pd.isna(comment) or not comment else comment,
                 }
             )
         return result
@@ -469,13 +473,14 @@ class OracleConnector(SQLAlchemyConnector):
         result = []
 
         if tables:
+            normalized_tables = [str(table_name).upper() for table_name in tables]
             metadata = [
                 {
                     "identifier": self.identifier(schema_name=schema_name, table_name=table_name),
                     "schema_name": schema_name,
                     "table_name": table_name,
                 }
-                for table_name in tables
+                for table_name in normalized_tables
             ]
         else:
             if table_type == "full" or table_type not in _METADATA_VIEWS:

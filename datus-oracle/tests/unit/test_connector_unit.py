@@ -4,6 +4,7 @@
 
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 
 from datus_db_core import DatusDbException, ErrorCode
@@ -106,7 +107,8 @@ class TestSampleRowsSql:
         assert captured == ['SELECT * FROM "SALES"."ORDERS" FETCH FIRST 5 ROWS ONLY']
         assert "LIMIT" not in captured[0]
         assert len(result) == 1
-        assert result[0]["identifier"] == "SALES.orders"
+        assert result[0]["identifier"] == "SALES.ORDERS"
+        assert result[0]["table_name"] == "ORDERS"
 
 
 class TestMetadataSql:
@@ -185,6 +187,30 @@ class TestFormatColumnType:
 
     def test_clob_passthrough(self):
         assert OracleConnector._format_column_type("CLOB", 4000, None, None) == "CLOB"
+
+
+class TestGetSchema:
+    def test_normalizes_nan_default_and_comment_to_none(self):
+        connector = _make_connector(schema_name="SALES")
+        metadata = pd.DataFrame(
+            {
+                "field": ["ID"],
+                "data_type": ["NUMBER"],
+                "data_length": [22],
+                "data_precision": [10],
+                "data_scale": [0],
+                "nullable": ["N"],
+                "default_value": [float("nan")],
+                "is_pk": [1],
+                "col_comment": [float("nan")],
+            }
+        )
+
+        with patch.object(connector, "_execute_pandas", return_value=metadata):
+            result = connector.get_schema(schema_name="SALES", table_name="ORDERS")
+
+        assert result[0]["default_value"] is None
+        assert result[0]["comment"] is None
 
 
 class TestErrorMapping:

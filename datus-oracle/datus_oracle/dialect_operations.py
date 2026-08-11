@@ -20,7 +20,7 @@ def quote_oracle_identifier(name: str) -> str:
     are case sensitive. Upper-casing before quoting keeps quoted identifiers
     (safe for reserved words) reachable from unquoted SQL written later.
     """
-    escaped = str(name).replace('"', "")
+    escaped = str(name).replace('"', '""')
     return f'"{escaped.upper()}"'
 
 
@@ -53,6 +53,9 @@ class OracleDialectOperations:
         or TRUE/FALSE literals, so rows are written via ``executemany`` with
         named binds and booleans coerced to 1/0.
         """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero")
+
         from sqlalchemy import text
 
         columns = list(dataframe.columns)

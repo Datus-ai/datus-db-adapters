@@ -45,6 +45,12 @@ The service/PDB is a connection target only — SQL object identifiers are `SCHE
 # Unit tests (no database needed)
 cd datus-oracle && python -m pytest tests/unit/ -v
 
-# Integration tests (requires a running Oracle database)
+# Start the local integration database. Both passwords are required; choose
+# values that are not reused outside this disposable development environment.
+export ORACLE_SYS_PASSWORD='<strong-sys-password>'
+export ORACLE_PASSWORD='<app-password-starting-with-a-letter>'
+docker compose up -d
+
+# Integration tests
 cd datus-oracle && python -m pytest tests/integration/ -v
 ```

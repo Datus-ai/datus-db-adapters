@@ -3,9 +3,10 @@ services:
     # Official Oracle Database Free image; pin the tag (no floating latest)
     image: container-registry.oracle.com/database/free:23.8.0.0
     environment:
-      ORACLE_PWD: ${ORACLE_SYS_PASSWORD:-test_sys_password}
+      ORACLE_PWD: ${ORACLE_SYS_PASSWORD:?Set ORACLE_SYS_PASSWORD}
+      ORACLE_APP_PASSWORD: ${ORACLE_PASSWORD:?Set ORACLE_PASSWORD}
     ports:
-      - "${ORACLE_HOST_PORT:-1521}:1521"
+      - "127.0.0.1:${ORACLE_HOST_PORT:-1521}:1521"
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
       interval: 30s
