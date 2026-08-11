@@ -1,0 +1,16 @@
+services:
+  oracle:
+    # Official Oracle Database Free image; pin the tag (no floating latest)
+    image: container-registry.oracle.com/database/free:23.8.0.0
+    environment:
+      ORACLE_PWD: ${ORACLE_SYS_PASSWORD:?Set ORACLE_SYS_PASSWORD}
+      ORACLE_APP_PASSWORD: ${ORACLE_PASSWORD:?Set ORACLE_PASSWORD}
+    ports:
+      - "127.0.0.1:${ORACLE_HOST_PORT:-1521}:1521"
+    volumes:
+      # The Free image ships a prebuilt database, so setup scripts are skipped.
+      - ./docker/init:/opt/oracle/scripts/startup:ro
+      - oracle_data:/opt/oracle/oradata
+
+volumes:
+  oracle_data:

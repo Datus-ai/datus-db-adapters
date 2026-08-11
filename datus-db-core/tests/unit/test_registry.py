@@ -315,3 +315,67 @@ class TestAdapterMetadata:
 
         meta = AdapterMetadata(db_type="test", connector_class=DummyConnector, config_class=PlainConfig)
         assert meta.get_config_fields() == {}
+
+
+class _FakeDialectOperations:
+    """Minimal complete DialectOperations implementation for contract tests."""
+
+    def render_limit(self, sql, limit):
+        return f"{sql} FETCH FIRST {limit} ROWS ONLY"
+
+    def render_count(self, sql, alias):
+        return f"SELECT COUNT(*) AS __datus_count FROM ({sql}) {alias}"
+
+    def quote_identifier(self, name):
+        return f'"{name.upper()}"'
+
+    def infer_transfer_type(self, series):
+        return "VARCHAR2(4000)"
+
+    def write_dataframe(self, connector, table, dataframe, batch_size):
+        return 0
+
+
+class TestDialectOperations:
+    def test_register_with_dialect_operations(self):
+        ops = _FakeDialectOperations()
+        ConnectorRegistry.register("testdb", DummyConnector, dialect_operations=ops)
+        assert ConnectorRegistry.get_dialect_operations("testdb") is ops
+
+    def test_default_is_none(self):
+        ConnectorRegistry.register("testdb", DummyConnector)
+        assert ConnectorRegistry.get_dialect_operations("testdb") is None
+
+    def test_unregistered_db_returns_none(self):
+        assert ConnectorRegistry.get_dialect_operations("nonexistent") is None
+
+    def test_register_handlers_updates_dialect_operations(self):
+        ConnectorRegistry.register("testdb", DummyConnector)
+        ops = _FakeDialectOperations()
+        ConnectorRegistry.register_handlers("testdb", dialect_operations=ops)
+        assert ConnectorRegistry.get_dialect_operations("testdb") is ops
+
+    def test_register_handlers_none_keeps_existing(self):
+        ops = _FakeDialectOperations()
+        ConnectorRegistry.register("testdb", DummyConnector, dialect_operations=ops)
+        ConnectorRegistry.register_handlers("testdb", parser_dialect="oracle")
+        assert ConnectorRegistry.get_dialect_operations("testdb") is ops
+
+    def test_alias_resolution(self):
+        ops = _FakeDialectOperations()
+        ConnectorRegistry.register("postgresql", DummyConnector, dialect_operations=ops)
+        assert ConnectorRegistry.get_dialect_operations("postgres") is ops
+
+    def test_protocol_runtime_check(self):
+        from datus_db_core.dialect_operations import DialectOperations
+
+        assert isinstance(_FakeDialectOperations(), DialectOperations)
+
+    def test_protocol_rejects_incomplete_implementation(self):
+        from datus_db_core.dialect_operations import DialectOperations
+
+        class Incomplete:
+            def render_limit(self, sql, limit):
+                return sql
+
+        assert not isinstance(Incomplete(), DialectOperations)

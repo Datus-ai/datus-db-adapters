@@ -24,6 +24,7 @@ on:
           - datus-greenplum
           - datus-maxcompute
           - datus-hologres
+          - datus-oracle
       version:
         description: "Optional version; leave empty or use auto to resolve from main and PyPI"
         required: false

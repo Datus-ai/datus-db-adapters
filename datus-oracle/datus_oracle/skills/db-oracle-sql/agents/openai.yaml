@@ -1,0 +1,4 @@
+interface:
+  display_name: "Oracle SQL and PL/SQL"
+  short_description: "Generate and understand Oracle 19c SQL and PL/SQL"
+  default_prompt: "Use $db-oracle-sql to work with this Oracle SQL or PL/SQL task."

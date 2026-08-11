@@ -5,6 +5,7 @@
 from datus_db_core.base import BaseSqlConnector, list_to_in_str, to_sql_literal
 from datus_db_core.config import ConnectionConfig
 from datus_db_core.constants import SQLType
+from datus_db_core.dialect_operations import DialectOperations
 from datus_db_core.exceptions import DatusDbException, ErrorCode
 from datus_db_core.logging import get_logger
 from datus_db_core.migration import MigrationTargetMixin
@@ -32,6 +33,7 @@ __all__ = [
     "to_sql_literal",
     "ConnectionConfig",
     "SQLType",
+    "DialectOperations",
     "DatusDbException",
     "ErrorCode",
     "get_logger",

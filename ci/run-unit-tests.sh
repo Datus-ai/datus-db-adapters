@@ -21,6 +21,7 @@ PACKAGE_SPECS=(
   "datus-clickzetta:datus-clickzetta/tests/unit"
   "datus-maxcompute:datus-maxcompute/tests/unit"
   "datus-hologres:datus-hologres/tests/unit"
+  "datus-oracle:datus-oracle/tests/unit"
 )
 
 usage() {

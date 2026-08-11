@@ -17,7 +17,8 @@ Plugin Adapters (Independent packages, install as needed)
 │   ├── datus-starrocks
 │   ├── datus-postgresql
 │   ├── datus-hologres
-│   └── datus-doris
+│   ├── datus-doris
+│   └── datus-oracle
 │
 └── Native SDK Adapters
     ├── datus-snowflake
@@ -127,7 +128,7 @@ pip install datus-clickzetta
 
 ---
 
-### 6. datus-maxcompute
+### 7. datus-maxcompute
 Alibaba Cloud MaxCompute adapter (PyODPS).
 
 **Installation**:
@@ -144,7 +145,7 @@ pip install datus-maxcompute
 
 ---
 
-### 7. datus-hologres
+### 8. datus-hologres
 Alibaba Cloud Hologres adapter (PostgreSQL wire protocol).
 
 **Installation**:
@@ -158,6 +159,22 @@ pip install datus-hologres
 - Hologres storage properties in generated DDL
 - PostgreSQL-compatible SQL execution with Hologres transaction safeguards
 - Tiny TPC-H cloud integration coverage on a real Hologres instance
+
+---
+
+### 9. datus-oracle
+Oracle Database adapter using python-oracledb Thin mode.
+
+**Installation**:
+```bash
+pip install datus-oracle
+```
+
+**Features**:
+- Oracle 19c-compatible schema, metadata, query, and transfer behavior
+- Optional `DialectOperations` for row limits, count queries, types, identifiers, and batch writes
+- Adapter-packaged Oracle SQL skill with an Agent 0.3.9 notes compatibility bridge
+- Docker integration coverage with an unprivileged Oracle user
 
 ---
 
@@ -183,6 +200,7 @@ pip install -e datus-doris
 pip install -e datus-snowflake
 pip install -e datus-maxcompute
 pip install -e datus-hologres
+pip install -e datus-oracle
 ```
 
 **Note**: The root `pyproject.toml` is only for development environment management. End users should install individual packages.
