@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs once after database creation (mounted at /opt/oracle/scripts/setup).
+# Runs after every database start (mounted at /opt/oracle/scripts/startup), so
+# the SQL must remain idempotent.
 # Keep substitution into the SQL statement safe by accepting only unquoted
 # Oracle-password characters.
 : "${ORACLE_APP_PASSWORD:?Set ORACLE_APP_PASSWORD}"
@@ -15,9 +16,25 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 
 ALTER SESSION SET CONTAINER = FREEPDB1;
 
-CREATE USER datus_test IDENTIFIED BY ${ORACLE_APP_PASSWORD}
-    DEFAULT TABLESPACE users
-    QUOTA UNLIMITED ON users;
+DECLARE
+    user_count PLS_INTEGER;
+BEGIN
+    SELECT COUNT(*)
+      INTO user_count
+      FROM dba_users
+     WHERE username = 'DATUS_TEST';
+
+    IF user_count = 0 THEN
+        EXECUTE IMMEDIATE
+            'CREATE USER datus_test IDENTIFIED BY ${ORACLE_APP_PASSWORD} DEFAULT TABLESPACE users';
+    ELSE
+        EXECUTE IMMEDIATE
+            'ALTER USER datus_test IDENTIFIED BY ${ORACLE_APP_PASSWORD} ACCOUNT UNLOCK';
+    END IF;
+END;
+/
+
+ALTER USER datus_test QUOTA UNLIMITED ON users;
 
 GRANT CREATE SESSION TO datus_test;
 GRANT CREATE TABLE TO datus_test;

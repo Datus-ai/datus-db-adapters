@@ -8,8 +8,8 @@ services:
     ports:
       - "127.0.0.1:${ORACLE_HOST_PORT:-1521}:1521"
     volumes:
-      # Runs once after database creation: creates the DATUS_TEST app user
-      - ./docker/init:/opt/oracle/scripts/setup:ro
+      # The Free image ships a prebuilt database, so setup scripts are skipped.
+      - ./docker/init:/opt/oracle/scripts/startup:ro
       - oracle_data:/opt/oracle/oradata
 
 volumes:
