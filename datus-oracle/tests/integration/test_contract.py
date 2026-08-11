@@ -5,9 +5,9 @@
 import uuid
 
 import pytest
-from datus_oracle import OracleConfig, OracleConnector
 
 from datus_db_core.testing import contract
+from datus_oracle import OracleConfig, OracleConnector
 
 from .conftest import drop_table_sql
 

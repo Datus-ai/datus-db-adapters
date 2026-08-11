@@ -3,8 +3,9 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import pytest
-from datus_oracle import OracleConfig
 from pydantic import ValidationError
+
+from datus_oracle import OracleConfig
 
 
 @pytest.mark.acceptance

@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.4",
+    "datus-db-core>=0.1.5",
     "datus-sqlalchemy>=0.1.7",
     "oracledb>=2.0.0",
     "pydantic>=2.0.0",
@@ -31,6 +31,9 @@ Issues = "https://github.com/Datus-ai/datus-db-adapters/issues"
 
 [project.entry-points."datus.adapters"]
 oracle = "datus_oracle:register"
+
+[project.entry-points."datus.skills"]
+oracle = "datus_oracle.skills:get_skills_dir"
 
 [tool.uv.sources]
 datus-db-core = { workspace = true }

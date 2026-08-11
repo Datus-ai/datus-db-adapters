@@ -9,10 +9,10 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-from datus_oracle import OracleDialectOperations
-from datus_oracle.dialect_operations import quote_oracle_identifier
 
 from datus_db_core import DialectOperations
+from datus_oracle import OracleDialectOperations
+from datus_oracle.dialect_operations import quote_oracle_identifier
 
 
 @pytest.fixture

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Oracle SQL"
+  short_description: "Generate Oracle 19c-compatible SQL safely"
+  default_prompt: "Use $db-oracle-sql to generate Oracle-compatible SQL for this task."

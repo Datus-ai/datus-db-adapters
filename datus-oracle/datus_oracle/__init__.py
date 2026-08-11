@@ -15,6 +15,7 @@ def register():
     from datus_db_core import connector_registry
 
     from .handlers import build_oracle_uri, resolve_oracle_context
+    from .skills import get_oracle_sql_generation_notes
 
     connector_registry.register(
         "oracle",
@@ -24,5 +25,6 @@ def register():
         uri_builder=build_oracle_uri,
         context_resolver=resolve_oracle_context,
         parser_dialect="oracle",
+        sql_generation_notes=get_oracle_sql_generation_notes,
         dialect_operations=OracleDialectOperations(),
     )

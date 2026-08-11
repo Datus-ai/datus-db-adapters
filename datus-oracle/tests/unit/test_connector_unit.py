@@ -5,9 +5,9 @@
 from unittest.mock import patch
 
 import pytest
-from datus_oracle import OracleConfig, OracleConnector
 
 from datus_db_core import DatusDbException, ErrorCode
+from datus_oracle import OracleConfig, OracleConnector
 
 
 def _make_connector(**config_kwargs) -> OracleConnector:
@@ -263,10 +263,9 @@ class TestErrorMapping:
 class TestRegistration:
     def test_register_populates_registry(self):
         import datus_oracle
-        from datus_oracle import OracleDialectOperations
-
         from datus_db_core import connector_registry
         from datus_db_core.registry import ConnectorRegistry
+        from datus_oracle import OracleDialectOperations
 
         saved_connectors = ConnectorRegistry._connectors.copy()
         saved_metadata = ConnectorRegistry._metadata.copy()
@@ -283,6 +282,10 @@ class TestRegistration:
             assert connector_registry.support_schema("oracle")
             assert connector_registry.get_parser_dialect("oracle") == "oracle"
             assert isinstance(connector_registry.get_dialect_operations("oracle"), OracleDialectOperations)
+            notes = connector_registry.get_sql_generation_notes("oracle")
+            assert callable(notes)
+            assert "# Oracle SQL" in notes()
+            assert "FETCH FIRST n ROWS ONLY" in notes()
             metadata = connector_registry.get_metadata("oracle")
             assert metadata.config_class is OracleConfig
             assert "service_name" in metadata.get_config_fields()

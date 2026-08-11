@@ -37,6 +37,7 @@ The service/PDB is a connection target only — SQL object identifiers are `SCHE
 - Booleans are stored as `NUMBER(1)` with values 1/0 (Oracle 19c has no SQL BOOLEAN column type).
 - Metadata uses `ALL_*` dictionary views only — no `DBA_*` access or `SELECT_CATALOG_ROLE` required.
 - Bulk writes use bound parameters with `executemany` (Oracle 19c does not support multi-row `INSERT ... VALUES`).
+- The package exposes `db-oracle-sql` through the `datus.skills` entry point. Datus Agent 0.3.9 receives the same SKILL.md body through its `sql_generation_notes` compatibility hook.
 
 ## Testing
 
