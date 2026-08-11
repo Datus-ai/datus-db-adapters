@@ -16,6 +16,9 @@ def test_oracle_sql_skill_is_packaged_and_notes_strip_frontmatter():
     assert notes.startswith("# Oracle SQL")
     assert "FETCH FIRST n ROWS ONLY" in notes
     assert "Oracle 19c has no SQL `BOOLEAN`" in notes
+    assert "SYS_REFCURSOR" in notes
+    assert "AUTHID CURRENT_USER" in notes
+    assert "`WHEN OTHERS` suppresses the original failure" in notes
     assert not notes.startswith("---")
 
 
