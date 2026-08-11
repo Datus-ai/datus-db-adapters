@@ -12,7 +12,6 @@ import pytest
 
 from datus_db_core import DialectOperations
 from datus_oracle import OracleDialectOperations
-from datus_oracle.dialect_operations import quote_oracle_identifier
 
 
 @pytest.fixture
@@ -57,7 +56,7 @@ class TestQuoteIdentifier:
         assert ops.quote_identifier("ORDERS") == '"ORDERS"'
 
     def test_escapes_embedded_quotes(self, ops):
-        assert quote_oracle_identifier('or"ders') == '"OR""DERS"'
+        assert ops.quote_identifier('or"ders') == '"OR""DERS"'
 
 
 class TestInferTransferType:
