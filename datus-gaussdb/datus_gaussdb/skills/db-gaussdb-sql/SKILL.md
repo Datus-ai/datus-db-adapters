@@ -36,7 +36,7 @@ Generate GaussDB-compatible SQL from metadata-provided object and column names. 
 
 ## Writes and transactions
 
-- Use `INSERT`, `UPDATE`, and `DELETE` with PostgreSQL syntax. For upserts, prefer `INSERT ... ON DUPLICATE KEY UPDATE` or `MERGE INTO` — `ON CONFLICT` support is version-dependent.
+- Use `INSERT`, `UPDATE`, and `DELETE` with PostgreSQL syntax. For upserts, prefer `INSERT ... ON DUPLICATE KEY UPDATE` or `MERGE INTO` — `ON CONFLICT` support is version-dependent. `ON DUPLICATE KEY UPDATE` is a GaussDB extension accepted in every compatibility mode and is the one intentional exception to the "no MySQL syntax" rule above.
 - In `A` mode, inserting an empty string stores NULL; source data containing empty strings will not round-trip.
 - Do not mix DDL and DML in one multi-statement transaction; some DDL is restricted inside explicit transactions, especially on distributed deployments.
 

@@ -60,9 +60,9 @@ def resolve_libpq_path() -> Optional[str]:
     if env.lower() == "system":
         return None
     if env:
-        if Path(env).exists():
+        if Path(env).is_file():
             return env
-        raise FileNotFoundError(f"{_ENV_VAR} points to a non-existent file: {env}")
+        raise FileNotFoundError(f"{_ENV_VAR} must point to an existing library file: {env}")
     arch_dir = _vendor_arch_dir()
     if arch_dir:
         return str(arch_dir / "libpq.so.5")

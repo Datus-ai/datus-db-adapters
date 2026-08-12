@@ -29,9 +29,16 @@ as_omm() {
         "$@"
 }
 
+# Double every single quote so a value is safe inside a SQL string literal.
+sql_literal() { printf "%s" "${1//\'/\'\'}"; }
+
 if [ "${1:-}" = "healthcheck" ]; then
-    as_omm gsql -d postgres -c 'select 1' >/dev/null
-    exit $?
+    as_omm gsql -d postgres -c 'select 1' >/dev/null || exit 1
+    # Provisioning runs in the background, so an accepting server is not yet a
+    # usable one: report healthy only once the test role exists, otherwise
+    # tests start against an unprovisioned server and fail on authentication.
+    [ -n "$(as_omm gsql -d postgres -tAc "select 1 from pg_roles where rolname = '$(sql_literal "$DB_USER")'")" ] || exit 1
+    exit 0
 fi
 
 wait_for_server() {
@@ -48,8 +55,8 @@ provision() {
         return 1
     fi
 
-    if [ -z "$(as_omm gsql -d postgres -tAc "select 1 from pg_roles where rolname = '$DB_USER'")" ]; then
-        as_omm gsql -d postgres -c "CREATE USER \"$DB_USER\" WITH LOGIN PASSWORD '$DB_PASSWORD'"
+    if [ -z "$(as_omm gsql -d postgres -tAc "select 1 from pg_roles where rolname = '$(sql_literal "$DB_USER")'")" ]; then
+        as_omm gsql -d postgres -c "CREATE USER \"$DB_USER\" WITH LOGIN PASSWORD '$(sql_literal "$DB_PASSWORD")'"
         as_omm gsql -d postgres -c "GRANT ALL PRIVILEGES TO \"$DB_USER\""
         echo "gaussdb: created test user '$DB_USER'"
     fi

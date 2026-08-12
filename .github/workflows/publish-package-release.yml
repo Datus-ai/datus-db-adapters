@@ -127,8 +127,11 @@ jobs:
           # the binaries are never committed — they are extracted from the
           # pinned openGauss image at release-build time.
           python3 datus-gaussdb/scripts/fetch_vendor_libpq.py --arch all
-          test -f datus-gaussdb/datus_gaussdb/_vendor/x86_64/libpq.so.5
-          test -f datus-gaussdb/datus_gaussdb/_vendor/aarch64/libpq.so.5
+          for arch in x86_64 aarch64; do
+            for lib in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1; do
+              test -f "datus-gaussdb/datus_gaussdb/_vendor/${arch}/${lib}"
+            done
+          done
 
       - name: Build release artifacts
         if: steps.resolve.outputs.state != 'complete'
@@ -149,8 +152,11 @@ jobs:
           for wheel in wheels:
               names = zipfile.ZipFile(wheel).namelist()
               for arch in ("x86_64", "aarch64"):
-                  member = f"datus_gaussdb/_vendor/{arch}/libpq.so.5"
-                  assert member in names, f"{wheel} is missing {member} — vendor step did not run"
+                  # libpq is loaded through its bundled OpenSSL, so all three
+                  # must ship or the driver fails at import time.
+                  for library in ("libpq.so.5", "libssl.so.1.1", "libcrypto.so.1.1"):
+                      member = f"datus_gaussdb/_vendor/{arch}/{library}"
+                      assert member in names, f"{wheel} is missing {member} — vendor step did not run"
           print("vendored libpq present in wheel")
           EOF
           fi

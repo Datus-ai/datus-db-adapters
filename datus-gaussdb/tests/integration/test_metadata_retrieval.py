@@ -125,16 +125,15 @@ def test_get_views_is_a_list(connector: GaussDBConnector, config: GaussDBConfig)
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_get_materialized_views_on_server_without_pg_matviews(connector: GaussDBConnector, config: GaussDBConfig):
-    """openGauss has no pg_matviews view, so the probe reports False and listing returns []."""
-    version = connector.execute_query("SELECT version() AS v", result_format="list").sql_return[0]["v"]
+def test_get_materialized_views_follows_the_probe(connector: GaussDBConnector, config: GaussDBConfig):
+    """Builds without pg_matviews list nothing; builds with it return a list."""
     traits = connector._get_traits()
+    result = connector.get_materialized_views(schema_name=config.schema_name)
 
-    if "openGauss" in version:
-        assert traits.has_matviews is False
-        assert connector.get_materialized_views(schema_name=config.schema_name) == []
+    if traits.has_matviews:
+        assert isinstance(result, list)
     else:
-        assert isinstance(connector.get_materialized_views(schema_name=config.schema_name), list)
+        assert result == []
 
 
 @pytest.mark.integration

@@ -111,8 +111,14 @@ def tpch_setup() -> Generator[GaussDBConnector, None, None]:
     _require_gaussdb_libpq_platform()
     conn = None
     try:
-        conn = GaussDBConnector(_build_config())
-        if not conn.test_connection():
+        # Only an unreachable server is a skip; provisioning failures are real
+        # regressions and must fail the suite instead of silently dropping it.
+        try:
+            conn = GaussDBConnector(_build_config())
+            reachable = conn.test_connection()
+        except Exception as e:
+            pytest.skip(f"GaussDB is unavailable for TPC-H setup: {e}")
+        if not reachable:
             pytest.skip("GaussDB connection test failed for TPC-H setup")
 
         for table in TPCH_TABLES:
@@ -125,9 +131,7 @@ def tpch_setup() -> Generator[GaussDBConnector, None, None]:
             result = conn.execute_insert(insert_sql)
             if not result.success:
                 raise RuntimeError(f"TPC-H insert failed: {result.error}")
-    except Exception as e:
-        pytest.skip(f"TPC-H setup failed: {e}")
-    else:
+
         yield conn
     finally:
         if conn is not None:

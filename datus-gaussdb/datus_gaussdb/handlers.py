@@ -43,6 +43,9 @@ def build_gaussdb_uri(db_config) -> str:
     schema = _config_value(db_config, "schema_name", "schema") or "public"
     sslmode = _config_value(db_config, "sslmode") or "prefer"
     database_path = quote(database, safe="")
+    # An IPv6 literal must be bracketed or the authority's port is unparseable.
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return f"gaussdb://{host}:{port}/{database_path}?{urlencode({'schema': schema, 'sslmode': sslmode})}"
 
 

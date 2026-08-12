@@ -404,6 +404,29 @@ def test_attribute_names_map_attnums_in_order():
     assert connector._get_attribute_names("public", "orders", 1) == ["id"]
 
 
+@pytest.mark.acceptance
+def test_attribute_names_drop_everything_when_one_attnum_is_unresolved():
+    """A partial key would emit a DISTRIBUTE BY with the wrong columns."""
+    connector = _make_connector()
+    conn = MagicMock()
+    conn.execute.return_value.fetchall.return_value = [(1, "id")]
+    connector._conn = _conn_returning(conn)
+
+    assert connector._get_attribute_names("public", "orders", "1 7") == []
+
+
+@pytest.mark.acceptance
+def test_distribution_clause_omitted_when_columns_are_unresolved():
+    """An unresolvable hash key yields no clause rather than a truncated one."""
+    connector = _make_connector()
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = ("H", "1 7")
+    connector._conn = _conn_returning(conn)
+    connector._get_attribute_names = MagicMock(return_value=[])
+
+    assert connector._get_distribution_clause("public", "orders") == ""
+
+
 # ==================== Migration Capabilities ====================
 
 
@@ -432,6 +455,18 @@ def test_describe_migration_capabilities_adds_distribution_note():
     assert len(notes) == 2
     assert "DISTRIBUTE BY HASH" in notes[1]
     assert "cannot be UPDATEd" in notes[1]
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("mode", ["B", "PG"])
+def test_describe_migration_capabilities_omits_a_mode_note_for_other_modes(mode):
+    """Only 'A' mode collapses empty strings, so B/PG must not carry that note."""
+    connector = _make_connector()
+    connector._get_traits = MagicMock(return_value=DbTraits(compat_mode=mode))
+
+    notes = connector.describe_migration_capabilities()["notes"]
+
+    assert notes == []
 
 
 # ==================== DDL Augmentation ====================

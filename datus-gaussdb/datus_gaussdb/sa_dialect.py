@@ -40,12 +40,24 @@ _PSYCOPG_SUBMODULES = (
 def _alias_gaussdb_as_psycopg():
     """Alias the gaussdb module tree under the ``psycopg`` names.
 
-    No-op when real psycopg is already imported (or aliased) — in that case
-    SQLAlchemy's postgresql+psycopg dialect keeps working against the real
-    psycopg, and only this dialect's dbapi calls go through gaussdb.
+    The parent dialect hard-imports ``psycopg`` submodules from roughly a
+    dozen call sites, so the fork is published under those names instead of
+    the dialect being reimplemented. Since a process cannot hold two
+    different modules under one name, real psycopg and this dialect are
+    mutually exclusive within a process; the conflicting case raises instead
+    of silently mixing the two drivers' adapter registries.
     """
     import_gaussdb()
-    if "psycopg" in sys.modules:
+    aliased = sys.modules.get("psycopg")
+    if aliased is not None:
+        if aliased is not sys.modules["gaussdb"]:
+            raise ImportError(
+                "psycopg is already imported in this process, so the GaussDB "
+                "dialect cannot alias the gaussdb driver onto it. Use the "
+                "GaussDB datasource in a process that does not import psycopg "
+                "(psycopg2 is unaffected), or set driver='psycopg2' on the "
+                "GaussDB datasource."
+            )
         return
     import importlib
 

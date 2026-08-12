@@ -105,6 +105,26 @@ def test_build_uri_reads_extra_dict_fallback():
     assert uri == "gaussdb://gauss.internal:5432/postgres?schema=ods&sslmode=prefer"
 
 
+@pytest.mark.acceptance
+def test_build_uri_brackets_ipv6_hosts():
+    """An unbracketed IPv6 literal makes the authority's port unparseable."""
+    config = GaussDBConfig(username="datus", host="::1", database="postgres")
+
+    parsed = urlparse(build_gaussdb_uri(config))
+
+    assert parsed.netloc == "[::1]:5432"
+    assert parsed.hostname == "::1"
+    assert parsed.port == 5432
+
+
+@pytest.mark.acceptance
+def test_build_uri_keeps_already_bracketed_ipv6_hosts():
+    """A host that already carries brackets is not double-wrapped."""
+    config = GaussDBConfig(username="datus", host="[fe80::1]", database="postgres")
+
+    assert urlparse(build_gaussdb_uri(config)).netloc == "[fe80::1]:5432"
+
+
 # ==================== resolve_gaussdb_context ====================
 
 

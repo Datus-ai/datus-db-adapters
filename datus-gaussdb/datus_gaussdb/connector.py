@@ -237,7 +237,17 @@ class GaussDBConnector(PostgreSQLConnector):
         with self._conn(database_name=database_name) as conn:
             rows = conn.execute(text(sql), {"table_name": table_name, "schema_name": schema_name}).fetchall()
         by_num = {int(r[0]): r[1] for r in rows}
-        return [by_num[n] for n in nums if n in by_num]
+        # A partially resolved key (e.g. a dropped column) would yield a
+        # DISTRIBUTE BY clause with fewer columns than the real one, which is
+        # worse than emitting no clause at all.
+        missing = [n for n in nums if n not in by_num]
+        if missing:
+            logger.warning(
+                f"Unresolved distribution key attnums {missing} for {schema_name}.{table_name}; "
+                "omitting the DISTRIBUTE BY clause"
+            )
+            return []
+        return [by_num[n] for n in nums]
 
     # ==================== MigrationTargetMixin ====================
 
@@ -246,11 +256,13 @@ class GaussDBConnector(PostgreSQLConnector):
         traits = self._get_traits()
         capabilities = super().describe_migration_capabilities()
         capabilities["dialect_family"] = "gaussdb"
-        notes = [
-            "GaussDB databases usually run in 'A' (Oracle) compatibility mode: "
-            "empty strings are stored as NULL — source data containing empty "
-            "strings will not round-trip.",
-        ]
+        notes = []
+        if traits.compat_mode == "A":
+            notes.append(
+                "This database runs in 'A' (Oracle) compatibility mode: empty "
+                "strings are stored as NULL — source data containing empty "
+                "strings will not round-trip."
+            )
         if traits.is_distributed:
             notes.append(
                 "Distributed deployment: choose a DISTRIBUTE BY HASH key for large "
