@@ -24,10 +24,20 @@ CONTAINER_LIB_DIR = "/usr/local/opengauss/lib"
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "datus_gaussdb" / "_vendor"
 PLATFORMS = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
 
-MULAN_NOTICE = """The bundled libpq, libssl and libcrypto binaries are built from the
-openGauss project (https://gitee.com/opengauss/openGauss-server) and are
-redistributed under the Mulan Permissive Software License, Version 2
-(MulanPSL-2.0): http://license.coscl.org.cn/MulanPSL2
+MULAN_NOTICE = """The bundled libpq binaries are built from the openGauss project
+(https://gitee.com/opengauss/openGauss-server) and are redistributed
+under the Mulan Permissive Software License, Version 2 (MulanPSL-2.0):
+http://license.coscl.org.cn/MulanPSL2
+"""
+
+OPENSSL_NOTICE = """The bundled libssl and libcrypto binaries are OpenSSL 1.1.x builds
+shipped with the openGauss distribution. OpenSSL 1.1.x is redistributed
+under the dual OpenSSL and SSLeay licenses:
+https://www.openssl.org/source/license-openssl-ssleay.txt
+
+This product includes software developed by the OpenSSL Project for use
+in the OpenSSL Toolkit (http://www.openssl.org/). This product includes
+cryptographic software written by Eric Young (eay@cryptsoft.com).
 """
 
 
@@ -53,6 +63,7 @@ def fetch(arch: str) -> None:
             subprocess.run(["docker", "rm", "-f", container], capture_output=True)
 
     (target / "MulanPSL-2.0.txt").write_text(MULAN_NOTICE)
+    (target / "OPENSSL-LICENSE.txt").write_text(OPENSSL_NOTICE)
     print(f"Vendored {len(LIBS)} libraries into {target}")
 
 

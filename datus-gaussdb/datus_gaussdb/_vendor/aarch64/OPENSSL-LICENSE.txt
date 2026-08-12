@@ -1,0 +1,8 @@
+The bundled libssl and libcrypto binaries are OpenSSL 1.1.x builds
+shipped with the openGauss distribution. OpenSSL 1.1.x is redistributed
+under the dual OpenSSL and SSLeay licenses:
+https://www.openssl.org/source/license-openssl-ssleay.txt
+
+This product includes software developed by the OpenSSL Project for use
+in the OpenSSL Toolkit (http://www.openssl.org/). This product includes
+cryptographic software written by Eric Young (eay@cryptsoft.com).
