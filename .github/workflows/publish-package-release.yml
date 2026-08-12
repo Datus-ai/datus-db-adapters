@@ -119,6 +119,17 @@ jobs:
 
           git diff --check
 
+      - name: Vendor native libraries (datus-gaussdb)
+        if: steps.resolve.outputs.state != 'complete' && steps.resolve.outputs.package == 'datus-gaussdb'
+        run: |
+          set -euo pipefail
+          # datus-gaussdb wheels bundle the openGauss libpq (Mulan PSL v2);
+          # the binaries are never committed — they are extracted from the
+          # pinned openGauss image at release-build time.
+          python3 datus-gaussdb/scripts/fetch_vendor_libpq.py --arch all
+          test -f datus-gaussdb/datus_gaussdb/_vendor/x86_64/libpq.so.5
+          test -f datus-gaussdb/datus_gaussdb/_vendor/aarch64/libpq.so.5
+
       - name: Build release artifacts
         if: steps.resolve.outputs.state != 'complete'
         env:
@@ -129,6 +140,20 @@ jobs:
           rm -rf dist/release
           uv build --package "${PACKAGE}" --out-dir "${release_dir}"
           python -m twine check "${release_dir}"/*
+          if [ "${PACKAGE}" = "datus-gaussdb" ]; then
+            python3 - "${release_dir}" <<'EOF'
+          import glob, sys, zipfile
+
+          wheels = glob.glob(f"{sys.argv[1]}/*.whl")
+          assert wheels, "no wheel built for datus-gaussdb"
+          for wheel in wheels:
+              names = zipfile.ZipFile(wheel).namelist()
+              for arch in ("x86_64", "aarch64"):
+                  member = f"datus_gaussdb/_vendor/{arch}/libpq.so.5"
+                  assert member in names, f"{wheel} is missing {member} — vendor step did not run"
+          print("vendored libpq present in wheel")
+          EOF
+          fi
 
       - name: Commit release metadata and create tag
         if: steps.resolve.outputs.state == 'new'

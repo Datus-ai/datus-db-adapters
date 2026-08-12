@@ -30,9 +30,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["datus_gaussdb"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"datus_gaussdb/_vendor" = "datus_gaussdb/_vendor"
+# The vendored libpq binaries are gitignored (populated at release-build
+# time by scripts/fetch_vendor_libpq.py) but must ship in wheels.
+artifacts = ["datus_gaussdb/_vendor/**/*.so*"]
 
 [tool.uv.sources]
 datus-db-core = { workspace = true }
