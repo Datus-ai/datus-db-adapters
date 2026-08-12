@@ -114,18 +114,3 @@ def _split_identifier(identifier: str) -> list[str]:
         raise ValueError(f"Invalid Hologres table identifier: {identifier}")
     parts.append(value)
     return parts
-
-
-HOLOGRES_SQL_GENERATION_NOTES = """
-Hologres SQL rules:
-- Use PostgreSQL 11-compatible SQL and double quotes for identifiers.
-- Use schema.table inside the connected database, or database.schema.table when a fully qualified name is needed.
-- Prefer TEXT to unbounded VARCHAR for string columns.
-- Primary-key columns must be NOT NULL. If a distribution_key is configured for a primary-key table,
-  it must contain the primary key or a subset of its columns.
-- Use Hologres table properties such as orientation, distribution_key, clustering_key, and
-  event_time_column in a WITH (...) clause.
-- Foreign tables are read-only mappings to external systems and do not use Hologres internal-table properties.
-- Do not generate UNIQUE, CHECK, or foreign-key constraints for Hologres internal tables.
-- Do not mix DDL and DML in one transaction. Multi-statement DML transactions are disabled by default.
-""".strip()

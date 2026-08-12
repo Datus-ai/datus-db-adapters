@@ -5,11 +5,11 @@
 from .config import HologresConfig
 from .connector import HologresConnector
 from .handlers import (
-    HOLOGRES_SQL_GENERATION_NOTES,
     build_hologres_uri,
     parse_hologres_identifier,
     resolve_hologres_context,
 )
+from .skills import get_hologres_sql_generation_notes
 
 __version__ = "0.1.0"
 __all__ = ["HologresConnector", "HologresConfig", "register"]
@@ -29,5 +29,5 @@ def register():
         context_resolver=resolve_hologres_context,
         parser_dialect="postgres",
         identifier_parser=parse_hologres_identifier,
-        sql_generation_notes=HOLOGRES_SQL_GENERATION_NOTES,
+        sql_generation_notes=get_hologres_sql_generation_notes,
     )

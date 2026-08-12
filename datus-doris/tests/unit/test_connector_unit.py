@@ -9,6 +9,7 @@ import pytest
 import datus_doris
 from datus_db_core import SQLType
 from datus_doris import DorisConfig, DorisConnector
+from datus_doris.skills import get_doris_sql_generation_notes
 
 
 def _connector(config=None, **overrides) -> DorisConnector:
@@ -299,4 +300,5 @@ def test_registers_doris_adapter():
         DorisConnector,
         config_class=DorisConfig,
         capabilities={"catalog", "database"},
+        sql_generation_notes=get_doris_sql_generation_notes,
     )

@@ -25,7 +25,9 @@ def test_registration_exposes_generic_agent_hooks():
         assert connector_registry.get_identifier_parser("hologres") is not None
         assert connector_registry.get_uri_builder("hologres") is not None
         assert connector_registry.get_context_resolver("hologres") is not None
-        assert "Hologres SQL rules" in connector_registry.get_sql_generation_notes("hologres")
+        notes = connector_registry.get_sql_generation_notes("hologres")
+        assert callable(notes)
+        assert notes().startswith("# Hologres SQL")
     finally:
         for name, values in saved.items():
             target = getattr(connector_registry, f"_{name}")
