@@ -1,0 +1,53 @@
+[project]
+name = "datus-gaussdb"
+version = "0.1.0"
+description = "GaussDB / openGauss adapter for Datus Agent"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "datus-db-core>=0.1.5",
+    "datus-sqlalchemy>=0.1.8",
+    "datus-postgresql>=0.1.8",
+    "gaussdb>=1.0.4,<2",
+    "psycopg2-binary>=2.9.11",
+    "pydantic>=2.0.0",
+]
+
+[project.entry-points."datus.adapters"]
+gaussdb = "datus_gaussdb:register"
+
+[project.entry-points."datus.skills"]
+gaussdb = "datus_gaussdb.skills:get_skills_dir"
+
+[project.entry-points."sqlalchemy.dialects"]
+gaussdb = "datus_gaussdb.sa_dialect:GaussDBDialect"
+"gaussdb.psycopg" = "datus_gaussdb.sa_dialect:GaussDBDialect"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["datus_gaussdb"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"datus_gaussdb/_vendor" = "datus_gaussdb/_vendor"
+
+[tool.uv.sources]
+datus-db-core = { workspace = true }
+datus-sqlalchemy = { workspace = true }
+datus-postgresql = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests requiring a live GaussDB/openGauss instance",
+    "acceptance: marks fast, fully mocked acceptance tests",
+]
+
+[tool.coverage.run]
+source = ["datus_gaussdb"]
+
+[tool.coverage.report]
+show_missing = true

@@ -1,0 +1,4 @@
+The bundled libpq, libssl and libcrypto binaries are built from the
+openGauss project (https://gitee.com/opengauss/openGauss-server) and are
+redistributed under the Mulan Permissive Software License, Version 2
+(MulanPSL-2.0): http://license.coscl.org.cn/MulanPSL2

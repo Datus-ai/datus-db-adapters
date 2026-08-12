@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark oracle)
+ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark oracle gaussdb)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 CURRENT_ADAPTER=""
@@ -154,6 +154,7 @@ adapter_services() {
     hive) echo "hive-metastore:600 hive-server:900" ;;
     spark) echo "spark-thrift:900" ;;
     oracle) echo "oracle:1200" ;;
+    gaussdb) echo "gaussdb:600" ;;
     *) echo "Unknown adapter '$1'" >&2; return 1 ;;
   esac
 }
@@ -267,6 +268,14 @@ export_adapter_env() {
       export ORACLE_SCHEMA="DATUS_TEST"
       export ORACLE_SYS_PASSWORD="${ORACLE_SYS_PASSWORD:-test_sys_password}"
       ;;
+    gaussdb)
+      export GAUSSDB_HOST_PORT="${GAUSSDB_HOST_PORT:-25434}"
+      export GAUSSDB_HOST="127.0.0.1"
+      export GAUSSDB_PORT="$GAUSSDB_HOST_PORT"
+      export GAUSSDB_USER="datus"
+      export GAUSSDB_PASSWORD="Datus@123"
+      export GAUSSDB_DATABASE="postgres"
+      ;;
   esac
 }
 
@@ -282,6 +291,7 @@ adapter_env_summary() {
     hive) echo "env: HIVE_HOST=$HIVE_HOST HIVE_PORT=$HIVE_PORT HIVE_DATABASE=$HIVE_DATABASE" ;;
     spark) echo "env: SPARK_HOST=$SPARK_HOST SPARK_PORT=$SPARK_PORT SPARK_DATABASE=$SPARK_DATABASE SPARK_AUTH_MECHANISM=$SPARK_AUTH_MECHANISM" ;;
     oracle) echo "env: ORACLE_HOST=$ORACLE_HOST ORACLE_PORT=$ORACLE_PORT ORACLE_SERVICE_NAME=$ORACLE_SERVICE_NAME ORACLE_SCHEMA=$ORACLE_SCHEMA" ;;
+    gaussdb) echo "env: GAUSSDB_HOST=$GAUSSDB_HOST GAUSSDB_PORT=$GAUSSDB_PORT GAUSSDB_DATABASE=$GAUSSDB_DATABASE" ;;
   esac
 }
 
@@ -484,6 +494,9 @@ wait_for_adapter_client_readiness() {
     oracle)
       wait_for_python_connector_readiness "oracle" "datus-oracle"
       ;;
+    gaussdb)
+      wait_for_python_connector_readiness "gaussdb" "datus-gaussdb"
+      ;;
   esac
 }
 
@@ -611,6 +624,19 @@ elif adapter == "oracle":
         timeout_seconds=5,
     )
     connector = OracleConnector(config)
+elif adapter == "gaussdb":
+    from datus_gaussdb import GaussDBConfig, GaussDBConnector
+
+    config = GaussDBConfig(
+        host=os.getenv("GAUSSDB_HOST", "127.0.0.1"),
+        port=int(os.getenv("GAUSSDB_PORT", "5432")),
+        username=os.getenv("GAUSSDB_USER", "datus"),
+        password=os.getenv("GAUSSDB_PASSWORD", "Datus@123"),
+        database=os.getenv("GAUSSDB_DATABASE", "postgres"),
+        schema_name=os.getenv("GAUSSDB_SCHEMA", "public"),
+        timeout_seconds=5,
+    )
+    connector = GaussDBConnector(config)
 else:
     raise RuntimeError(f"unsupported adapter readiness probe: {adapter}")
 

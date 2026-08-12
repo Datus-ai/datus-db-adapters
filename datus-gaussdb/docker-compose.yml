@@ -1,0 +1,43 @@
+# GaussDB / openGauss test environment
+# Usage: docker compose up -d
+# Connect: gsql/psql -h localhost -p ${GAUSSDB_HOST_PORT:-25434} -U datus -d postgres
+#
+# The image entrypoint is wrapped by scripts/docker-entrypoint-wrapper.sh because
+# of two openGauss container quirks found while bringing this adapter up:
+#
+#   1. GAUSSLOG must be set and must live OUTSIDE the data directory. With
+#      GAUSSLOG unset the server aborts (SIGABRT) on start; with GAUSSLOG
+#      pointing inside the data directory, initdb refuses to run ("directory
+#      not empty"). The wrapper creates /gausslog and hands it to omm.
+#   2. On Docker Desktop for macOS the FIRST gs_ctl start after initdb reliably
+#      aborts, while starting again on the same initialized data directory
+#      succeeds. The wrapper therefore retries the start after the image
+#      entrypoint exits non-zero. On Linux CI the entrypoint normally succeeds
+#      and the retry never runs, so it is harmless there.
+#
+# The wrapper also creates the integration-test login role once the server is
+# up, since the abort happens before the image gets around to creating users.
+# It appends a sha256 pg_hba rule for that role; note the image's own catch-all
+# "host all all 0.0.0.0/0 md5" rule is matched first, which keeps the psycopg2
+# escape hatch (driver: psycopg2, md5 only) usable against this container.
+# Comment that catch-all out to exercise sha256 authentication exclusively.
+
+services:
+  gaussdb:
+    image: opengauss/opengauss:7.0.0-RC2.B015
+    ports:
+      - "${GAUSSDB_HOST_PORT:-25434}:5432"
+    environment:
+      GS_PASSWORD: ${GAUSSDB_PASSWORD:-Datus@123}
+      GAUSSDB_USER: ${GAUSSDB_USER:-datus}
+      GAUSSDB_PASSWORD: ${GAUSSDB_PASSWORD:-Datus@123}
+      GAUSSLOG: /gausslog
+    volumes:
+      - ./scripts/docker-entrypoint-wrapper.sh:/docker-entrypoint-wrapper.sh:ro
+    entrypoint: ["bash", "/docker-entrypoint-wrapper.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "bash /docker-entrypoint-wrapper.sh healthcheck"]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
