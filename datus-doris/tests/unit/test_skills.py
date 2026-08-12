@@ -24,11 +24,21 @@ def test_doris_sql_skill_is_packaged_and_notes_strip_frontmatter():
 
 
 def test_doris_registration_and_skill_entry_point():
-    register()
-    notes = connector_registry.get_sql_generation_notes("doris")
-    candidates = entry_points().select(group="datus.skills", name="doris")
+    saved = {
+        name: getattr(connector_registry, f"_{name}").copy()
+        for name in ("connectors", "factories", "metadata", "capabilities", "uri_builders", "context_resolvers")
+    }
+    try:
+        register()
+        notes = connector_registry.get_sql_generation_notes("doris")
+        candidates = entry_points().select(group="datus.skills", name="doris")
 
-    assert callable(notes)
-    assert notes() == get_doris_sql_generation_notes()
-    assert len(candidates) == 1
-    assert Path(next(iter(candidates)).load()()).resolve() == Path(get_skills_dir()).resolve()
+        assert callable(notes)
+        assert notes() == get_doris_sql_generation_notes()
+        assert len(candidates) == 1
+        assert Path(next(iter(candidates)).load()()).resolve() == Path(get_skills_dir()).resolve()
+    finally:
+        for name, values in saved.items():
+            target = getattr(connector_registry, f"_{name}")
+            target.clear()
+            target.update(values)
