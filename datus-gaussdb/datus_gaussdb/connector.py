@@ -68,10 +68,6 @@ class GaussDBConnector(PostgreSQLConnector):
     # ==================== System Resources ====================
 
     @override
-    def _sys_databases(self) -> Set[str]:
-        return super()._sys_databases()
-
-    @override
     def _sys_schemas(self) -> Set[str]:
         return super()._sys_schemas() | {
             "blockchain",

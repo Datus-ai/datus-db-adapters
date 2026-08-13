@@ -178,10 +178,6 @@ def test_dialect_identity():
 
 @pytest.mark.acceptance
 def test_dialect_registered_in_sqlalchemy_registry():
-    """Importing the module registers both the bare and driver-qualified names.
-
-    ``registry.impls`` is checked directly instead of ``registry.load`` because
-    loading would import the real gaussdb driver.
-    """
-    assert "gaussdb" in registry.impls
-    assert "gaussdb.psycopg" in registry.impls
+    """Both public registry names resolve without touching the native driver."""
+    assert registry.load("gaussdb") is GaussDBDialect
+    assert registry.load("gaussdb.psycopg") is GaussDBDialect
