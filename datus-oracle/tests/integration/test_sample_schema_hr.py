@@ -145,7 +145,7 @@ def test_hierarchical_query_over_the_manager_chain(hr: OracleConnector):
 @pytest.mark.integration
 @pytest.mark.acceptance
 def test_join_across_the_hr_star(hr: OracleConnector):
-    """A four-table join exercises the relationships the schema declares."""
+    """A five-table join exercises the relationships the schema declares."""
     result = hr.execute(
         {
             "sql_query": f"""

@@ -30,15 +30,28 @@ if [[ ! "$HR_PASSWORD" =~ ^[A-Za-z][A-Za-z0-9_]{7,127}$ ]]; then
   exit 1
 fi
 
+# Key the probe on an installed object, not on the HR user: an install that
+# aborted midway leaves the user behind with no tables, and a user-only check
+# would treat that empty schema as complete forever.
 already_installed="$(sqlplus -s / as sysdba <<SQL
+WHENEVER SQLERROR EXIT SQL.SQLCODE
 SET HEADING OFF FEEDBACK OFF PAGESIZE 0
 ALTER SESSION SET CONTAINER = FREEPDB1;
-SELECT COUNT(*) FROM dba_users WHERE username = 'HR';
+SELECT COUNT(*) FROM dba_tables WHERE owner = 'HR' AND table_name = 'EMPLOYEES';
 EXIT;
 SQL
 )"
+already_installed="$(echo "$already_installed" | tr -d '[:space:]')"
 
-if [[ "$(echo "$already_installed" | tr -d '[:space:]')" != "0" ]]; then
+# sqlplus still exits 0 on some failures, so anything but a number means the
+# probe itself failed; treating that as "installed" would silently skip the
+# installation and leave every HR test skipping too.
+if [[ ! "$already_installed" =~ ^[0-9]+$ ]]; then
+  echo "Could not determine whether the HR schema is installed: ${already_installed}" >&2
+  exit 1
+fi
+
+if [[ "$already_installed" != "0" ]]; then
   echo "HR sample schema already installed; nothing to do."
   exit 0
 fi
@@ -54,6 +67,18 @@ WHENEVER OSERROR EXIT FAILURE
 SET ECHO OFF FEEDBACK OFF VERIFY OFF
 
 ALTER SESSION SET CONTAINER = FREEPDB1;
+
+-- Reaching here means the schema is incomplete, so a leftover HR user is the
+-- remains of a failed install: drop it and start from a clean slate.
+DECLARE
+    user_count PLS_INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO user_count FROM dba_users WHERE username = 'HR';
+    IF user_count > 0 THEN
+        EXECUTE IMMEDIATE 'DROP USER hr CASCADE';
+    END IF;
+END;
+/
 
 CREATE USER hr IDENTIFIED BY ${HR_PASSWORD} DEFAULT TABLESPACE users QUOTA UNLIMITED ON users;
 
