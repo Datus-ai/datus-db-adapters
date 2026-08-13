@@ -18,7 +18,8 @@ Plugin Adapters (Independent packages, install as needed)
 │   ├── datus-postgresql
 │   ├── datus-hologres
 │   ├── datus-doris
-│   └── datus-oracle
+│   ├── datus-oracle
+│   └── datus-gaussdb
 │
 └── Native SDK Adapters
     ├── datus-snowflake
@@ -175,6 +176,22 @@ pip install datus-oracle
 - Optional `DialectOperations` for row limits, count queries, types, identifiers, and batch writes
 - Adapter-packaged Oracle SQL skill with an Agent 0.3.9 notes compatibility bridge
 - Docker integration coverage with an unprivileged Oracle user
+
+---
+
+### 10. datus-gaussdb
+GaussDB / openGauss adapter (PostgreSQL wire protocol).
+
+**Installation**:
+```bash
+pip install datus-gaussdb
+```
+
+**Features**:
+- GaussDB / openGauss (PostgreSQL-compatible), official gaussdb driver with sha256 auth
+- Optional `psycopg2` driver escape hatch for md5-authenticated servers
+- Database and schema namespace support with PostgreSQL-compatible SQL execution
+- Docker integration coverage against an openGauss instance
 
 ---
 

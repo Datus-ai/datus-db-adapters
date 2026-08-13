@@ -22,6 +22,7 @@ PACKAGE_SPECS=(
   "datus-maxcompute:datus-maxcompute/tests/unit"
   "datus-hologres:datus-hologres/tests/unit"
   "datus-oracle:datus-oracle/tests/unit"
+  "datus-gaussdb:datus-gaussdb/tests/unit"
 )
 
 usage() {

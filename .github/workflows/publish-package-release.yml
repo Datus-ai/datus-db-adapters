@@ -25,6 +25,7 @@ on:
           - datus-maxcompute
           - datus-hologres
           - datus-oracle
+          - datus-gaussdb
       version:
         description: "Optional version; leave empty or use auto to resolve from main and PyPI"
         required: false
@@ -118,6 +119,20 @@ jobs:
 
           git diff --check
 
+      - name: Vendor native libraries (datus-gaussdb)
+        if: steps.resolve.outputs.state != 'complete' && steps.resolve.outputs.package == 'datus-gaussdb'
+        run: |
+          set -euo pipefail
+          # datus-gaussdb wheels bundle the openGauss libpq (Mulan PSL v2)
+          # with checksum-pinned openEuler OpenSSL security updates. The
+          # binaries are generated only at release-build time.
+          python3 datus-gaussdb/scripts/fetch_vendor_libpq.py --arch all
+          for arch in x86_64 aarch64; do
+            for artifact in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1 MulanPSL-2.0.txt OPENSSL-LICENSE.txt; do
+              test -f "datus-gaussdb/datus_gaussdb/_vendor/${arch}/${artifact}"
+            done
+          done
+
       - name: Build release artifacts
         if: steps.resolve.outputs.state != 'complete'
         env:
@@ -128,6 +143,27 @@ jobs:
           rm -rf dist/release
           uv build --package "${PACKAGE}" --out-dir "${release_dir}"
           python -m twine check "${release_dir}"/*
+          if [ "${PACKAGE}" = "datus-gaussdb" ]; then
+            python3 - "${release_dir}" <<'EOF'
+          import glob, sys, zipfile
+
+          wheels = glob.glob(f"{sys.argv[1]}/*.whl")
+          assert wheels, "no wheel built for datus-gaussdb"
+          for wheel in wheels:
+              names = zipfile.ZipFile(wheel).namelist()
+              for arch in ("x86_64", "aarch64"):
+                  for artifact in (
+                      "libpq.so.5",
+                      "libssl.so.1.1",
+                      "libcrypto.so.1.1",
+                      "MulanPSL-2.0.txt",
+                      "OPENSSL-LICENSE.txt",
+                  ):
+                      member = f"datus_gaussdb/_vendor/{arch}/{artifact}"
+                      assert member in names, f"{wheel} is missing {member} — vendor step did not run"
+          print("vendored libpq and licenses present in wheel")
+          EOF
+          fi
 
       - name: Commit release metadata and create tag
         if: steps.resolve.outputs.state == 'new'

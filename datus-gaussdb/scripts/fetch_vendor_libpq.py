@@ -1,0 +1,229 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""Populate datus_gaussdb/_vendor/<arch>/ with the GaussDB client libraries.
+
+Extracts libpq from a pinned openGauss container image and replaces its old
+OpenSSL 1.1.1m dependencies with security-maintained openEuler 22.03 LTS SP4
+packages. Used by wheel release builds and by developers running integration
+tests from a source checkout.
+
+Usage:
+    python scripts/fetch_vendor_libpq.py [--arch x86_64|aarch64|all]
+"""
+
+import argparse
+import hashlib
+import subprocess
+import sys
+import tempfile
+import urllib.request
+from pathlib import Path
+
+OPENGAUSS_IMAGES = {
+    "x86_64": "opengauss/opengauss@sha256:daccb40d63eeadc4c2a7703e8efb991f23a505c9bd3211cccfd057ba5a2fff19",
+    "aarch64": "opengauss/opengauss@sha256:cc07c4e1d8ddc3b6ae5898969a2d89fd3cafe39b932b11688092d17c5e0935bc",
+}
+LIBPQ_LIBS = ("libpq.so.5.5", "libpq.so.5")
+OPENSSL_LIBS = {
+    "libssl.so.1.1": "/usr/lib64/libssl.so.1.1.1wa",
+    "libcrypto.so.1.1": "/usr/lib64/libcrypto.so.1.1.1wa",
+}
+CONTAINER_LIB_DIR = "/usr/local/opengauss/lib"
+OPENSSL_EXTRACT_IMAGE = "openeuler/openeuler:22.03-lts-sp4"
+OPENSSL_EXTRACT_DIR = "/extract"
+VENDOR_DIR = Path(__file__).resolve().parent.parent / "datus_gaussdb" / "_vendor"
+PLATFORMS = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
+OPENSSL_PACKAGES = {
+    "x86_64": {
+        "url": (
+            "https://repo.openeuler.org/openEuler-22.03-LTS-SP4/update/x86_64/Packages/"
+            "openssl-libs-1.1.1wa-17.oe2203sp4.x86_64.rpm"
+        ),
+        "sha256": "11033ecd81939537a4d4b84c2fb399d1fb16fdd58fa13d6a62c4e7f887b74dfd",
+    },
+    "aarch64": {
+        "url": (
+            "https://repo.openeuler.org/openEuler-22.03-LTS-SP4/update/aarch64/Packages/"
+            "openssl-libs-1.1.1wa-17.oe2203sp4.aarch64.rpm"
+        ),
+        "sha256": "c243aeaf739139ea78a764a3bfa166232add1f63147c2ed38b1061ed2c8eec45",
+    },
+}
+
+MULAN_NOTICE = """The bundled libpq binaries are built from the openGauss project
+(https://gitee.com/opengauss/openGauss-server) and are redistributed under
+the Mulan Permissive Software License, Version 2. The complete license text
+follows, as required by its Section 4 (Distribution Restriction).
+
+{license}
+"""
+
+MULAN_LICENSE_TEXT = """\
+木兰宽松许可证， 第2版
+2020年1月
+http://license.coscl.org.cn/MulanPSL2
+您对“软件”的复制、使用、修改及分发受木兰宽松许可证，第2版（“本许可证”）的如下条款的约束：
+0.   定义
+“软件”
+是指由“贡献”构成的许可在“本许可证”下的程序和相关文档的集合。
+“贡献”
+是指由任一“贡献者”许可在“本许可证”下的受版权法保护的作品。
+“贡献者”
+是指将受版权法保护的作品许可在“本许可证”下的自然人或“法人实体”。
+“法人实体”
+是指提交贡献的机构及其“关联实体”。
+“关联实体”
+是指，对“本许可证”下的行为方而言，控制、受控制或与其共同受控制的机构，此处的控制是指有受控方或共同受控方至少50%直接或间接的投票权、资金或其他有价证券。
+1.   授予版权许可
+每个“贡献者”根据“本许可证”授予您永久性的、全球性的、免费的、非独占的、不可撤销的版权许可，您可以复制、使用、修改、分发其“贡献”，不论修改与否。
+2.   授予专利许可
+每个“贡献者”根据“本许可证”授予您永久性的、全球性的、免费的、非独占的、不可撤销的（根据本条规定撤销除外）专利许可，供您制造、委托制造、使用、许诺销售、销售、进口其“贡献”或以其他方式转移其“贡献”。前述专利许可仅限于“贡献者”现在或将来拥有或控制的其“贡献”本身或其“贡献”与许可“贡献”时的“软件”结合而将必然会侵犯的专利权利要求，不包括对“贡献”的修改或包含“贡献”的其他结合。如果您或您的“关联实体”直接或间接地，就“软件”或其中的“贡献”对任何人发起专利侵权诉讼（包括反诉或交叉诉讼）或其他专利维权行动，指控其侵犯专利权，则“本许可证”授予您对“软件”的专利许可自您提起诉讼或发起维权行动之日终止。
+3.   无商标许可
+“本许可证”不提供对“贡献者”的商品名称、商标、服务标志或产品名称的商标许可，但您为满足第4条规定的声明义务而必须使用除外。
+4.   分发限制
+您可以在任何媒介中将“软件”以源程序形式或可执行形式重新分发，不论修改与否，但您必须向接收者提供“本许可证”的副本，并保留“软件”中的版权、商标、专利及免责声明。
+5.   免责声明与责任限制
+“软件”及其中的“贡献”在提供时不带任何明示或默示的担保。在任何情况下，“贡献者”或版权所有者不对任何人因使用“软件”或其中的“贡献”而引发的任何直接或间接损失承担责任，不论因何种原因导致或者基于何种法律理论,即使其曾被建议有此种损失的可能性。
+6.   语言
+“本许可证”以中英文双语表述，中英文版本具有同等法律效力。如果中英文版本存在任何冲突不一致，以中文版为准。
+条款结束
+
+==============================================================================
+
+Mulan Permissive Software License，Version 2 (Mulan PSL v2)
+January 2020
+http://license.coscl.org.cn/MulanPSL2
+Your reproduction, use, modification and distribution of the Software shall be subject to Mulan PSL v2 (this License) with the following terms and conditions:
+0. Definition
+Software
+means the program and related documents which are licensed under this License and comprise all Contribution(s).
+Contribution
+means the copyrightable work licensed by a particular Contributor under this License.
+Contributor
+means the Individual or Legal Entity who licenses its copyrightable work under this License.
+Legal Entity
+means the entity making a Contribution and all its Affiliates.
+Affiliates
+means entities that control, are controlled by, or are under common control with the acting entity under this License, ‘control’ means direct or indirect ownership of at least fifty percent (50%) of the voting power, capital or other securities of controlled or commonly controlled entity.
+1. Grant of Copyright License
+Subject to the terms and conditions of this License, each Contributor hereby grants to you a perpetual, worldwide, royalty-free, non-exclusive, irrevocable copyright license to reproduce, use, modify, or distribute its Contribution, with modification or not.
+2. Grant of Patent License
+Subject to the terms and conditions of this License, each Contributor hereby grants to you a perpetual, worldwide, royalty-free, non-exclusive, irrevocable (except for revocation under this Section) patent license to make, have made, use, offer for sale, sell, import or otherwise transfer its Contribution, where such patent license is only limited to the patent claims owned or controlled by such Contributor now or in future which will be necessarily infringed by its Contribution alone, or by combination of the Contribution with the Software to which the Contribution was contributed. The patent license shall not apply to any modification of the Contribution, and any other combination which includes the Contribution. If you or your Affiliates directly or indirectly institute patent litigation (including a cross claim or counterclaim in a litigation) or other patent enforcement activities against any individual or entity by alleging that the Software or any Contribution in it infringes patents, then any patent license granted to you under this License for the Software shall terminate as of the date such litigation or activity is filed or taken.
+3. No Trademark License
+No trademark license is granted to use the trade names, trademarks, service marks, or product names of Contributor, except as required to fulfill notice requirements in section 4.
+4. Distribution Restriction
+You may distribute the Software in any medium with or without modification, whether in source or executable forms, provided that you provide recipients with a copy of this License and retain copyright, patent, trademark and disclaimer statements in the Software.
+5. Disclaimer of Warranty and Limitation of Liability
+THE SOFTWARE AND CONTRIBUTION IN IT ARE PROVIDED WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED. IN NO EVENT SHALL ANY CONTRIBUTOR OR COPYRIGHT HOLDER BE LIABLE TO YOU FOR ANY DAMAGES, INCLUDING, BUT NOT LIMITED TO ANY DIRECT, OR INDIRECT, SPECIAL OR CONSEQUENTIAL DAMAGES ARISING FROM YOUR USE OR INABILITY TO USE THE SOFTWARE OR THE CONTRIBUTION IN IT, NO MATTER HOW IT’S CAUSED OR BASED ON WHICH LEGAL THEORY, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+6. Language
+THIS LICENSE IS WRITTEN IN BOTH CHINESE AND ENGLISH, AND THE CHINESE VERSION AND ENGLISH VERSION SHALL HAVE THE SAME LEGAL EFFECT. IN THE CASE OF DIVERGENCE BETWEEN THE CHINESE AND ENGLISH VERSIONS, THE CHINESE VERSION SHALL PREVAIL.
+END OF THE TERMS AND CONDITIONS
+"""
+
+
+def run(cmd: list[str]) -> None:
+    print("+", " ".join(cmd))
+    subprocess.run(cmd, check=True)
+
+
+def download(url: str, expected_sha256: str, target: Path) -> None:
+    """Download *url* to *target* and reject content that is not pinned."""
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=60) as response, target.open("wb") as output:
+        while chunk := response.read(1024 * 1024):
+            digest.update(chunk)
+            output.write(chunk)
+
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256 != expected_sha256:
+        target.unlink(missing_ok=True)
+        raise RuntimeError(f"SHA256 mismatch for {url}: expected {expected_sha256}, got {actual_sha256}")
+
+
+def fetch(arch: str) -> None:
+    platform = PLATFORMS[arch]
+    opengauss_image = OPENGAUSS_IMAGES[arch]
+    openssl_package = OPENSSL_PACKAGES[arch]
+    target = VENDOR_DIR / arch
+    target.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        rpm_path = tmp_dir / "openssl-libs.rpm"
+        download(openssl_package["url"], openssl_package["sha256"], rpm_path)
+
+        libpq_container = f"datus-gaussdb-libpq-{arch}"
+        openssl_container = f"datus-gaussdb-openssl-{arch}"
+        for container in (libpq_container, openssl_container):
+            subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+
+        run(["docker", "create", "--platform", platform, "--name", libpq_container, opengauss_image])
+        run(
+            [
+                "docker",
+                "create",
+                "--name",
+                openssl_container,
+                OPENSSL_EXTRACT_IMAGE,
+                "bash",
+                "-lc",
+                (
+                    f"mkdir -p {OPENSSL_EXTRACT_DIR} && "
+                    "rpm2archive /tmp/openssl-libs.rpm && "
+                    f"tar -xzf /tmp/openssl-libs.rpm.tgz -C {OPENSSL_EXTRACT_DIR}"
+                ),
+            ]
+        )
+        try:
+            run(["docker", "cp", str(rpm_path), f"{openssl_container}:/tmp/openssl-libs.rpm"])
+            run(["docker", "start", "-a", openssl_container])
+
+            for lib in LIBPQ_LIBS:
+                extracted = tmp_dir / lib
+                run(["docker", "cp", f"{libpq_container}:{CONTAINER_LIB_DIR}/{lib}", str(extracted)])
+                (target / lib).write_bytes(extracted.read_bytes())
+
+            for lib, source in OPENSSL_LIBS.items():
+                extracted = tmp_dir / lib
+                run(["docker", "cp", f"{openssl_container}:{OPENSSL_EXTRACT_DIR}{source}", str(extracted)])
+                (target / lib).write_bytes(extracted.read_bytes())
+
+            openssl_license = tmp_dir / "OPENSSL-LICENSE.txt"
+            run(
+                [
+                    "docker",
+                    "cp",
+                    f"{openssl_container}:{OPENSSL_EXTRACT_DIR}/usr/share/licenses/openssl-libs/LICENSE",
+                    str(openssl_license),
+                ]
+            )
+            openssl_license_text = openssl_license.read_text(encoding="utf-8")
+        finally:
+            for container in (libpq_container, openssl_container):
+                subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+
+    (target / "MulanPSL-2.0.txt").write_text(
+        MULAN_NOTICE.format(license=MULAN_LICENSE_TEXT),
+        encoding="utf-8",
+    )
+    (target / "OPENSSL-LICENSE.txt").write_text(
+        openssl_license_text.rstrip() + "\n",
+        encoding="utf-8",
+    )
+    print(f"Vendored {len(LIBPQ_LIBS) + len(OPENSSL_LIBS)} libraries into {target}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--arch", choices=[*PLATFORMS, "all"], default="all")
+    args = parser.parse_args()
+    arches = list(PLATFORMS) if args.arch == "all" else [args.arch]
+    for arch in arches:
+        fetch(arch)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
