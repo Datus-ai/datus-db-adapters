@@ -161,5 +161,8 @@ before running anything against a real server:
 python scripts/fetch_vendor_libpq.py
 ```
 
-The script extracts libpq and OpenSSL from the pinned openGauss image for one or
-both architectures (`--arch x86_64|aarch64|all`), so Docker must be available.
+The script extracts libpq from a digest-pinned openGauss image and replaces its
+old OpenSSL build with checksum-pinned, security-maintained openEuler 22.03 LTS
+SP4 packages. It supports one or both architectures
+(`--arch x86_64|aarch64|all`), so Docker must be available. Exact image/RPM
+provenance is recorded in `datus_gaussdb/_vendor/README.md`.

@@ -123,13 +123,13 @@ jobs:
         if: steps.resolve.outputs.state != 'complete' && steps.resolve.outputs.package == 'datus-gaussdb'
         run: |
           set -euo pipefail
-          # datus-gaussdb wheels bundle the openGauss libpq (Mulan PSL v2);
-          # the binaries are never committed — they are extracted from the
-          # pinned openGauss image at release-build time.
+          # datus-gaussdb wheels bundle the openGauss libpq (Mulan PSL v2)
+          # with checksum-pinned openEuler OpenSSL security updates. The
+          # binaries are generated only at release-build time.
           python3 datus-gaussdb/scripts/fetch_vendor_libpq.py --arch all
           for arch in x86_64 aarch64; do
-            for lib in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1; do
-              test -f "datus-gaussdb/datus_gaussdb/_vendor/${arch}/${lib}"
+            for artifact in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1 MulanPSL-2.0.txt OPENSSL-LICENSE.txt; do
+              test -f "datus-gaussdb/datus_gaussdb/_vendor/${arch}/${artifact}"
             done
           done
 
@@ -152,12 +152,16 @@ jobs:
           for wheel in wheels:
               names = zipfile.ZipFile(wheel).namelist()
               for arch in ("x86_64", "aarch64"):
-                  # libpq is loaded through its bundled OpenSSL, so all three
-                  # must ship or the driver fails at import time.
-                  for library in ("libpq.so.5", "libssl.so.1.1", "libcrypto.so.1.1"):
-                      member = f"datus_gaussdb/_vendor/{arch}/{library}"
+                  for artifact in (
+                      "libpq.so.5",
+                      "libssl.so.1.1",
+                      "libcrypto.so.1.1",
+                      "MulanPSL-2.0.txt",
+                      "OPENSSL-LICENSE.txt",
+                  ):
+                      member = f"datus_gaussdb/_vendor/{arch}/{artifact}"
                       assert member in names, f"{wheel} is missing {member} — vendor step did not run"
-          print("vendored libpq present in wheel")
+          print("vendored libpq and licenses present in wheel")
           EOF
           fi
 

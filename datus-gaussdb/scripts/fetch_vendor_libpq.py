@@ -2,27 +2,55 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Populate datus_gaussdb/_vendor/<arch>/ with the openGauss libpq binaries.
+"""Populate datus_gaussdb/_vendor/<arch>/ with the GaussDB client libraries.
 
-Extracts libpq + OpenSSL from the pinned openGauss container image for one or
-both architectures. Used by wheel release builds and by developers running
-integration tests from a source checkout.
+Extracts libpq from a pinned openGauss container image and replaces its old
+OpenSSL 1.1.1m dependencies with security-maintained openEuler 22.03 LTS SP4
+packages. Used by wheel release builds and by developers running integration
+tests from a source checkout.
 
 Usage:
     python scripts/fetch_vendor_libpq.py [--arch x86_64|aarch64|all]
 """
 
 import argparse
+import hashlib
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from pathlib import Path
 
-IMAGE = "opengauss/opengauss:7.0.0-RC2.B015"
-LIBS = ("libpq.so.5.5", "libpq.so.5", "libssl.so.1.1", "libcrypto.so.1.1")
+OPENGAUSS_IMAGES = {
+    "x86_64": "opengauss/opengauss@sha256:daccb40d63eeadc4c2a7703e8efb991f23a505c9bd3211cccfd057ba5a2fff19",
+    "aarch64": "opengauss/opengauss@sha256:cc07c4e1d8ddc3b6ae5898969a2d89fd3cafe39b932b11688092d17c5e0935bc",
+}
+LIBPQ_LIBS = ("libpq.so.5.5", "libpq.so.5")
+OPENSSL_LIBS = {
+    "libssl.so.1.1": "/usr/lib64/libssl.so.1.1.1wa",
+    "libcrypto.so.1.1": "/usr/lib64/libcrypto.so.1.1.1wa",
+}
 CONTAINER_LIB_DIR = "/usr/local/opengauss/lib"
+OPENSSL_EXTRACT_IMAGE = "openeuler/openeuler:22.03-lts-sp4"
+OPENSSL_EXTRACT_DIR = "/extract"
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "datus_gaussdb" / "_vendor"
 PLATFORMS = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
+OPENSSL_PACKAGES = {
+    "x86_64": {
+        "url": (
+            "https://repo.openeuler.org/openEuler-22.03-LTS-SP4/update/x86_64/Packages/"
+            "openssl-libs-1.1.1wa-17.oe2203sp4.x86_64.rpm"
+        ),
+        "sha256": "11033ecd81939537a4d4b84c2fb399d1fb16fdd58fa13d6a62c4e7f887b74dfd",
+    },
+    "aarch64": {
+        "url": (
+            "https://repo.openeuler.org/openEuler-22.03-LTS-SP4/update/aarch64/Packages/"
+            "openssl-libs-1.1.1wa-17.oe2203sp4.aarch64.rpm"
+        ),
+        "sha256": "c243aeaf739139ea78a764a3bfa166232add1f63147c2ed38b1061ed2c8eec45",
+    },
+}
 
 MULAN_NOTICE = """The bundled libpq binaries are built from the openGauss project
 (https://gitee.com/opengauss/openGauss-server) and are redistributed under
@@ -94,41 +122,97 @@ THIS LICENSE IS WRITTEN IN BOTH CHINESE AND ENGLISH, AND THE CHINESE VERSION AND
 END OF THE TERMS AND CONDITIONS
 """
 
-OPENSSL_NOTICE = """The bundled libssl and libcrypto binaries are OpenSSL 1.1.x builds
-shipped with the openGauss distribution. OpenSSL 1.1.x is redistributed
-under the dual OpenSSL and SSLeay licenses:
-https://www.openssl.org/source/license-openssl-ssleay.txt
 
-This product includes software developed by the OpenSSL Project for use
-in the OpenSSL Toolkit (http://www.openssl.org/). This product includes
-cryptographic software written by Eric Young (eay@cryptsoft.com).
-"""
-
-
-def run(cmd: list) -> None:
+def run(cmd: list[str]) -> None:
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
 
+def download(url: str, expected_sha256: str, target: Path) -> None:
+    """Download *url* to *target* and reject content that is not pinned."""
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=60) as response, target.open("wb") as output:
+        while chunk := response.read(1024 * 1024):
+            digest.update(chunk)
+            output.write(chunk)
+
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256 != expected_sha256:
+        target.unlink(missing_ok=True)
+        raise RuntimeError(f"SHA256 mismatch for {url}: expected {expected_sha256}, got {actual_sha256}")
+
+
 def fetch(arch: str) -> None:
     platform = PLATFORMS[arch]
+    opengauss_image = OPENGAUSS_IMAGES[arch]
+    openssl_package = OPENSSL_PACKAGES[arch]
     target = VENDOR_DIR / arch
     target.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
-        container = f"datus-gaussdb-vendor-{arch}"
-        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
-        run(["docker", "create", "--platform", platform, "--name", container, IMAGE])
-        try:
-            for lib in LIBS:
-                run(["docker", "cp", f"{container}:{CONTAINER_LIB_DIR}/{lib}", str(Path(tmp) / lib)])
-                (target / lib).write_bytes((Path(tmp) / lib).read_bytes())
-        finally:
+        tmp_dir = Path(tmp)
+        rpm_path = tmp_dir / "openssl-libs.rpm"
+        download(openssl_package["url"], openssl_package["sha256"], rpm_path)
+
+        libpq_container = f"datus-gaussdb-libpq-{arch}"
+        openssl_container = f"datus-gaussdb-openssl-{arch}"
+        for container in (libpq_container, openssl_container):
             subprocess.run(["docker", "rm", "-f", container], capture_output=True)
 
-    (target / "MulanPSL-2.0.txt").write_text(MULAN_NOTICE.format(license=MULAN_LICENSE_TEXT))
-    (target / "OPENSSL-LICENSE.txt").write_text(OPENSSL_NOTICE)
-    print(f"Vendored {len(LIBS)} libraries into {target}")
+        run(["docker", "create", "--platform", platform, "--name", libpq_container, opengauss_image])
+        run(
+            [
+                "docker",
+                "create",
+                "--name",
+                openssl_container,
+                OPENSSL_EXTRACT_IMAGE,
+                "bash",
+                "-lc",
+                (
+                    f"mkdir -p {OPENSSL_EXTRACT_DIR} && "
+                    "rpm2archive /tmp/openssl-libs.rpm && "
+                    f"tar -xzf /tmp/openssl-libs.rpm.tgz -C {OPENSSL_EXTRACT_DIR}"
+                ),
+            ]
+        )
+        try:
+            run(["docker", "cp", str(rpm_path), f"{openssl_container}:/tmp/openssl-libs.rpm"])
+            run(["docker", "start", "-a", openssl_container])
+
+            for lib in LIBPQ_LIBS:
+                extracted = tmp_dir / lib
+                run(["docker", "cp", f"{libpq_container}:{CONTAINER_LIB_DIR}/{lib}", str(extracted)])
+                (target / lib).write_bytes(extracted.read_bytes())
+
+            for lib, source in OPENSSL_LIBS.items():
+                extracted = tmp_dir / lib
+                run(["docker", "cp", f"{openssl_container}:{OPENSSL_EXTRACT_DIR}{source}", str(extracted)])
+                (target / lib).write_bytes(extracted.read_bytes())
+
+            openssl_license = tmp_dir / "OPENSSL-LICENSE.txt"
+            run(
+                [
+                    "docker",
+                    "cp",
+                    f"{openssl_container}:{OPENSSL_EXTRACT_DIR}/usr/share/licenses/openssl-libs/LICENSE",
+                    str(openssl_license),
+                ]
+            )
+            openssl_license_text = openssl_license.read_text(encoding="utf-8")
+        finally:
+            for container in (libpq_container, openssl_container):
+                subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+
+    (target / "MulanPSL-2.0.txt").write_text(
+        MULAN_NOTICE.format(license=MULAN_LICENSE_TEXT),
+        encoding="utf-8",
+    )
+    (target / "OPENSSL-LICENSE.txt").write_text(
+        openssl_license_text.rstrip() + "\n",
+        encoding="utf-8",
+    )
+    print(f"Vendored {len(LIBPQ_LIBS) + len(OPENSSL_LIBS)} libraries into {target}")
 
 
 def main() -> int:
