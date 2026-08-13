@@ -295,6 +295,44 @@ adapter_env_summary() {
   esac
 }
 
+prepare_adapter_dependencies() {
+  local adapter="$1"
+  local machine
+  local operating_system
+  local vendor_arch
+  local library
+
+  case "$adapter" in
+    gaussdb)
+      operating_system="$(uname -s)"
+      if [ "$operating_system" != "Linux" ]; then
+        echo "GaussDB vendored client libraries are Linux-only; using system library discovery on $operating_system"
+        return 0
+      fi
+
+      machine="$(uname -m)"
+      case "$machine" in
+        x86_64|amd64) vendor_arch="x86_64" ;;
+        aarch64|arm64) vendor_arch="aarch64" ;;
+        *)
+          echo "Unsupported architecture for GaussDB integration tests: $machine" >&2
+          return 1
+          ;;
+      esac
+
+      echo "Preparing GaussDB client libraries for $vendor_arch"
+      require_command python3
+      python3 datus-gaussdb/scripts/fetch_vendor_libpq.py --arch "$vendor_arch"
+      for library in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1; do
+        if [ ! -f "datus-gaussdb/datus_gaussdb/_vendor/${vendor_arch}/${library}" ]; then
+          echo "GaussDB client library was not vendored: $library" >&2
+          return 1
+        fi
+      done
+      ;;
+  esac
+}
+
 compose_down() {
   local adapter="$1"
   local compose_file
@@ -779,6 +817,7 @@ for adapter in "${selected_adapters[@]}"; do
   compose_down "$adapter"
   STARTED_ADAPTERS+=("$adapter")
   export_adapter_env "$adapter"
+  prepare_adapter_dependencies "$adapter"
   docker_compose -f "$compose_file" up -d --build
 
   for spec in $(adapter_services "$adapter"); do
