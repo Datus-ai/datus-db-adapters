@@ -54,3 +54,20 @@ docker compose up -d
 # Integration tests
 cd datus-oracle && python -m pytest tests/integration/ -v
 ```
+
+### Sample schemas
+
+The container also installs Oracle's official **HR** sample schema (7 tables,
+216 rows) from `docker/sample-schemas/human_resources/`, driven by
+`docker/init/02_install_hr_schema.sh`. `tests/integration/test_sample_schema_hr.py`
+uses it to cover what the TPC-H fixtures cannot: foreign keys, the
+`employees.manager_id` hierarchy (`CONNECT BY`), a view listed separately from
+tables, and column comments.
+
+The installation is idempotent and adds a couple of seconds to the first
+container start. Set `ORACLE_SKIP_SAMPLE_SCHEMAS=1` to skip it — the HR tests
+then skip as well. `ORACLE_HR_PASSWORD` overrides the HR account password,
+which otherwise reuses `ORACLE_PASSWORD`.
+
+The `sales_history` (SH) schema is deliberately **not** vendored: its data files
+total ~91 MB, which does not belong in this repository or in a CI image build.
