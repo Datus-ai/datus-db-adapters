@@ -183,6 +183,22 @@ def test_sys_databases_matches_postgresql():
     assert connector._sys_databases() == {"template0", "template1"}
 
 
+@pytest.mark.acceptance
+def test_get_schemas_uses_pg_namespace_and_filters_internal_prefixes():
+    """Schema discovery uses pg_namespace and hides system and temporary schemas."""
+    connector = _make_connector()
+    result = MagicMock()
+    result.__getitem__.return_value.tolist.return_value = ["public", "pg_catalog", "dbe_perf", "pg_temp_3"]
+    connector._execute_pandas = MagicMock(return_value=result)
+
+    schemas = connector.get_schemas(database_name="analytics")
+
+    assert schemas == ["public"]
+    sql = connector._execute_pandas.call_args.args[0]
+    assert "pg_namespace" in sql
+    connector._execute_pandas.assert_called_once_with(sql, database_name="analytics")
+
+
 # ==================== Feature Probing ====================
 
 

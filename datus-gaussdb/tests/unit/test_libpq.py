@@ -4,13 +4,15 @@
 
 """Tests for vendored libpq resolution.
 
-Only the pure path/env resolution logic is exercised — no ctypes library is
-ever loaded and the ``gaussdb`` driver is never imported.
+No native library or real ``gaussdb`` driver is loaded; import and ctypes
+boundaries are mocked when the selected-library path is exercised.
 """
 
+import builtins
 import ctypes.util
 import platform
 import sys
+from contextlib import contextmanager
 
 import pytest
 
@@ -184,3 +186,76 @@ def test_import_gaussdb_returns_already_imported_module(monkeypatch):
     )
 
     assert _libpq.import_gaussdb() is sentinel
+
+
+@pytest.mark.acceptance
+def test_import_gaussdb_uses_system_discovery_without_preloading(monkeypatch):
+    """System discovery imports the driver without patching or preloading."""
+    sentinel = object()
+    original_import = builtins.__import__
+    monkeypatch.delitem(sys.modules, "gaussdb", raising=False)
+    monkeypatch.setattr(_libpq, "resolve_libpq_path", lambda: None)
+    monkeypatch.setattr(
+        _libpq.ctypes,
+        "CDLL",
+        lambda *_args, **_kwargs: pytest.fail("system discovery must not preload bundled libraries"),
+    )
+    monkeypatch.setattr(
+        _libpq,
+        "_patched_find_library",
+        lambda *_args, **_kwargs: pytest.fail("system discovery must not patch find_library"),
+    )
+
+    def fake_import(name, *args, **kwargs):
+        if name == "gaussdb":
+            return sentinel
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert _libpq.import_gaussdb() is sentinel
+
+
+@pytest.mark.acceptance
+def test_import_gaussdb_preloads_openssl_and_patches_libpq_lookup(monkeypatch, tmp_path):
+    """A selected libpq loads its OpenSSL pair before the wrapped driver import."""
+    sentinel = object()
+    original_import = builtins.__import__
+    events = []
+    for library in ("libpq.so.5", "libcrypto.so.1.1", "libssl.so.1.1"):
+        (tmp_path / library).write_bytes(b"")
+
+    monkeypatch.delitem(sys.modules, "gaussdb", raising=False)
+    monkeypatch.setattr(_libpq, "resolve_libpq_path", lambda: str(tmp_path / "libpq.so.5"))
+    monkeypatch.setattr(
+        _libpq.ctypes,
+        "CDLL",
+        lambda path, mode: events.append(("preload", path, mode)),
+    )
+
+    @contextmanager
+    def patched_find_library(path):
+        events.append(("patch-enter", path))
+        try:
+            yield
+        finally:
+            events.append(("patch-exit", path))
+
+    monkeypatch.setattr(_libpq, "_patched_find_library", patched_find_library)
+
+    def fake_import(name, *args, **kwargs):
+        if name == "gaussdb":
+            events.append(("import", name))
+            return sentinel
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert _libpq.import_gaussdb() is sentinel
+    assert events == [
+        ("preload", str(tmp_path / "libcrypto.so.1.1"), ctypes.RTLD_GLOBAL),
+        ("preload", str(tmp_path / "libssl.so.1.1"), ctypes.RTLD_GLOBAL),
+        ("patch-enter", str(tmp_path / "libpq.so.5")),
+        ("import", "gaussdb"),
+        ("patch-exit", str(tmp_path / "libpq.so.5")),
+    ]

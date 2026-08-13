@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy.dialects import registry
 from sqlalchemy.dialects.postgresql.psycopg import PGDialect_psycopg
 
+from datus_gaussdb import sa_dialect
 from datus_gaussdb.sa_dialect import GaussDBDialect, _GaussDBDbapiProxy
 
 
@@ -63,6 +64,36 @@ def test_dbapi_proxy_raises_for_unknown_attribute():
 
     with pytest.raises(AttributeError):
         getattr(proxy, missing)
+
+
+# ==================== Driver aliasing ====================
+
+
+@pytest.mark.acceptance
+def test_import_dbapi_aliases_gaussdb_when_psycopg_is_not_loaded(monkeypatch):
+    """GaussDB-first processes install the compatible driver under psycopg."""
+    gaussdb = _stub_gaussdb_module()
+    monkeypatch.setitem(sys.modules, "gaussdb", gaussdb)
+    monkeypatch.delitem(sys.modules, "psycopg", raising=False)
+    monkeypatch.setattr(sa_dialect, "import_gaussdb", lambda: gaussdb)
+
+    dbapi = GaussDBDialect.import_dbapi()
+
+    assert sys.modules["psycopg"] is gaussdb
+    assert dbapi._module is gaussdb
+
+
+@pytest.mark.acceptance
+def test_import_dbapi_rejects_an_already_loaded_psycopg(monkeypatch):
+    """Psycopg-first processes fail clearly instead of mixing registries."""
+    gaussdb = _stub_gaussdb_module()
+    psycopg = types.ModuleType("psycopg")
+    monkeypatch.setitem(sys.modules, "gaussdb", gaussdb)
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+    monkeypatch.setattr(sa_dialect, "import_gaussdb", lambda: gaussdb)
+
+    with pytest.raises(ImportError, match="psycopg is already imported"):
+        GaussDBDialect.import_dbapi()
 
 
 # ==================== _get_server_version_info ====================
