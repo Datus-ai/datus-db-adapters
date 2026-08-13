@@ -10,6 +10,9 @@ services:
     volumes:
       # The Free image ships a prebuilt database, so setup scripts are skipped.
       - ./docker/init:/opt/oracle/scripts/startup:ro
+      # Vendored Oracle sample schemas, installed by docker/init/02_install_hr_schema.sh.
+      # Kept out of the startup directory so the runner does not execute them directly.
+      - ./docker/sample-schemas:/opt/oracle/sample-schemas:ro
       - oracle_data:/opt/oracle/oradata
 
 volumes:
