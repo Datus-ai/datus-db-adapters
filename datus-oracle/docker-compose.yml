@@ -1,19 +1,23 @@
 services:
   oracle:
-    # Official Oracle Database Free image; pin the tag (no floating latest)
-    image: container-registry.oracle.com/database/free:23.8.0.0
+    # Official Oracle Database 19c Enterprise Edition; pin the tag (no floating latest).
+    # Pulling this image requires accepting the Oracle Container Registry license and logging in.
+    image: ${ORACLE_IMAGE:-container-registry.oracle.com/database/enterprise:19.3.0.0}
     environment:
+      ORACLE_SID: ${ORACLE_SID:-ORCLCDB}
+      ORACLE_PDB: ${ORACLE_PDB:-ORCLPDB1}
       ORACLE_PWD: ${ORACLE_SYS_PASSWORD:?Set ORACLE_SYS_PASSWORD}
       ORACLE_APP_PASSWORD: ${ORACLE_PASSWORD:?Set ORACLE_PASSWORD}
     ports:
       - "127.0.0.1:${ORACLE_HOST_PORT:-1521}:1521"
     volumes:
-      # The Free image ships a prebuilt database, so setup scripts are skipped.
+      # Startup scripts run after the 19c database is created and after every restart.
       - ./docker/init:/opt/oracle/scripts/startup:ro
       # Vendored Oracle sample schemas, installed by docker/init/02_install_hr_schema.sh.
       # Kept out of the startup directory so the runner does not execute them directly.
       - ./docker/sample-schemas:/opt/oracle/sample-schemas:ro
-      - oracle_data:/opt/oracle/oradata
+      # Keep 19c files separate from the previous 23ai Free volume; they are not compatible.
+      - oracle19c_data:/opt/oracle/oradata
 
 volumes:
-  oracle_data:
+  oracle19c_data:
