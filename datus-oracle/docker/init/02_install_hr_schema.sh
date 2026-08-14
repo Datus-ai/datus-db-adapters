@@ -30,13 +30,19 @@ if [[ ! "$HR_PASSWORD" =~ ^[A-Za-z][A-Za-z0-9_]{7,127}$ ]]; then
   exit 1
 fi
 
+ORACLE_PDB="${ORACLE_PDB:-ORCLPDB1}"
+if [[ ! "$ORACLE_PDB" =~ ^[A-Za-z][A-Za-z0-9_]{0,127}$ ]]; then
+  echo "ORACLE_PDB must be an unquoted Oracle identifier." >&2
+  exit 1
+fi
+
 # Key the probe on an installed object, not on the HR user: an install that
 # aborted midway leaves the user behind with no tables, and a user-only check
 # would treat that empty schema as complete forever.
 already_installed="$(sqlplus -s / as sysdba <<SQL
 WHENEVER SQLERROR EXIT SQL.SQLCODE
 SET HEADING OFF FEEDBACK OFF PAGESIZE 0
-ALTER SESSION SET CONTAINER = FREEPDB1;
+ALTER SESSION SET CONTAINER = ${ORACLE_PDB};
 SELECT COUNT(*) FROM dba_tables WHERE owner = 'HR' AND table_name = 'EMPLOYEES';
 EXIT;
 SQL
@@ -66,7 +72,7 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 WHENEVER OSERROR EXIT FAILURE
 SET ECHO OFF FEEDBACK OFF VERIFY OFF
 
-ALTER SESSION SET CONTAINER = FREEPDB1;
+ALTER SESSION SET CONTAINER = ${ORACLE_PDB};
 
 -- Reaching here means the schema is incomplete, so a leftover HR user is the
 -- remains of a failed install: drop it and start from a clean slate.

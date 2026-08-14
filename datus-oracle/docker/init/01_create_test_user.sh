@@ -11,10 +11,16 @@ if [[ ! "$ORACLE_APP_PASSWORD" =~ ^[A-Za-z][A-Za-z0-9_]{7,127}$ ]]; then
   exit 1
 fi
 
+ORACLE_PDB="${ORACLE_PDB:-ORCLPDB1}"
+if [[ ! "$ORACLE_PDB" =~ ^[A-Za-z][A-Za-z0-9_]{0,127}$ ]]; then
+  echo "ORACLE_PDB must be an unquoted Oracle identifier." >&2
+  exit 1
+fi
+
 sqlplus -s / as sysdba <<SQL
 WHENEVER SQLERROR EXIT SQL.SQLCODE
 
-ALTER SESSION SET CONTAINER = FREEPDB1;
+ALTER SESSION SET CONTAINER = ${ORACLE_PDB};
 
 DECLARE
     user_count PLS_INTEGER;

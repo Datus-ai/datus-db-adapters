@@ -264,9 +264,12 @@ export_adapter_env() {
       export ORACLE_PORT="$ORACLE_HOST_PORT"
       export ORACLE_USER="datus_test"
       export ORACLE_PASSWORD="test_password"
-      export ORACLE_SERVICE_NAME="FREEPDB1"
+      export ORACLE_SID="${ORACLE_SID:-ORCLCDB}"
+      export ORACLE_PDB="${ORACLE_PDB:-ORCLPDB1}"
+      export ORACLE_SERVICE_NAME="${ORACLE_SERVICE_NAME:-$ORACLE_PDB}"
       export ORACLE_SCHEMA="DATUS_TEST"
       export ORACLE_SYS_PASSWORD="${ORACLE_SYS_PASSWORD:-test_sys_password}"
+      export ORACLE_READY_TIMEOUT="${ORACLE_READY_TIMEOUT:-1200}"
       ;;
     gaussdb)
       export GAUSSDB_HOST_PORT="${GAUSSDB_HOST_PORT:-25434}"
@@ -657,7 +660,7 @@ elif adapter == "oracle":
         port=int(os.getenv("ORACLE_PORT", "1521")),
         username=os.getenv("ORACLE_USER", "datus_test"),
         password=os.getenv("ORACLE_PASSWORD", "test_password"),
-        service_name=os.getenv("ORACLE_SERVICE_NAME", "FREEPDB1"),
+        service_name=os.getenv("ORACLE_SERVICE_NAME", "ORCLPDB1"),
         schema_name=os.getenv("ORACLE_SCHEMA", "DATUS_TEST"),
         timeout_seconds=5,
     )

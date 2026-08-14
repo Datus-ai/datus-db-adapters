@@ -21,7 +21,7 @@ services:
       port: 1521
       username: datus_test
       password: ${ORACLE_PASSWORD}
-      service_name: FREEPDB1
+      service_name: ORCLPDB1
       schema: DATUS_TEST
       default: true
 ```
@@ -47,6 +47,9 @@ cd datus-oracle && python -m pytest tests/unit/ -v
 
 # Start the local integration database. Both passwords are required; choose
 # values that are not reused outside this disposable development environment.
+# The default Oracle 19c Enterprise Edition image requires accepting its license
+# in Oracle Container Registry and logging Docker in to that registry first.
+docker login container-registry.oracle.com
 export ORACLE_SYS_PASSWORD='<strong-sys-password>'
 export ORACLE_PASSWORD='<app-password-starting-with-a-letter>'
 docker compose up -d
@@ -54,6 +57,11 @@ docker compose up -d
 # Integration tests
 cd datus-oracle && python -m pytest tests/integration/ -v
 ```
+
+The compose environment pins Oracle Database 19c `19.3.0.0`, uses
+`ORCLCDB`/`ORCLPDB1`, and stores its data in a dedicated 19c volume. The first
+database creation is substantially slower than restarting an initialized
+volume; the CI readiness probe allows up to 20 minutes by default.
 
 ### Sample schemas
 
