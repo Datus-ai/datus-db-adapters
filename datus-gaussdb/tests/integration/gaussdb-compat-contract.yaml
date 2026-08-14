@@ -1,0 +1,130 @@
+# GaussDB compatibility-mode semantic contract.
+#
+# VENDORED from osi-engine design/gaussdb-compat-contract.yaml — keep the two
+# files byte-identical below this provenance block; update them together.
+#
+# Machine-readable record of how DBCOMPATIBILITY 'PG' / 'A' / 'B' change SQL
+# semantics on GaussDB/openGauss, derived from a 47-construct live scan
+# (openGauss 7.0.0-RC2, 2026-08-14) and re-verified against a managed GaussDB
+# Kernel 505.2.1. Consumed by crates/dosi-exec/tests/gaussdb_compat_contract.rs
+# (env-gated live test); the Datus db-adapters repo vendors a copy so both
+# codebases assert the same expectations — update the two files together.
+#
+# `expect` values are the text rendering (cast to varchar server-side unless
+# the probe already returns text). A probe absent for a mode means the
+# construct errors there — `expect_error` names the substring instead.
+#
+# Fields per entry:
+#   id:       stable slug
+#   verdict:  decode-normalized | portable-rewrite-known | data-semantics |
+#             engine-wide | identical
+#   notes:    what dosi does about it (or why nothing is needed)
+
+version: 1
+probes:
+  - id: bool-text-rendering
+    verdict: decode-normalized
+    sql: "select cast(true as varchar)"
+    expect: { PG: "true", A: "true", B: "1" }
+    notes: >-
+      The BOOL type OID is unchanged in B mode; only the text differs. Both
+      the dosi executor (to_value) and the Datus adapters decode tolerantly
+      ('t'/'true'/'1'), so this never reaches results.
+
+  - id: empty-string-is-null
+    verdict: data-semantics
+    sql: "select cast(('' is null) as int)"
+    expect: { PG: "0", A: "1", B: "0" }
+    notes: >-
+      'A' mode stores '' as NULL at write time — the distinction is destroyed
+      at rest, no query rewrite can recover it. Declared, not rewritten:
+      `col = ''` never matches in A mode. The portable emptiness predicate
+      `col = '' OR col IS NULL` returns the same row count in all modes.
+
+  - id: date-literal-cast
+    verdict: identical-textually
+    sql: "select to_char(cast('2024-01-15' as date), 'YYYY-MM-DD')"
+    expect: { PG: "2024-01-15", A: "2024-01-15", B: "2024-01-15" }
+    notes: >-
+      A mode's DATE is timestamp-shaped (bare cast renders with a time part);
+      to_char normalizes. dosi's compiled SQL compares date values, not their
+      bare text, and the corpus passes on all three modes.
+
+  - id: date-subtraction
+    verdict: portable-rewrite-known
+    sql: "select cast(date '2024-03-15' - date '2024-01-01' as varchar)"
+    expect: { PG: "74", A: "74 days", B: "214" }
+    notes: >-
+      B mode subtracts the dates as numbers (20240315 - 20240101). dosi never
+      emits bare date-date (its DATEDIFF case is a declared corpus skip on the
+      whole Postgres family). Portable form if ever needed:
+      to_char(d,'J')::int - to_char(d2,'J')::int == 74 in every mode.
+
+  - id: null-sort-position
+    verdict: engine-wide
+    sql: >-
+      select coalesce(cast(x as varchar),'NULL') from
+      (select 1 x union all select null) t order by x limit 1
+    expect: { PG: "1", A: "1", B: "NULL" }
+    notes: >-
+      B mode sorts NULLs first ascending — the same semantics MySQL/TiDB
+      already have in the fleet. Not a GaussDB-specific divergence; explicit
+      NULLS LAST/FIRST is the portable spelling and is verified to work in
+      all three modes.
+
+  - id: iso-week-number
+    verdict: portable-rewrite-known
+    sql: "select cast(extract(week from date '2024-03-15') as varchar)"
+    expect: { PG: "11", A: "11", B: "10" }
+    notes: >-
+      B mode uses MySQL week numbering. Portable form: to_char(d,'IW') == 11
+      in every mode. dosi's time-grain lowering does not emit extract(week)
+      for the Postgres family.
+
+  - id: concat-null-absorption
+    verdict: data-semantics
+    sql: "select cast(('a' || null) is null as int)"
+    expect: { PG: "1", A: "0", B: "1" }
+    notes: >-
+      Concat's NULL handling follows each mode's family: PG propagates NULL,
+      A (Oracle) ignores it ('a' || NULL = 'a'), B (MySQL CONCAT) propagates.
+      Portable form: wrap operands in coalesce(x,''). dosi does not emit ||.
+
+  - id: trailing-space-comparison
+    verdict: data-semantics
+    sql: "select cast(('a' = 'a ') as int)"
+    expect: { PG: "0", A: "0", B: "1" }
+    notes: >-
+      B mode compares CHAR-semantics style (MySQL PAD SPACE): trailing
+      spaces are insignificant in equality. Affects predicates and DISTINCT
+      over user data with trailing spaces; declared, not rewritten. Case
+      sensitivity is unaffected ('ABC' = 'abc' is false in every mode).
+
+  - id: empty-sum-is-null
+    verdict: identical
+    sql: "select cast((select sum(x) from (select 1 x where false) t) is null as int)"
+    expect: { PG: "1", A: "1", B: "1" }
+    notes: >-
+      SUM over an empty *grouped* input never reaches this (no groups, no
+      rows); the scalar-subquery shape is NULL in every mode.
+
+  - id: integer-division
+    verdict: engine-wide
+    sql: "select cast(7/2 as varchar)"
+    expect: { PG: "3.5", A: "3.5", B: "3.5000000000000000" }
+    notes: >-
+      GaussDB divides integers as reals in every compatibility mode — a
+      kernel behavior, not a mode behavior (real PostgreSQL truncates to 3).
+      The fleet is already split on this (MySQL/ClickHouse real, PG/Trino
+      truncating); dosi's Ratio metrics carry an explicit double cast
+      (dosi-compiler infer.rs), and bare int/int in expression metrics is a
+      documented fleet-level divergence.
+
+  - id: timestamptz-suffix
+    verdict: decode-normalized
+    sql: "select cast(cast('2024-01-01 10:20:30' as timestamp) as varchar)"
+    expect: { PG: "2024-01-01 10:20:30", A: "2024-01-01 10:20:30", B: "2024-01-01 10:20:30+00" }
+    notes: >-
+      B mode's timestamp is timestamptz-shaped; under the executor's pinned
+      UTC session the +00 suffix is stripped by to_value, so Value rows
+      compare equal.
