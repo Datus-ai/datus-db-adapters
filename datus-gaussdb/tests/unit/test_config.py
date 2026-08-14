@@ -98,9 +98,10 @@ def test_config_schema_name_still_accepted():
 
 
 @pytest.mark.acceptance
-@pytest.mark.parametrize(("platform_name", "expected"), [("linux", "gaussdb"), ("darwin", "psycopg2")])
+@pytest.mark.parametrize(("platform_name", "expected"), [("linux", "gaussdb"), ("darwin", "pg8000")])
 def test_config_driver_default_is_platform_safe(monkeypatch, platform_name, expected):
-    """Linux keeps the official driver while macOS avoids its unavailable libpq."""
+    """Linux keeps the official driver; macOS uses the pure-Python pg8000
+    path, which speaks GaussDB SHA256 without the unavailable libpq."""
     monkeypatch.setattr("datus_gaussdb.config.sys.platform", platform_name)
     config = GaussDBConfig(username="datus")
     assert config.driver == expected
@@ -111,6 +112,19 @@ def test_config_driver_psycopg2_accepted():
     """psycopg2 stays available as an escape hatch."""
     config = GaussDBConfig(username="datus", driver="psycopg2")
     assert config.driver == "psycopg2"
+
+
+@pytest.mark.acceptance
+def test_config_driver_pg8000_accepted():
+    config = GaussDBConfig(username="datus", driver="pg8000")
+    assert config.driver == "pg8000"
+
+
+@pytest.mark.acceptance
+def test_config_sslrootcert_default_none_and_roundtrip():
+    assert GaussDBConfig(username="datus").sslrootcert is None
+    config = GaussDBConfig(username="datus", sslrootcert="/etc/ssl/gauss-ca.pem")
+    assert config.model_dump()["sslrootcert"] == "/etc/ssl/gauss-ca.pem"
 
 
 @pytest.mark.acceptance

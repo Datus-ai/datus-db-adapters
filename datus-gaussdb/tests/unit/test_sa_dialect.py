@@ -156,7 +156,11 @@ def test_create_connect_args_injects_client_cursor(monkeypatch):
     monkeypatch.setitem(sys.modules, "gaussdb", module)
     dialect = GaussDBDialect.__new__(GaussDBDialect)
 
-    with patch.object(PGDialect_psycopg, "create_connect_args", return_value=([], {"dbname": "postgres"})):
+    with patch.object(
+        PGDialect_psycopg,
+        "create_connect_args",
+        return_value=([], {"dbname": "postgres"}),
+    ):
         args, kwargs = dialect.create_connect_args(MagicMock())
 
     assert args == []
@@ -172,7 +176,11 @@ def test_create_connect_args_keeps_explicit_cursor_factory(monkeypatch):
     custom_cursor = type("CustomCursor", (), {})
     dialect = GaussDBDialect.__new__(GaussDBDialect)
 
-    with patch.object(PGDialect_psycopg, "create_connect_args", return_value=([], {"cursor_factory": custom_cursor})):
+    with patch.object(
+        PGDialect_psycopg,
+        "create_connect_args",
+        return_value=([], {"cursor_factory": custom_cursor}),
+    ):
         _, kwargs = dialect.create_connect_args(MagicMock())
 
     assert kwargs["cursor_factory"] is custom_cursor
@@ -207,3 +215,140 @@ def test_dialect_registered_in_sqlalchemy_registry():
 def test_stock_postgresql_psycopg2_dialect_is_unchanged():
     """Registering GaussDB's dialect does not replace PostgreSQL behavior."""
     assert registry.load("postgresql.psycopg2") is PGDialect_psycopg2
+
+
+# ==================== pg8000 dialect ====================
+
+
+def test_pg8000_dialect_identity_and_registration():
+    from sqlalchemy.dialects.postgresql.pg8000 import PGDialect_pg8000
+
+    from datus_gaussdb.sa_dialect import GaussDBPg8000Dialect
+
+    assert GaussDBPg8000Dialect.name == "gaussdb"
+    assert GaussDBPg8000Dialect.driver == "pg8000"
+    assert GaussDBPg8000Dialect.supports_statement_cache is True
+    assert issubclass(GaussDBPg8000Dialect, PGDialect_pg8000)
+    assert registry.load("gaussdb.pg8000") is GaussDBPg8000Dialect
+
+
+def test_pg8000_import_dbapi_is_gauss_module():
+    from datus_gaussdb import _pg8000_gauss
+    from datus_gaussdb.sa_dialect import GaussDBPg8000Dialect
+
+    assert GaussDBPg8000Dialect.import_dbapi() is _pg8000_gauss
+
+
+@pytest.mark.parametrize(
+    ("sslmode", "expected"),
+    [
+        ("disable", False),
+        ("allow", None),
+        ("prefer", None),
+        (None, None),
+        ("require", True),
+    ],
+)
+def test_pg8000_ssl_context_simple_modes(sslmode, expected):
+    from datus_gaussdb.sa_dialect import _build_pg8000_ssl_context
+
+    assert _build_pg8000_ssl_context(sslmode, None) is expected
+
+
+def test_pg8000_ssl_context_verify_modes(tmp_path):
+    import ssl
+
+    from datus_gaussdb.sa_dialect import _build_pg8000_ssl_context
+
+    # A self-signed cert generated on the fly is overkill; an empty CA file
+    # is enough for context construction (load failure = ssl.SSLError).
+    ca = tmp_path / "ca.pem"
+    ca.write_text(
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIBhTCCASugAwIBAgIUQ2FsbGVkIGZvciB0ZXN0aW5nIQwwCgYIKoZIzj0EAwIw\n"
+        "-----END CERTIFICATE-----\n"
+    )
+    try:
+        ctx = _build_pg8000_ssl_context("verify-ca", str(ca))
+    except ssl.SSLError:
+        pytest.skip("stub certificate rejected by this OpenSSL build")
+    assert ctx.check_hostname is False
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_pg8000_ssl_context_verify_requires_rootcert():
+    from datus_gaussdb.sa_dialect import _build_pg8000_ssl_context
+
+    for mode in ("verify-ca", "verify-full"):
+        with pytest.raises(ValueError, match="sslrootcert"):
+            _build_pg8000_ssl_context(mode, None)
+
+
+def test_pg8000_ssl_context_unknown_mode_rejected():
+    from datus_gaussdb.sa_dialect import _build_pg8000_ssl_context
+
+    with pytest.raises(ValueError, match="unknown sslmode"):
+        _build_pg8000_ssl_context("mystery", None)
+
+
+def test_pg8000_create_connect_args_moves_ssl_params():
+    from sqlalchemy.engine import make_url
+
+    from datus_gaussdb.sa_dialect import GaussDBPg8000Dialect
+
+    dialect = GaussDBPg8000Dialect()
+    url = make_url("gaussdb+pg8000://u:p@h:25434/db?sslmode=disable")
+    _, opts = dialect.create_connect_args(url)
+
+    assert opts["ssl_context"] is False
+    assert "sslmode" not in opts
+    assert "sslrootcert" not in opts
+    assert opts["port"] == 25434
+
+
+# ==================== compatibility-mode bool decoding ====================
+
+
+def test_tolerant_bool_parser_covers_all_compat_modes():
+    """'t'/'f' (PG and A modes) and '1'/'0' (B mode) must both decode
+    correctly; B mode's '1' silently reads as False with a strict parser."""
+    from datus_gaussdb.sa_dialect import _gaussdb_bool_in
+
+    assert _gaussdb_bool_in("t") is True
+    assert _gaussdb_bool_in("true") is True
+    assert _gaussdb_bool_in("1") is True
+    assert _gaussdb_bool_in("f") is False
+    assert _gaussdb_bool_in("false") is False
+    assert _gaussdb_bool_in("0") is False
+
+
+def test_pg8000_on_connect_registers_bool_adapter():
+    from datus_gaussdb.sa_dialect import GaussDBPg8000Dialect, _gaussdb_bool_in
+
+    dialect = GaussDBPg8000Dialect()
+    conn = MagicMock()
+    hook = dialect.on_connect()
+    hook(conn)
+    conn.register_in_adapter.assert_called_once_with(16, _gaussdb_bool_in)
+
+
+def test_psycopg2_on_connect_registers_bool_caster():
+    from datus_gaussdb.sa_dialect import GaussDBPsycopg2Dialect
+
+    dialect = GaussDBPsycopg2Dialect()
+    conn = MagicMock()
+    with (
+        patch("psycopg2.extensions.new_type") as new_type,
+        patch("psycopg2.extensions.register_type") as reg,
+    ):
+        new_type.return_value = "caster"
+        hook = dialect.on_connect()
+        hook(conn)
+
+    (oids, name, parse), _ = new_type.call_args
+    assert oids == (16,)
+    assert parse("1", None) is True
+    assert parse("t", None) is True
+    assert parse("0", None) is False
+    assert parse(None, None) is None
+    reg.assert_called_once_with("caster", conn)

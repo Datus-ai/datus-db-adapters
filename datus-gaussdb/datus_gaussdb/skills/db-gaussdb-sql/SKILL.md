@@ -20,6 +20,10 @@ Generate GaussDB-compatible SQL from metadata-provided object and column names. 
 - In `A` mode, string concatenation follows Oracle semantics: `NULL || 'x'` returns `'x'`, not NULL.
 - Do not use Oracle-only functions or syntax (`nvl`, `decode`, `sysdate`, `add_months`, `(+)` outer joins) even in `A` mode; use PostgreSQL equivalents (`coalesce`, `CASE`, `current_timestamp`, interval arithmetic, ANSI joins).
 - Prefer explicit casts (`CAST(x AS type)` or `x::type`) — `A` mode implicit conversions differ from vanilla PostgreSQL, and `DATE` behaves like a timestamp there.
+- In `B` mode, `date1 - date2` subtracts the dates *as numbers* (`20240315 - 20240101 = 214`), not as a day count. For a portable day difference in every mode use `to_char(d1,'J')::int - to_char(d2,'J')::int`; `DATEDIFF` exists only in `B` mode.
+- In `B` mode, NULLs sort *first* ascending (opposite of PostgreSQL). When NULL placement matters — especially before `LIMIT` — always spell it out: `ORDER BY col NULLS LAST` (or `NULLS FIRST`).
+- In `B` mode, `extract(week ...)` uses MySQL week numbering; use `to_char(d,'IW')` for ISO week in every mode.
+- In `B` mode, boolean values render as `'1'/'0'` and aggregates over an empty set may not be NULL. For text output of booleans compare explicitly (`CASE WHEN flag THEN ...`) instead of relying on the rendering.
 
 ## Queries and types
 
