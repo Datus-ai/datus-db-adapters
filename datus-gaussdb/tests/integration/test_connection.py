@@ -18,7 +18,8 @@ def test_connection_with_config_object(config: GaussDBConfig):
     try:
         assert conn.test_connection()
         assert conn.dialect == "gaussdb"
-        assert conn.connection_string.startswith(f"gaussdb+{config.driver}://")
+        sqlalchemy_driver = "psycopg2" if config.driver == "psycopg2" else "psycopg"
+        assert conn.connection_string.startswith(f"gaussdb+{sqlalchemy_driver}://")
     finally:
         conn.close()
 
