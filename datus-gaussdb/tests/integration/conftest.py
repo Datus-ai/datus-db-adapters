@@ -15,6 +15,7 @@ Variable                     Default             Meaning
 ``GAUSSDB_PASSWORD``         ``Datus@123``       login password
 ``GAUSSDB_DATABASE``         ``postgres``        default database
 ``GAUSSDB_SCHEMA``           ``public``          default schema
+``GAUSSDB_DRIVER``           platform default    ``gaussdb`` or ``psycopg2``
 ===========================  ==================  =========================
 
 IMPORTANT — platform caveat: the official ``gaussdb`` driver binds the
@@ -30,11 +31,12 @@ one that runs the openGauss server is fine)::
 Every fixture skips (never fails) when the server is unreachable, so the suite
 is inert on developer machines without a GaussDB instance.
 
-Off Linux the whole suite is skipped up front: the driver binds whatever libpq
-it can find, and a vanilla PostgreSQL libpq makes it *segfault* on connect
-rather than raise — a crash no fixture can catch. Set
-``GAUSSDB_FORCE_INTEGRATION=1`` to override on a host that really does have the
-GaussDB client libraries.
+Off Linux, tests using the official driver are skipped up front: the driver
+binds whatever libpq it can find, and a vanilla PostgreSQL libpq makes it
+*segfault* on connect rather than raise — a crash no fixture can catch. The
+``psycopg2`` path is safe on macOS and is selected there by default. Set
+``GAUSSDB_FORCE_INTEGRATION=1`` only to run the official driver on a host that
+really does have the GaussDB client libraries.
 """
 
 import os
@@ -48,8 +50,9 @@ from datus_gaussdb.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
 
 def _require_gaussdb_libpq_platform() -> None:
-    """Skip rather than let the driver segfault against a non-GaussDB libpq."""
-    if sys.platform != "linux" and os.getenv("GAUSSDB_FORCE_INTEGRATION") != "1":
+    """Skip unsafe official-driver runs while allowing psycopg2 on macOS."""
+    driver = os.getenv("GAUSSDB_DRIVER") or ("psycopg2" if sys.platform == "darwin" else "gaussdb")
+    if driver == "gaussdb" and sys.platform != "linux" and os.getenv("GAUSSDB_FORCE_INTEGRATION") != "1":
         pytest.skip(
             f"the gaussdb driver needs the GaussDB/openGauss libpq, which has no {sys.platform} build; "
             "run this suite in a Linux container (or set GAUSSDB_FORCE_INTEGRATION=1)"
@@ -70,6 +73,7 @@ def _build_config() -> GaussDBConfig:
         password=os.getenv("GAUSSDB_PASSWORD", "Datus@123"),
         database=os.getenv("GAUSSDB_DATABASE", "postgres"),
         schema_name=os.getenv("GAUSSDB_SCHEMA", "public"),
+        driver=os.getenv("GAUSSDB_DRIVER") or ("psycopg2" if sys.platform == "darwin" else "gaussdb"),
     )
 
 

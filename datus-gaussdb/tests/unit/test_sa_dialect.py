@@ -16,9 +16,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.dialects import registry
 from sqlalchemy.dialects.postgresql.psycopg import PGDialect_psycopg
+from sqlalchemy.dialects.postgresql.psycopg2 import PGDialect_psycopg2
 
 from datus_gaussdb import sa_dialect
-from datus_gaussdb.sa_dialect import GaussDBDialect, _GaussDBDbapiProxy
+from datus_gaussdb.sa_dialect import GaussDBDialect, GaussDBPsycopg2Dialect, _GaussDBDbapiProxy
 
 
 def _stub_gaussdb_module() -> types.ModuleType:
@@ -132,6 +133,19 @@ def test_server_version_info_falls_back_when_unparseable():
     assert _version_info("GaussDB Kernel V500R002") == (9, 2)
 
 
+@pytest.mark.acceptance
+def test_psycopg2_server_version_info_uses_gaussdb_parser():
+    """The macOS-compatible path does not invoke PostgreSQL's version regex."""
+    dialect = GaussDBPsycopg2Dialect.__new__(GaussDBPsycopg2Dialect)
+    connection = MagicMock()
+    connection.exec_driver_sql.return_value.scalar.return_value = "9.2.4-openGauss"
+
+    result = dialect._get_server_version_info(connection)
+
+    assert result == (9, 2, 4)
+    connection.exec_driver_sql.assert_called_once_with("SHOW server_version")
+
+
 # ==================== create_connect_args ====================
 
 
@@ -175,9 +189,21 @@ def test_dialect_identity():
     assert GaussDBDialect.supports_statement_cache is True
     assert issubclass(GaussDBDialect, PGDialect_psycopg)
 
+    assert GaussDBPsycopg2Dialect.name == "gaussdb"
+    assert GaussDBPsycopg2Dialect.driver == "psycopg2"
+    assert GaussDBPsycopg2Dialect.supports_statement_cache is True
+    assert issubclass(GaussDBPsycopg2Dialect, PGDialect_psycopg2)
+
 
 @pytest.mark.acceptance
 def test_dialect_registered_in_sqlalchemy_registry():
-    """Both public registry names resolve without touching the native driver."""
+    """All public registry names resolve without touching a native driver."""
     assert registry.load("gaussdb") is GaussDBDialect
     assert registry.load("gaussdb.psycopg") is GaussDBDialect
+    assert registry.load("gaussdb.psycopg2") is GaussDBPsycopg2Dialect
+
+
+@pytest.mark.acceptance
+def test_stock_postgresql_psycopg2_dialect_is_unchanged():
+    """Registering GaussDB's dialect does not replace PostgreSQL behavior."""
+    assert registry.load("postgresql.psycopg2") is PGDialect_psycopg2

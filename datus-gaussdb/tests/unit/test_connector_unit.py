@@ -25,7 +25,13 @@ _SA_INIT = "datus_sqlalchemy.SQLAlchemyConnector.__init__"
 
 def _make_connector(**overrides) -> GaussDBConnector:
     """Build a connector whose SQLAlchemy layer is inert."""
-    kwargs = {"username": "datus", "host": "gauss.internal", "port": 25434, "database": "postgres"}
+    kwargs = {
+        "username": "datus",
+        "host": "gauss.internal",
+        "port": 25434,
+        "database": "postgres",
+        "driver": "gaussdb",
+    }
     kwargs.update(overrides)
     with patch(_SA_INIT, return_value=None):
         return GaussDBConnector(GaussDBConfig(**kwargs))
@@ -126,12 +132,12 @@ def test_connection_string_uses_gaussdb_driver_by_default():
 
 
 @pytest.mark.acceptance
-def test_connection_string_uses_postgresql_dialect_for_psycopg2():
-    """The psycopg2 escape hatch falls back to the stock PostgreSQL dialect."""
+def test_connection_string_uses_gaussdb_dialect_for_psycopg2():
+    """The psycopg2 escape hatch keeps GaussDB-specific dialect behavior."""
     connector = _make_connector(driver="psycopg2", password="pass", database="analyticsdb")
 
     assert connector.connection_string == (
-        "postgresql+psycopg2://datus:pass@gauss.internal:25434/analyticsdb?sslmode=prefer"
+        "gaussdb+psycopg2://datus:pass@gauss.internal:25434/analyticsdb?sslmode=prefer"
     )
 
 
