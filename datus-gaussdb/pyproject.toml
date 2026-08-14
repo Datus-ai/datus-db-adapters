@@ -23,6 +23,7 @@ gaussdb = "datus_gaussdb.skills:get_skills_dir"
 [project.entry-points."sqlalchemy.dialects"]
 gaussdb = "datus_gaussdb.sa_dialect:GaussDBDialect"
 "gaussdb.psycopg" = "datus_gaussdb.sa_dialect:GaussDBDialect"
+"gaussdb.psycopg2" = "datus_gaussdb.sa_dialect:GaussDBPsycopg2Dialect"
 
 [build-system]
 requires = ["hatchling"]

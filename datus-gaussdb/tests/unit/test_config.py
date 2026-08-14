@@ -98,10 +98,12 @@ def test_config_schema_name_still_accepted():
 
 
 @pytest.mark.acceptance
-def test_config_driver_defaults_to_gaussdb():
-    """The official driver is the default (sha256/md5/sm3 authentication)."""
+@pytest.mark.parametrize(("platform_name", "expected"), [("linux", "gaussdb"), ("darwin", "psycopg2")])
+def test_config_driver_default_is_platform_safe(monkeypatch, platform_name, expected):
+    """Linux keeps the official driver while macOS avoids its unavailable libpq."""
+    monkeypatch.setattr("datus_gaussdb.config.sys.platform", platform_name)
     config = GaussDBConfig(username="datus")
-    assert config.driver == "gaussdb"
+    assert config.driver == expected
 
 
 @pytest.mark.acceptance

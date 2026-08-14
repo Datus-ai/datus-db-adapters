@@ -2,15 +2,23 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""SQLAlchemy dialect for GaussDB on top of the official ``gaussdb`` driver.
+"""SQLAlchemy dialects for GaussDB/openGauss client drivers.
 
-The driver is a psycopg3 fork with the module tree renamed psycopg->gaussdb.
-SQLAlchemy's built-in ``postgresql+psycopg`` dialect hard-imports ``psycopg``
-submodules in ~15 places; rather than reimplementing the dialect, the
-(API-identical) ``gaussdb`` module tree is aliased into ``sys.modules`` under
-the ``psycopg`` names before the dialect first touches them.
+The official ``gaussdb`` driver is a psycopg3 fork with the module tree renamed
+psycopg->gaussdb. SQLAlchemy's built-in ``postgresql+psycopg`` dialect
+hard-imports ``psycopg`` submodules in ~15 places; rather than reimplementing
+the dialect, the (API-identical) ``gaussdb`` module tree is aliased into
+``sys.modules`` under the ``psycopg`` names before the dialect first touches
+them.
 
-URL form: ``gaussdb+psycopg://user:password@host:port/database``
+The optional psycopg2 path uses its own GaussDB-named dialect. This keeps the
+stock PostgreSQL dialect untouched while allowing PostgreSQL's macOS libpq to
+connect to servers that expose the compatible wire protocol.
+
+URL forms::
+
+    gaussdb+psycopg://user:password@host:port/database
+    gaussdb+psycopg2://user:password@host:port/database
 """
 
 import sys
@@ -18,6 +26,7 @@ import types
 
 from sqlalchemy.dialects import registry
 from sqlalchemy.dialects.postgresql.psycopg import PGDialect_psycopg
+from sqlalchemy.dialects.postgresql.psycopg2 import PGDialect_psycopg2
 
 from ._libpq import import_gaussdb
 
@@ -108,19 +117,43 @@ class GaussDBDialect(PGDialect_psycopg):
         return args, kwargs
 
     def _get_server_version_info(self, connection):
-        # GaussDB's version() returns "gaussdb (GaussDB Kernel 503...)" /
-        # "(openGauss 7.0...)", which the parent regex (expects
-        # "PostgreSQL X.Y") cannot parse. The PG compatibility level is
-        # reported via server_version instead (typically 9.2.x).
-        val = connection.exec_driver_sql("SHOW server_version").scalar()
-        parts = []
-        for token in str(val).replace("-", ".").split("."):
-            if token.isdigit():
-                parts.append(int(token))
-            else:
-                break
-        return tuple(parts) if parts else (9, 2)
+        return _get_server_version_info(connection)
+
+
+class GaussDBPsycopg2Dialect(PGDialect_psycopg2):
+    """GaussDB/openGauss dialect using PostgreSQL's psycopg2 client.
+
+    Linux continues to use the official ``gaussdb`` driver unless
+    ``driver: psycopg2`` is configured explicitly. macOS selects this path by
+    default because no compatible native GaussDB/openGauss libpq is available.
+    """
+
+    name = "gaussdb"
+    driver = "psycopg2"
+    supports_statement_cache = True
+
+    def _get_server_version_info(self, connection):
+        return _get_server_version_info(connection)
+
+
+def _get_server_version_info(connection):
+    """Read the PostgreSQL compatibility level without parsing ``version()``.
+
+    GaussDB's ``version()`` returns ``gaussdb (GaussDB Kernel 503...)`` and
+    openGauss returns ``(openGauss 7.0...)``. Neither matches SQLAlchemy's
+    PostgreSQL-only regular expression. Both server families report their
+    PostgreSQL compatibility level through ``server_version`` instead.
+    """
+    val = connection.exec_driver_sql("SHOW server_version").scalar()
+    parts = []
+    for token in str(val).replace("-", ".").split("."):
+        if token.isdigit():
+            parts.append(int(token))
+        else:
+            break
+    return tuple(parts) if parts else (9, 2)
 
 
 registry.register("gaussdb", "datus_gaussdb.sa_dialect", "GaussDBDialect")
 registry.register("gaussdb.psycopg", "datus_gaussdb.sa_dialect", "GaussDBDialect")
+registry.register("gaussdb.psycopg2", "datus_gaussdb.sa_dialect", "GaussDBPsycopg2Dialect")

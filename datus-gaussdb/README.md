@@ -51,14 +51,16 @@ identifiers.
 
 | Driver | Authentication methods | When to use |
 |--------|-----------------------|-------------|
-| `gaussdb` (default) | sha256, md5, sm3 | Any GaussDB / openGauss server, including a stock installation |
-| `psycopg2` | md5 only | Escape hatch when the official driver cannot be installed |
+| `gaussdb` (Linux default) | sha256, md5, sm3 | Any GaussDB / openGauss server, including a stock installation |
+| `psycopg2` (macOS default) | md5 only | PostgreSQL wire-compatible connection when official libpq is unavailable |
 
 GaussDB defaults to `sha256` password authentication, which vanilla PostgreSQL
 drivers do not implement. The default `gaussdb` driver speaks it, so a stock
 server works with no server-side changes.
 
-The `psycopg2` escape hatch is selected in the datasource config:
+On macOS, the adapter selects `psycopg2` automatically because the official
+GaussDB/openGauss libpq is not published for Darwin. It can also be selected
+explicitly on any platform:
 
 ```yaml
       driver: psycopg2
@@ -94,9 +96,11 @@ loaded by absolute path and nothing is added to the loader search path, so
 neither installation shadows the other. Set `DATUS_GAUSSDB_LIBPQ=system` if you
 would rather use the client you installed.
 
-macOS is not supported by the driver natively — no openGauss libpq is published
-for Darwin. Run the adapter (and its integration tests) inside a Linux
-container on macOS hosts.
+The official `gaussdb` driver is not supported on macOS — no openGauss libpq is
+published for Darwin. The adapter therefore uses its isolated
+`gaussdb+psycopg2` dialect on macOS. This does not replace or monkey-patch
+SQLAlchemy's PostgreSQL dialect, and Linux continues to use the official driver
+by default.
 
 ## Compatibility modes and deployment shapes
 
@@ -149,8 +153,9 @@ documents two openGauss container quirks (the mandatory out-of-datadir
 `GAUSSLOG`, and the first post-initdb server start aborting on Docker Desktop
 for macOS) that its entrypoint wrapper works around.
 
-On macOS the tests themselves must also run inside a Linux container, because
-the driver's libpq is Linux-only.
+On macOS, integration tests use `psycopg2` by default. To exercise the official
+driver, run them in a Linux container or explicitly set `GAUSSDB_DRIVER=gaussdb`
+on a Linux host.
 
 ## Source checkouts
 

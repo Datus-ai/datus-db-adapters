@@ -13,12 +13,12 @@ from datus_gaussdb import GaussDBConfig, GaussDBConnector
 @pytest.mark.integration
 @pytest.mark.acceptance
 def test_connection_with_config_object(config: GaussDBConfig):
-    """Connect through the official gaussdb driver using a config object."""
+    """Connect through the platform-selected driver using a config object."""
     conn = GaussDBConnector(config)
     try:
         assert conn.test_connection()
         assert conn.dialect == "gaussdb"
-        assert conn.connection_string.startswith("gaussdb+psycopg://")
+        assert conn.connection_string.startswith(f"gaussdb+{config.driver}://")
     finally:
         conn.close()
 

@@ -35,7 +35,9 @@ class GaussDBConnector(PostgreSQLConnector):
     GaussDB is PostgreSQL-compatible on the wire; this connector inherits
     all execution and metadata logic from PostgreSQLConnector and connects
     through the official ``gaussdb`` driver (sha256/md5/sm3 authentication)
-    via the ``gaussdb+psycopg`` SQLAlchemy dialect.
+    via the ``gaussdb+psycopg`` SQLAlchemy dialect. On macOS, where the
+    official libpq is unavailable, it uses the isolated
+    ``gaussdb+psycopg2`` compatibility dialect by default.
     """
 
     def __init__(self, config: Union[GaussDBConfig, dict]):
@@ -46,7 +48,7 @@ class GaussDBConnector(PostgreSQLConnector):
 
         super().__init__(config)
         # PostgreSQLConnector fixes dialect="postgresql" and a psycopg2
-        # connection string; both must be re-pointed at the gaussdb driver.
+        # connection string; both must be re-pointed at a GaussDB dialect.
         # The engine is created lazily, so nothing has connected yet.
         self.dialect = "gaussdb"
         self.config = config
@@ -57,7 +59,7 @@ class GaussDBConnector(PostgreSQLConnector):
 
     @override
     def _build_connection_string(self, database_name: str) -> str:
-        prefix = "postgresql+psycopg2" if self.config.driver == "psycopg2" else "gaussdb+psycopg"
+        prefix = "gaussdb+psycopg2" if self.config.driver == "psycopg2" else "gaussdb+psycopg"
         encoded_username = quote_plus(self.username) if self.username else ""
         encoded_password = quote_plus(self.password) if self.password else ""
         return (
