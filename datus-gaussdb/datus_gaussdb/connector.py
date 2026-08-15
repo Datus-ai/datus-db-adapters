@@ -36,8 +36,8 @@ class GaussDBConnector(PostgreSQLConnector):
     all execution and metadata logic from PostgreSQLConnector and connects
     through the official ``gaussdb`` driver (sha256/md5/sm3 authentication)
     via the ``gaussdb+psycopg`` SQLAlchemy dialect. On macOS, where the
-    official libpq is unavailable, it uses the isolated
-    ``gaussdb+psycopg2`` compatibility dialect by default.
+    official libpq is unavailable, it defaults to the pure-Python
+    ``gaussdb+pg8000`` dialect, which speaks the SHA256 handshake natively.
     """
 
     def __init__(self, config: Union[GaussDBConfig, dict]):

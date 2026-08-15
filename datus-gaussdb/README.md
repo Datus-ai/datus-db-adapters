@@ -52,7 +52,7 @@ identifiers.
 | Driver | Authentication methods | When to use |
 |--------|-----------------------|-------------|
 | `gaussdb` (Linux default) | sha256, md5, sm3 | Any GaussDB / openGauss server, including a stock installation |
-| `pg8000` (macOS default) | sha256, md5 | Pure Python, no libpq — any platform, any stock server |
+| `pg8000` (macOS default) | sha256, md5 | Pure Python, no libpq — any platform; SHA256/MD5-stored accounts (not SM3) |
 | `psycopg2` | md5 only | Escape hatch when neither of the above can be installed |
 
 GaussDB defaults to `sha256` password authentication, which vanilla PostgreSQL

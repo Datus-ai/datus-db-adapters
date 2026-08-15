@@ -241,6 +241,8 @@ def test_pg8000_import_dbapi_is_gauss_module():
 
 @pytest.mark.parametrize(
     ("sslmode", "expected"),
+    # `allow` is deliberately treated as `prefer` (TLS-first with plaintext
+    # fallback) — the same approximation the Rust executor makes.
     [
         ("disable", False),
         ("allow", None),
@@ -255,25 +257,56 @@ def test_pg8000_ssl_context_simple_modes(sslmode, expected):
     assert _build_pg8000_ssl_context(sslmode, None) is expected
 
 
+# A real (EC self-signed, 10-year) certificate so ssl actually loads it and
+# the CERT_REQUIRED assertions below genuinely execute; a truncated stub gets
+# rejected by some OpenSSL builds, silently skipping the tests.
+_STUB_CERT = (
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIBhjCCASugAwIBAgIUKYy4YU1TuNflu3n4/hhvaCxV+dswCgYIKoZIzj0EAwIw\n"
+    "GDEWMBQGA1UEAwwNZGF0dXMtdGVzdC1jYTAeFw0yNjA4MTUwODMyMThaFw0zNjA4\n"
+    "MTIwODMyMThaMBgxFjAUBgNVBAMMDWRhdHVzLXRlc3QtY2EwWTATBgcqhkjOPQIB\n"
+    "BggqhkjOPQMBBwNCAAQgcvgmKbaVP7SSMOn580Uv1Jy5GEoaVsFjdzF5wX1o+jPy\n"
+    "6D3hUeLoB95uA3Po1sOpp0xr6AcBwrZXvwU6ngOEo1MwUTAdBgNVHQ4EFgQU/8U6\n"
+    "FzlhBpXz2fMHuCl02FR9wtkwHwYDVR0jBBgwFoAU/8U6FzlhBpXz2fMHuCl02FR9\n"
+    "wtkwDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNJADBGAiEAqLXrwfHKkwR3\n"
+    "8QaKlb+w/uMxfVr9wBQ6i4wZjk+tT70CIQDzLUGn2oBEo9QSqt9G8JLkBZUfa8Lv\n"
+    "sRlAkeTWs5ocPg==\n"
+    "-----END CERTIFICATE-----\n"
+)
+
+
 def test_pg8000_ssl_context_verify_modes(tmp_path):
     import ssl
 
     from datus_gaussdb.sa_dialect import _build_pg8000_ssl_context
 
-    # A self-signed cert generated on the fly is overkill; an empty CA file
-    # is enough for context construction (load failure = ssl.SSLError).
+    # A self-signed cert generated on the fly is overkill; a stub CA file is
+    # enough for context construction (load failure = ssl.SSLError).
     ca = tmp_path / "ca.pem"
-    ca.write_text(
-        "-----BEGIN CERTIFICATE-----\n"
-        "MIIBhTCCASugAwIBAgIUQ2FsbGVkIGZvciB0ZXN0aW5nIQwwCgYIKoZIzj0EAwIw\n"
-        "-----END CERTIFICATE-----\n"
-    )
+    ca.write_text(_STUB_CERT)
     try:
         ctx = _build_pg8000_ssl_context("verify-ca", str(ca))
     except ssl.SSLError:
         pytest.skip("stub certificate rejected by this OpenSSL build")
     assert ctx.check_hostname is False
     assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_pg8000_require_with_rootcert_verifies_like_verify_ca(tmp_path):
+    """libpq back-compat: `require` + a CA file validates the chain."""
+    import ssl
+
+    from datus_gaussdb.sa_dialect import _build_pg8000_ssl_context
+
+    ca = tmp_path / "ca.pem"
+    ca.write_text(_STUB_CERT)
+    try:
+        ctx = _build_pg8000_ssl_context("require", str(ca))
+    except ssl.SSLError:
+        pytest.skip("stub certificate rejected by this OpenSSL build")
+    assert ctx is not True
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is False
 
 
 def test_pg8000_ssl_context_verify_requires_rootcert():

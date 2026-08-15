@@ -106,6 +106,28 @@ def test_sha256_handshake_sends_rfc5802_response():
     assert server.auth_response == VECTOR_RESPONSE
 
 
+def test_excessive_iteration_count_is_refused():
+    """A hostile server naming an absurd PBKDF2 iteration count must be
+    rejected before any key derivation work happens."""
+    payload = struct.pack("!I", 2) + VECTOR_RANDOM64 + VECTOR_TOKEN + struct.pack("!I", 2**31)
+    client_sock, server_sock = socket.socketpair()
+    server = FakeGaussServer(server_sock, payload)
+    server.start()
+    with pytest.raises(InterfaceError, match="PBKDF2 iterations"):
+        Connection("datus", password="Datus@123", sock=client_sock, ssl_context=False)
+    server_sock.close()
+
+
+def test_zero_iteration_count_is_refused():
+    payload = struct.pack("!I", 2) + VECTOR_RANDOM64 + VECTOR_TOKEN + struct.pack("!I", 0)
+    client_sock, server_sock = socket.socketpair()
+    server = FakeGaussServer(server_sock, payload)
+    server.start()
+    with pytest.raises(InterfaceError, match="PBKDF2 iterations"):
+        Connection("datus", password="Datus@123", sock=client_sock, ssl_context=False)
+    server_sock.close()
+
+
 def test_md5_method_under_code_10():
     salt = b"\x01\x02\x03\x04"
     server = _handshake(struct.pack("!I", 1) + salt)

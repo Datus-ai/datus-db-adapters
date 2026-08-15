@@ -51,6 +51,12 @@ paramstyle = _dbapi.paramstyle
 PROTOCOL_3_0 = 196608
 PROTOCOL_3_51 = 196659
 
+# The server names the PBKDF2 iteration count and the client must obey it, so
+# an unauthenticated hostile endpoint could demand arbitrary work before any
+# password check. openGauss/GaussDB default to 10000 (GUC-tunable); two orders
+# of magnitude above that is generously legitimate, anything more is abuse.
+MAX_PBKDF2_ITERATIONS = 1_000_000
+
 # GaussDB password-stored methods (first int32 of the auth code 10 payload).
 _METHOD_PLAIN = 0
 _METHOD_MD5 = 1
@@ -140,6 +146,11 @@ class _GaussCore(CoreConnection):
         if method in (_METHOD_PLAIN, _METHOD_SHA256):
             random64, token = body[:64], body[64:72]
             iteration = struct.unpack("!I", body[72:76])[0]
+            if not 0 < iteration <= MAX_PBKDF2_ITERATIONS:
+                raise InterfaceError(
+                    f"server demanded {iteration} PBKDF2 iterations "
+                    f"(sane range: 1..{MAX_PBKDF2_ITERATIONS}); refusing the handshake"
+                )
             response = rfc5802_response(self.password, random64, token, iteration)
         elif method == _METHOD_MD5:
             response = _md5_response(self.user, self.password, body[:4])

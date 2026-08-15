@@ -194,6 +194,16 @@ def _build_pg8000_ssl_context(sslmode, sslrootcert):
     negotiates but falls back to plaintext (libpq's prefer), ``True``
     requires TLS without verification, and a custom ``SSLContext`` requires
     TLS with that context's verification rules.
+
+    Two libpq subtleties carried over deliberately:
+
+    * ``allow`` is treated as ``prefer`` (TLS-first with plaintext fallback)
+      rather than libpq's plaintext-first order — the same approximation the
+      Rust executor and most non-libpq drivers make; both spellings end up
+      connected either way.
+    * ``require`` **with** ``sslrootcert`` verifies the chain like
+      ``verify-ca`` — libpq's documented backwards-compatibility behavior.
+      Without a CA file it only encrypts.
     """
     import ssl as ssl_module
 
@@ -203,7 +213,11 @@ def _build_pg8000_ssl_context(sslmode, sslrootcert):
     if mode in ("allow", "prefer"):
         return None
     if mode == "require":
-        return True
+        if not sslrootcert:
+            return True
+        context = ssl_module.create_default_context(cafile=sslrootcert)
+        context.check_hostname = False
+        return context
     if mode in ("verify-ca", "verify-full"):
         if not sslrootcert:
             raise ValueError(f"sslmode={mode} requires sslrootcert to point at the CA certificate")
