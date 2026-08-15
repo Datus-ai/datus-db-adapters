@@ -52,25 +52,42 @@ identifiers.
 | Driver | Authentication methods | When to use |
 |--------|-----------------------|-------------|
 | `gaussdb` (Linux default) | sha256, md5, sm3 | Any GaussDB / openGauss server, including a stock installation |
-| `psycopg2` (macOS default) | md5 only | PostgreSQL wire-compatible connection when official libpq is unavailable |
+| `pg8000` (macOS default) | sha256, md5 | Pure Python, no libpq — any platform; SHA256/MD5-stored accounts (not SM3) |
+| `psycopg2` | md5 only | Escape hatch when neither of the above can be installed |
 
 GaussDB defaults to `sha256` password authentication, which vanilla PostgreSQL
-drivers do not implement. The default `gaussdb` driver speaks it, so a stock
-server works with no server-side changes.
+drivers do not implement. The default `gaussdb` driver speaks it natively, so a
+stock server works with no server-side changes.
 
-On macOS, the adapter selects `psycopg2` automatically because the official
-GaussDB/openGauss libpq is not published for Darwin. It can also be selected
-explicitly on any platform:
+The `pg8000` driver reaches the same result without libpq: it extends the
+pure-Python [pg8000](https://pypi.org/project/pg8000/) driver with GaussDB's
+SHA256 handshake (RFC 5802 over startup protocol 3.51) in
+`datus_gaussdb/_pg8000_gauss.py`. macOS selects it automatically — the
+official libpq has no Darwin build — and it can be chosen explicitly on any
+platform:
 
 ```yaml
-      driver: psycopg2
+      driver: pg8000
 ```
 
-It requires the server to offer md5 authentication for that login: an `md5`
-rule in `pg_hba.conf` **and** a password stored as an md5 digest, which means
-the role's password must have been set while `password_encryption_type = 1`
-(GaussDB's md5-compatible setting). Changing that parameter does not re-encrypt
-existing passwords — the role's password has to be set again afterwards.
+For TLS it maps the full libpq `sslmode` vocabulary onto Python's `ssl`
+module; `verify-ca` / `verify-full` additionally need the CA bundle:
+
+```yaml
+      sslmode: verify-full
+      sslrootcert: /etc/ssl/gauss-ca.pem
+```
+
+The `psycopg2` escape hatch requires the server to offer md5 authentication
+for that login: an `md5` rule in `pg_hba.conf` **and** a password stored as an
+md5 digest, which means the role's password must have been set while
+`password_encryption_type = 1` (GaussDB's md5-compatible setting). Changing
+that parameter does not re-encrypt existing passwords — the role's password
+has to be set again afterwards.
+
+All drivers decode GaussDB booleans tolerantly: databases in `B` (MySQL)
+compatibility mode render `boolean` as `'1'/'0'`, which strict PostgreSQL
+parsers silently read as `False`.
 
 ## Vendored libpq
 
@@ -97,10 +114,10 @@ neither installation shadows the other. Set `DATUS_GAUSSDB_LIBPQ=system` if you
 would rather use the client you installed.
 
 The official `gaussdb` driver is not supported on macOS — no openGauss libpq is
-published for Darwin. The adapter therefore uses its isolated
-`gaussdb+psycopg2` dialect on macOS. This does not replace or monkey-patch
-SQLAlchemy's PostgreSQL dialect, and Linux continues to use the official driver
-by default.
+published for Darwin. The adapter therefore defaults to the pure-Python
+`gaussdb+pg8000` dialect on macOS. None of the GaussDB dialects replace or
+monkey-patch SQLAlchemy's PostgreSQL dialects, and Linux continues to use the
+official driver by default.
 
 ## Compatibility modes and deployment shapes
 
@@ -153,9 +170,10 @@ documents two openGauss container quirks (the mandatory out-of-datadir
 `GAUSSLOG`, and the first post-initdb server start aborting on Docker Desktop
 for macOS) that its entrypoint wrapper works around.
 
-On macOS, integration tests use `psycopg2` by default. To exercise the official
+On macOS, integration tests use `pg8000` by default. To exercise the official
 driver, run them in a Linux container or explicitly set `GAUSSDB_DRIVER=gaussdb`
-on a Linux host.
+on a Linux host; `GAUSSDB_DRIVER=pg8000` selects the pure-Python path on any
+platform.
 
 ## Source checkouts
 

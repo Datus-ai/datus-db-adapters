@@ -36,8 +36,8 @@ class GaussDBConnector(PostgreSQLConnector):
     all execution and metadata logic from PostgreSQLConnector and connects
     through the official ``gaussdb`` driver (sha256/md5/sm3 authentication)
     via the ``gaussdb+psycopg`` SQLAlchemy dialect. On macOS, where the
-    official libpq is unavailable, it uses the isolated
-    ``gaussdb+psycopg2`` compatibility dialect by default.
+    official libpq is unavailable, it defaults to the pure-Python
+    ``gaussdb+pg8000`` dialect, which speaks the SHA256 handshake natively.
     """
 
     def __init__(self, config: Union[GaussDBConfig, dict]):
@@ -59,13 +59,16 @@ class GaussDBConnector(PostgreSQLConnector):
 
     @override
     def _build_connection_string(self, database_name: str) -> str:
-        prefix = "gaussdb+psycopg2" if self.config.driver == "psycopg2" else "gaussdb+psycopg"
+        prefix = {
+            "psycopg2": "gaussdb+psycopg2",
+            "pg8000": "gaussdb+pg8000",
+        }.get(self.config.driver, "gaussdb+psycopg")
         encoded_username = quote_plus(self.username) if self.username else ""
         encoded_password = quote_plus(self.password) if self.password else ""
-        return (
-            f"{prefix}://{encoded_username}:{encoded_password}"
-            f"@{self.host}:{self.port}/{database_name}?sslmode={self.config.sslmode}"
-        )
+        query = f"sslmode={self.config.sslmode}"
+        if self.config.sslrootcert:
+            query += f"&sslrootcert={quote_plus(self.config.sslrootcert)}"
+        return f"{prefix}://{encoded_username}:{encoded_password}@{self.host}:{self.port}/{database_name}?{query}"
 
     # ==================== System Resources ====================
 

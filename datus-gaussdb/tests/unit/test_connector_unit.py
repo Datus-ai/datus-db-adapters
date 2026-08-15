@@ -142,6 +142,30 @@ def test_connection_string_uses_gaussdb_dialect_for_psycopg2():
 
 
 @pytest.mark.acceptance
+def test_connection_string_uses_pg8000_dialect():
+    """The pure-Python pg8000 path routes through gaussdb+pg8000."""
+    connector = _make_connector(driver="pg8000", password="pass", database="analyticsdb")
+
+    assert connector.connection_string == (
+        "gaussdb+pg8000://datus:pass@gauss.internal:25434/analyticsdb?sslmode=prefer"
+    )
+
+
+@pytest.mark.acceptance
+def test_connection_string_carries_sslrootcert():
+    """verify-ca/verify-full need the CA path forwarded to the dialect."""
+    connector = _make_connector(
+        driver="pg8000",
+        password="pass",
+        sslmode="verify-full",
+        sslrootcert="/etc/ssl/gauss-ca.pem",
+    )
+
+    assert "sslmode=verify-full" in connector.connection_string
+    assert "sslrootcert=%2Fetc%2Fssl%2Fgauss-ca.pem" in connector.connection_string
+
+
+@pytest.mark.acceptance
 def test_connection_string_encodes_special_characters():
     """Credentials with URL-significant characters are percent-encoded."""
     connector = _make_connector(username="user@corp", password="p@ss!w0rd#$%")
@@ -178,7 +202,14 @@ def test_sys_schemas_extends_postgresql():
 
     assert pg_schemas.issubset(sys_schemas)
     assert "pg_catalog" in sys_schemas
-    assert {"dbe_perf", "db4ai", "snapshot", "cstore", "blockchain", "sqladvisor"}.issubset(sys_schemas)
+    assert {
+        "dbe_perf",
+        "db4ai",
+        "snapshot",
+        "cstore",
+        "blockchain",
+        "sqladvisor",
+    }.issubset(sys_schemas)
 
 
 @pytest.mark.acceptance
@@ -194,7 +225,12 @@ def test_get_schemas_uses_pg_namespace_and_filters_internal_prefixes():
     """Schema discovery uses pg_namespace and hides system and temporary schemas."""
     connector = _make_connector()
     result = MagicMock()
-    result.__getitem__.return_value.tolist.return_value = ["public", "pg_catalog", "dbe_perf", "pg_temp_3"]
+    result.__getitem__.return_value.tolist.return_value = [
+        "public",
+        "pg_catalog",
+        "dbe_perf",
+        "pg_temp_3",
+    ]
     connector._execute_pandas = MagicMock(return_value=result)
 
     schemas = connector.get_schemas(database_name="analytics")
@@ -418,7 +454,11 @@ def test_attribute_names_map_attnums_in_order():
     """Distribution columns follow the attnum order recorded in the catalog."""
     connector = _make_connector()
     conn = MagicMock()
-    conn.execute.return_value.fetchall.return_value = [(1, "id"), (2, "region"), (3, "name")]
+    conn.execute.return_value.fetchall.return_value = [
+        (1, "id"),
+        (2, "region"),
+        (3, "name"),
+    ]
     connector._conn = _conn_returning(conn)
 
     assert connector._get_attribute_names("public", "orders", "3 1") == ["name", "id"]
@@ -519,7 +559,11 @@ def test_get_ddl_untouched_on_centralized_deployment():
     connector._get_traits = MagicMock(return_value=DbTraits(is_distributed=False))
     connector._get_distribution_clause = MagicMock()
 
-    with patch.object(PostgreSQLConnector, "_get_ddl", return_value='CREATE TABLE "public"."t" ("id" integer);'):
+    with patch.object(
+        PostgreSQLConnector,
+        "_get_ddl",
+        return_value='CREATE TABLE "public"."t" ("id" integer);',
+    ):
         ddl = connector._get_ddl("public", "t", "TABLE")
 
     assert ddl == 'CREATE TABLE "public"."t" ("id" integer);'
@@ -533,7 +577,11 @@ def test_get_ddl_skips_distribution_for_views():
     connector._get_traits = MagicMock(return_value=DbTraits(is_distributed=True))
     connector._get_distribution_clause = MagicMock()
 
-    with patch.object(PostgreSQLConnector, "_get_ddl", return_value='CREATE VIEW "public"."v" AS\nSELECT 1'):
+    with patch.object(
+        PostgreSQLConnector,
+        "_get_ddl",
+        return_value='CREATE VIEW "public"."v" AS\nSELECT 1',
+    ):
         ddl = connector._get_ddl("public", "v", "VIEW")
 
     assert "DISTRIBUTE" not in ddl

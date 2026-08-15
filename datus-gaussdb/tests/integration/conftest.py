@@ -15,7 +15,7 @@ Variable                     Default             Meaning
 ``GAUSSDB_PASSWORD``         ``Datus@123``       login password
 ``GAUSSDB_DATABASE``         ``postgres``        default database
 ``GAUSSDB_SCHEMA``           ``public``          default schema
-``GAUSSDB_DRIVER``           platform default    ``gaussdb`` or ``psycopg2``
+``GAUSSDB_DRIVER``           platform default    ``gaussdb``, ``pg8000`` or ``psycopg2``
 ===========================  ==================  =========================
 
 IMPORTANT — platform caveat: the official ``gaussdb`` driver binds the
@@ -50,8 +50,8 @@ from datus_gaussdb.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
 
 def _require_gaussdb_libpq_platform() -> None:
-    """Skip unsafe official-driver runs while allowing psycopg2 on macOS."""
-    driver = os.getenv("GAUSSDB_DRIVER") or ("psycopg2" if sys.platform == "darwin" else "gaussdb")
+    """Skip unsafe official-driver runs; pg8000/psycopg2 run anywhere."""
+    driver = os.getenv("GAUSSDB_DRIVER") or ("pg8000" if sys.platform == "darwin" else "gaussdb")
     if driver == "gaussdb" and sys.platform != "linux" and os.getenv("GAUSSDB_FORCE_INTEGRATION") != "1":
         pytest.skip(
             f"the gaussdb driver needs the GaussDB/openGauss libpq, which has no {sys.platform} build; "
@@ -73,7 +73,7 @@ def _build_config() -> GaussDBConfig:
         password=os.getenv("GAUSSDB_PASSWORD", "Datus@123"),
         database=os.getenv("GAUSSDB_DATABASE", "postgres"),
         schema_name=os.getenv("GAUSSDB_SCHEMA", "public"),
-        driver=os.getenv("GAUSSDB_DRIVER") or ("psycopg2" if sys.platform == "darwin" else "gaussdb"),
+        driver=os.getenv("GAUSSDB_DRIVER") or ("pg8000" if sys.platform == "darwin" else "gaussdb"),
     )
 
 
