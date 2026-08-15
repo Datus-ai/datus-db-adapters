@@ -12,6 +12,9 @@ encoding. A GBK database is created on demand (CREATEDB required; the module
 skips gracefully without it).
 """
 
+import os
+import sys
+
 import pytest
 
 from datus_gaussdb import GaussDBConfig, GaussDBConnector
@@ -21,8 +24,15 @@ pytestmark = pytest.mark.integration
 GBK_DB = "datus_enc_gbk"
 
 
-@pytest.fixture
-def gbk_connector(config: GaussDBConfig):
+@pytest.fixture(params=["pg8000", "gaussdb"])
+def gbk_connector(request, config: GaussDBConfig):
+    """Both client drivers, so the GBK behavior of each is asserted: pg8000
+    must pin client_encoding=UTF8, the official driver decodes GBK natively.
+    The official driver needs the GaussDB libpq (linux-only)."""
+    driver = request.param
+    if driver == "gaussdb" and sys.platform != "linux" and os.getenv("GAUSSDB_FORCE_INTEGRATION") != "1":
+        pytest.skip("the official gaussdb driver needs the GaussDB libpq, which has no build here")
+
     from datus_gaussdb import _pg8000_gauss
 
     conn = _pg8000_gauss.connect(
@@ -41,13 +51,18 @@ def gbk_connector(config: GaussDBConfig):
                 f"CREATE DATABASE {GBK_DB} WITH ENCODING 'GBK' "
                 "LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0 DBCOMPATIBILITY 'PG'"
             )
-        except Exception as e:  # noqa: BLE001 - probe for skip decision
-            if "already exists" not in str(e):
-                pytest.skip(f"cannot create a GBK database: {e}")
+        except Exception as e:  # noqa: BLE001 - classify for skip-vs-fail
+            message = str(e)
+            if "already exists" not in message:
+                # Only the expected insufficient-privilege case skips; any
+                # other failure must surface, not hide as a skip.
+                if "permission denied" in message.lower():
+                    pytest.skip(f"login lacks CREATEDB: {e}")
+                raise
     finally:
         conn.close()
 
-    connector = GaussDBConnector(config.model_copy(update={"database": GBK_DB}))
+    connector = GaussDBConnector(config.model_copy(update={"database": GBK_DB, "driver": driver}))
     # Ordinary users have no CREATE on public even in a database they own
     # (openGauss default); a dedicated schema owned by the test user avoids
     # depending on superuser grants.
