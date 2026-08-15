@@ -85,10 +85,13 @@ def _handshake(auth_payload, password="Datus@123"):
     client_sock, server_sock = socket.socketpair()
     server = FakeGaussServer(server_sock, auth_payload)
     server.start()
-    conn = Connection("datus", password=password, sock=client_sock, ssl_context=False)
-    server.join(timeout=5)
-    conn.close()
-    server_sock.close()
+    try:
+        conn = Connection("datus", password=password, sock=client_sock, ssl_context=False)
+        conn.close()
+    finally:
+        server.join(timeout=5)
+        server_sock.close()
+    assert not server.is_alive()
     return server
 
 
@@ -106,26 +109,32 @@ def test_sha256_handshake_sends_rfc5802_response():
     assert server.auth_response == VECTOR_RESPONSE
 
 
+def _assert_iteration_refused(iteration: int):
+    """Drive the handshake against a server naming ``iteration`` and assert
+    the client refuses before any key-derivation work; both socket ends and
+    the server thread are cleaned up whichever way the assertion goes."""
+    payload = struct.pack("!I", 2) + VECTOR_RANDOM64 + VECTOR_TOKEN + struct.pack("!I", iteration)
+    client_sock, server_sock = socket.socketpair()
+    server = FakeGaussServer(server_sock, payload)
+    server.start()
+    try:
+        with pytest.raises(InterfaceError, match="PBKDF2 iterations"):
+            Connection("datus", password="Datus@123", sock=client_sock, ssl_context=False)
+    finally:
+        client_sock.close()
+        server_sock.close()
+        server.join(timeout=5)
+    assert not server.is_alive()
+
+
 def test_excessive_iteration_count_is_refused():
     """A hostile server naming an absurd PBKDF2 iteration count must be
     rejected before any key derivation work happens."""
-    payload = struct.pack("!I", 2) + VECTOR_RANDOM64 + VECTOR_TOKEN + struct.pack("!I", 2**31)
-    client_sock, server_sock = socket.socketpair()
-    server = FakeGaussServer(server_sock, payload)
-    server.start()
-    with pytest.raises(InterfaceError, match="PBKDF2 iterations"):
-        Connection("datus", password="Datus@123", sock=client_sock, ssl_context=False)
-    server_sock.close()
+    _assert_iteration_refused(2**31)
 
 
 def test_zero_iteration_count_is_refused():
-    payload = struct.pack("!I", 2) + VECTOR_RANDOM64 + VECTOR_TOKEN + struct.pack("!I", 0)
-    client_sock, server_sock = socket.socketpair()
-    server = FakeGaussServer(server_sock, payload)
-    server.start()
-    with pytest.raises(InterfaceError, match="PBKDF2 iterations"):
-        Connection("datus", password="Datus@123", sock=client_sock, ssl_context=False)
-    server_sock.close()
+    _assert_iteration_refused(0)
 
 
 def test_md5_method_under_code_10():

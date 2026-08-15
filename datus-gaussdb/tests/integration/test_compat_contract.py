@@ -47,9 +47,16 @@ def _ensure_mode_databases(config: GaussDBConfig) -> None:
         for mode, db in MODE_DBS.items():
             try:
                 cur.execute(f"CREATE DATABASE {db} DBCOMPATIBILITY '{mode}'")
-            except Exception as e:  # noqa: BLE001 - probe for skip decision
-                if "already exists" not in str(e):
-                    pytest.skip(f"cannot create compatibility-mode databases: {e}")
+            except Exception as e:  # noqa: BLE001 - classify for skip-vs-fail
+                message = str(e)
+                if "already exists" in message:
+                    continue
+                # Only the expected insufficient-privilege case skips; any
+                # other failure (server error, driver regression) must fail
+                # the contract loudly, not hide it.
+                if "permission denied" in message.lower():
+                    pytest.skip(f"login lacks CREATEDB: {e}")
+                raise
     finally:
         conn.close()
 
