@@ -324,6 +324,19 @@ def test_pg8000_ssl_context_unknown_mode_rejected():
         _build_pg8000_ssl_context("mystery", None)
 
 
+def test_pg8000_create_connect_args_pins_utf8_client_encoding():
+    """GBK-encoded databases default client_encoding to GBK; pg8000 has no
+    GBK codec mapping and would silently mis-decode, so UTF8 is pinned."""
+    from sqlalchemy.engine import make_url
+
+    from datus_gaussdb.sa_dialect import GaussDBPg8000Dialect
+
+    dialect = GaussDBPg8000Dialect()
+    url = make_url("gaussdb+pg8000://u:p@h:25434/db")
+    _, opts = dialect.create_connect_args(url)
+    assert opts["startup_params"]["client_encoding"] == "UTF8"
+
+
 def test_pg8000_create_connect_args_moves_ssl_params():
     from sqlalchemy.engine import make_url
 

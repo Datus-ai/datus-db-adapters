@@ -253,6 +253,13 @@ class GaussDBPg8000Dialect(PGDialect_pg8000):
         sslmode = opts.pop("sslmode", None)
         sslrootcert = opts.pop("sslrootcert", None)
         opts["ssl_context"] = _build_pg8000_ssl_context(sslmode, sslrootcert)
+        # Chinese GaussDB deployments often run server_encoding=GBK, and the
+        # server then defaults client_encoding to GBK too. pg8000 does not
+        # negotiate an encoding at startup — it decodes with whatever the
+        # server reports — so pin UTF8 and let the server transcode.
+        startup = dict(opts.get("startup_params") or {})
+        startup.setdefault("client_encoding", "UTF8")
+        opts["startup_params"] = startup
         return args, opts
 
     def on_connect(self):
