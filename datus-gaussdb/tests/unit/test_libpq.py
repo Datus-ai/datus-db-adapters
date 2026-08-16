@@ -195,6 +195,9 @@ def test_import_gaussdb_uses_system_discovery_without_preloading(monkeypatch):
     original_import = builtins.__import__
     monkeypatch.delitem(sys.modules, "gaussdb", raising=False)
     monkeypatch.setattr(_libpq, "resolve_libpq_path", lambda: None)
+    # No discoverable libpq: the vanilla-PostgreSQL probe has nothing to
+    # inspect and must fall through to the driver's own import.
+    monkeypatch.setattr(ctypes.util, "find_library", lambda _name: None)
     monkeypatch.setattr(
         _libpq.ctypes,
         "CDLL",
@@ -259,3 +262,74 @@ def test_import_gaussdb_preloads_openssl_and_patches_libpq_lookup(monkeypatch, t
         ("import", "gaussdb"),
         ("patch-exit", str(tmp_path / "libpq.so.5")),
     ]
+
+
+# ==================== vanilla-libpq guard ====================
+
+
+class _FakeLibpq:
+    def __init__(self, version: int):
+        self._version = version
+
+    def PQlibVersion(self) -> int:  # noqa: N802 - mirrors the C symbol
+        return self._version
+
+
+def _system_discovery(monkeypatch, found: str | None, cdll):
+    """Route import_gaussdb into system discovery with a fake probe target."""
+    monkeypatch.delitem(sys.modules, "gaussdb", raising=False)
+    monkeypatch.setattr(_libpq, "resolve_libpq_path", lambda: None)
+    monkeypatch.setattr(ctypes.util, "find_library", lambda _name: found)
+    monkeypatch.setattr(_libpq.ctypes, "CDLL", cdll)
+
+
+@pytest.mark.acceptance
+def test_import_gaussdb_rejects_vanilla_postgres_libpq(monkeypatch):
+    """A discoverable PostgreSQL 10+ libpq raises instead of segfaulting.
+
+    Regression guard for the nightly crash: a source checkout without
+    `_vendor` falls back to system discovery, finds the host's vanilla
+    libpq, and the driver's first PQconninfoParse call segfaults. The
+    probe must turn that into an actionable ImportError.
+    """
+    _system_discovery(monkeypatch, "libpq.so.5", lambda _path: _FakeLibpq(170005))
+
+    with pytest.raises(ImportError, match="fetch_vendor_libpq"):
+        _libpq.import_gaussdb()
+
+
+@pytest.mark.acceptance
+def test_import_gaussdb_accepts_gaussdb_family_libpq(monkeypatch):
+    """A GaussDB/openGauss libpq (PostgreSQL 9.2 fork) passes the probe."""
+    sentinel = object()
+    original_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "gaussdb":
+            return sentinel
+        return original_import(name, *args, **kwargs)
+
+    _system_discovery(monkeypatch, "libpq.so.5", lambda _path: _FakeLibpq(90204))
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert _libpq.import_gaussdb() is sentinel
+
+
+@pytest.mark.acceptance
+def test_import_gaussdb_probe_tolerates_unloadable_library(monkeypatch):
+    """An unloadable probe target falls through to the driver's own error."""
+    sentinel = object()
+    original_import = builtins.__import__
+
+    def raising_cdll(_path):
+        raise OSError("cannot open shared object file")
+
+    def fake_import(name, *args, **kwargs):
+        if name == "gaussdb":
+            return sentinel
+        return original_import(name, *args, **kwargs)
+
+    _system_discovery(monkeypatch, "libpq.so.5", raising_cdll)
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert _libpq.import_gaussdb() is sentinel
