@@ -85,6 +85,39 @@ def _patched_find_library(libpq_path: str):
         ctypes.util.find_library = original
 
 
+def _reject_vanilla_postgres_libpq() -> None:
+    """Refuse system discovery when it would bind a vanilla PostgreSQL libpq.
+
+    The gaussdb driver's ctypes struct layouts match only the
+    GaussDB/openGauss build of libpq; against a modern vanilla PostgreSQL
+    libpq the first ``PQconninfoParse`` call segfaults the whole process
+    (source checkouts without ``_vendor`` fall back to system discovery and
+    hit exactly this on hosts with PostgreSQL installed). ``PQlibVersion()``
+    is a safe probe — no arguments, plain int return: the GaussDB/openGauss
+    libpq is a PostgreSQL 9.2 fork and reports 9xxxx, while any vanilla
+    libpq found on a modern host reports >= 100000 (PostgreSQL 10+).
+    """
+    libpq_path = ctypes.util.find_library("pq")
+    if libpq_path is None:
+        # Nothing to probe; let the driver surface its own import error.
+        return
+    try:
+        lib = ctypes.CDLL(libpq_path)
+        version = int(lib.PQlibVersion())
+    except (OSError, AttributeError):
+        # Unloadable or ancient library: the driver's own loading will
+        # produce a regular (non-crashing) error for these.
+        return
+    if version >= 100000:
+        raise ImportError(
+            f"libpq at {libpq_path!r} reports PostgreSQL {version // 10000}.x; the gaussdb "
+            "driver requires the GaussDB/openGauss build of libpq and would crash the "
+            "process against this one. Populate the vendored copy with "
+            "`python scripts/fetch_vendor_libpq.py` (release wheels bundle it) or point "
+            f"{_ENV_VAR} at a GaussDB client libpq."
+        )
+
+
 def import_gaussdb():
     """Import (and return) the ``gaussdb`` module against the right libpq.
 
@@ -96,6 +129,7 @@ def import_gaussdb():
 
     libpq_path = resolve_libpq_path()
     if libpq_path is None:
+        _reject_vanilla_postgres_libpq()
         import gaussdb
 
         return gaussdb
