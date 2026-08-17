@@ -215,7 +215,11 @@ GAUSSDB_SCHEMA=public
 GAUSSDB_DRIVER=pg8000         # platform default when unset
 GAUSSDB_SSLMODE=verify-ca
 GAUSSDB_SSLROOTCERT=/path/to/gaussdb-ca.pem
+GAUSSDB_WRONG_SSLROOTCERT=/path/to/untrusted-ca.pem
 ```
+
+Set both CA paths to run the positive trusted-CA and negative untrusted-CA TLS
+contracts; tests that require a missing path are skipped.
 
 Tear the environment down with `docker compose down -v`. The compose file
 documents two openGauss container quirks (the mandatory out-of-datadir
