@@ -1,6 +1,6 @@
 [project]
 name = "datus-db-core"
-version = "0.1.5"
+version = "0.1.6"
 description = "Core database abstractions for Datus adapters"
 readme = "README.md"
 requires-python = ">=3.12"
