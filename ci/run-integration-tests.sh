@@ -562,6 +562,8 @@ prepare_adapter_test_artifacts() {
       GAUSSDB_TLS_HOST_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-gaussdb-tls.XXXXXX")"
       docker_compose -f "$compose_file" cp gaussdb:/gaussdb-tls/ca.crt "$GAUSSDB_TLS_HOST_DIR/ca.crt"
       docker_compose -f "$compose_file" cp gaussdb:/gaussdb-tls/wrong-ca.crt "$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
+      # The native GaussDB/libpq client rejects CA files readable by group or other users.
+      chmod 0600 "$GAUSSDB_TLS_HOST_DIR/ca.crt" "$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
       export GAUSSDB_SSLMODE="verify-ca"
       export GAUSSDB_SSLROOTCERT="$GAUSSDB_TLS_HOST_DIR/ca.crt"
       export GAUSSDB_WRONG_SSLROOTCERT="$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
