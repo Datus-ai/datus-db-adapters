@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "datus-db-core>=0.1.5",
+    "datus-db-core>=0.1.6",
     "datus-sqlalchemy>=0.1.8",
     "datus-postgresql>=0.1.8",
     "gaussdb>=1.0.4,<2",
