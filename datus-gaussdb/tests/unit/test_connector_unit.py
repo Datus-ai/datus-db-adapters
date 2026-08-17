@@ -152,16 +152,17 @@ def test_connection_string_uses_pg8000_dialect():
 
 
 @pytest.mark.acceptance
-def test_connection_string_carries_sslrootcert():
-    """verify-ca/verify-full need the CA path forwarded to the dialect."""
+@pytest.mark.parametrize("driver", ["gaussdb", "pg8000", "psycopg2"])
+def test_connection_string_carries_sslrootcert_for_every_driver(driver):
+    """Every supported driver receives the explicit CA path."""
     connector = _make_connector(
-        driver="pg8000",
+        driver=driver,
         password="pass",
-        sslmode="verify-full",
+        sslmode="verify-ca",
         sslrootcert="/etc/ssl/gauss-ca.pem",
     )
 
-    assert "sslmode=verify-full" in connector.connection_string
+    assert "sslmode=verify-ca" in connector.connection_string
     assert "sslrootcert=%2Fetc%2Fssl%2Fgauss-ca.pem" in connector.connection_string
 
 

@@ -8,6 +8,7 @@ ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive s
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 CURRENT_ADAPTER=""
+GAUSSDB_TLS_HOST_DIR=""
 
 usage() {
   cat <<'USAGE'
@@ -294,7 +295,7 @@ adapter_env_summary() {
     hive) echo "env: HIVE_HOST=$HIVE_HOST HIVE_PORT=$HIVE_PORT HIVE_DATABASE=$HIVE_DATABASE" ;;
     spark) echo "env: SPARK_HOST=$SPARK_HOST SPARK_PORT=$SPARK_PORT SPARK_DATABASE=$SPARK_DATABASE SPARK_AUTH_MECHANISM=$SPARK_AUTH_MECHANISM" ;;
     oracle) echo "env: ORACLE_HOST=$ORACLE_HOST ORACLE_PORT=$ORACLE_PORT ORACLE_SERVICE_NAME=$ORACLE_SERVICE_NAME ORACLE_SCHEMA=$ORACLE_SCHEMA" ;;
-    gaussdb) echo "env: GAUSSDB_HOST=$GAUSSDB_HOST GAUSSDB_PORT=$GAUSSDB_PORT GAUSSDB_DATABASE=$GAUSSDB_DATABASE" ;;
+    gaussdb) echo "env: GAUSSDB_HOST=$GAUSSDB_HOST GAUSSDB_PORT=$GAUSSDB_PORT GAUSSDB_DATABASE=$GAUSSDB_DATABASE GAUSSDB_SSLMODE=${GAUSSDB_SSLMODE:-unset}" ;;
   esac
 }
 
@@ -309,7 +310,7 @@ prepare_adapter_dependencies() {
     gaussdb)
       operating_system="$(uname -s)"
       if [ "$operating_system" != "Linux" ]; then
-        echo "GaussDB vendored client libraries are Linux-only; using system library discovery on $operating_system"
+        echo "GaussDB vendored client libraries are Linux-only; using the pure-Python pg8000 driver on $operating_system"
         return 0
       fi
 
@@ -357,6 +358,15 @@ cleanup_started() {
   for adapter in "${STARTED_ADAPTERS[@]}"; do
     compose_down "$adapter"
   done
+}
+
+cleanup_gaussdb_tls_artifacts() {
+  if [ -n "$GAUSSDB_TLS_HOST_DIR" ] && [ -d "$GAUSSDB_TLS_HOST_DIR" ]; then
+    rm -f -- "$GAUSSDB_TLS_HOST_DIR/ca.crt" "$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
+    rmdir "$GAUSSDB_TLS_HOST_DIR" 2>/dev/null || true
+  fi
+  GAUSSDB_TLS_HOST_DIR=""
+  unset GAUSSDB_SSLMODE GAUSSDB_SSLROOTCERT GAUSSDB_WRONG_SSLROOTCERT
 }
 
 dump_adapter_diagnostics() {
@@ -411,6 +421,7 @@ cleanup_on_exit() {
     dump_adapter_diagnostics "$CURRENT_ADAPTER"
   fi
   cleanup_started
+  cleanup_gaussdb_tls_artifacts
   exit "$exit_status"
 }
 
@@ -537,6 +548,23 @@ wait_for_adapter_client_readiness() {
       ;;
     gaussdb)
       wait_for_python_connector_readiness "gaussdb" "datus-gaussdb"
+      ;;
+  esac
+}
+
+prepare_adapter_test_artifacts() {
+  local adapter="$1"
+  local compose_file="$2"
+
+  case "$adapter" in
+    gaussdb)
+      cleanup_gaussdb_tls_artifacts
+      GAUSSDB_TLS_HOST_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-gaussdb-tls.XXXXXX")"
+      docker_compose -f "$compose_file" cp gaussdb:/gaussdb-tls/ca.crt "$GAUSSDB_TLS_HOST_DIR/ca.crt"
+      docker_compose -f "$compose_file" cp gaussdb:/gaussdb-tls/wrong-ca.crt "$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
+      export GAUSSDB_SSLMODE="verify-ca"
+      export GAUSSDB_SSLROOTCERT="$GAUSSDB_TLS_HOST_DIR/ca.crt"
+      export GAUSSDB_WRONG_SSLROOTCERT="$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
       ;;
   esac
 }
@@ -675,6 +703,9 @@ elif adapter == "gaussdb":
         password=os.getenv("GAUSSDB_PASSWORD", "Datus@123"),
         database=os.getenv("GAUSSDB_DATABASE", "postgres"),
         schema_name=os.getenv("GAUSSDB_SCHEMA", "public"),
+        driver=os.getenv("GAUSSDB_DRIVER") or ("pg8000" if sys.platform == "darwin" else "gaussdb"),
+        sslmode=os.getenv("GAUSSDB_SSLMODE", "prefer"),
+        sslrootcert=os.getenv("GAUSSDB_SSLROOTCERT") or None,
         timeout_seconds=5,
     )
     connector = GaussDBConnector(config)
@@ -828,10 +859,14 @@ for adapter in "${selected_adapters[@]}"; do
     timeout_seconds="${spec##*:}"
     wait_for_service_health "$compose_file" "$service_name" "$timeout_seconds"
   done
+  prepare_adapter_test_artifacts "$adapter" "$compose_file"
   wait_for_adapter_client_readiness "$adapter"
 
   uv run --package "$package" --with pytest --with pandas --with pyarrow pytest "$test_path" -m integration --tb=short --verbose
 
   compose_down "$adapter"
+  if [ "$adapter" = "gaussdb" ]; then
+    cleanup_gaussdb_tls_artifacts
+  fi
   CURRENT_ADAPTER=""
 done

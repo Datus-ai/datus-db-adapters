@@ -36,11 +36,18 @@ class GaussDBConfig(PostgreSQLConfig):
             "server)"
         ),
     )
+    sslmode: Literal["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] = Field(
+        default="prefer",
+        description=(
+            "TLS mode. 'verify-ca' is recommended for production. pg8000 requires "
+            "sslrootcert; the libpq drivers may use their standard certificate locations"
+        ),
+    )
     sslrootcert: Optional[str] = Field(
         default=None,
         description=(
-            "Path to the CA certificate for sslmode verify-ca/verify-full. "
-            "Only honored by the pg8000 driver; the libpq-based drivers read "
-            "the standard PGSSLROOTCERT locations instead."
+            "Path to the CA certificate used to verify the server for sslmode "
+            "verify-ca/verify-full. Forwarded to every supported driver; the "
+            "libpq-based drivers can also use their standard certificate locations"
         ),
     )

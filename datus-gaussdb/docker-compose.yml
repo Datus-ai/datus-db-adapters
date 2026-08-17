@@ -23,8 +23,19 @@
 # Comment that catch-all out to exercise sha256 authentication exclusively.
 
 services:
+  tls-setup:
+    image: opengauss/opengauss:7.0.0-RC2.B015
+    volumes:
+      - ./scripts/generate-test-tls.sh:/generate-test-tls.sh:ro
+      - gaussdb_tls:/gaussdb-tls
+    entrypoint: ["bash", "/generate-test-tls.sh", "/gaussdb-tls"]
+    restart: "no"
+
   gaussdb:
     image: opengauss/opengauss:7.0.0-RC2.B015
+    depends_on:
+      tls-setup:
+        condition: service_completed_successfully
     ports:
       - "${GAUSSDB_HOST_PORT:-25434}:5432"
     environment:
@@ -34,6 +45,8 @@ services:
       GAUSSLOG: /gausslog
     volumes:
       - ./scripts/docker-entrypoint-wrapper.sh:/docker-entrypoint-wrapper.sh:ro
+      - ./scripts/configure-test-tls.sh:/docker-entrypoint-initdb.d/10-configure-test-tls.sh:ro
+      - gaussdb_tls:/gaussdb-tls:ro
     entrypoint: ["bash", "/docker-entrypoint-wrapper.sh"]
     healthcheck:
       test: ["CMD-SHELL", "bash /docker-entrypoint-wrapper.sh healthcheck"]
@@ -41,3 +54,6 @@ services:
       timeout: 10s
       retries: 40
       start_period: 60s
+
+volumes:
+  gaussdb_tls:

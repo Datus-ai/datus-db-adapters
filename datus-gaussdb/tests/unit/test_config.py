@@ -128,6 +128,23 @@ def test_config_sslrootcert_default_none_and_roundtrip():
 
 
 @pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "sslmode",
+    ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"],
+)
+def test_config_accepts_supported_ssl_modes(sslmode):
+    assert GaussDBConfig(username="datus", sslmode=sslmode).sslmode == sslmode
+
+
+@pytest.mark.acceptance
+def test_config_rejects_unknown_ssl_mode():
+    with pytest.raises(ValidationError) as exc_info:
+        GaussDBConfig(username="datus", sslmode="verify-sometimes")
+
+    assert any(error["loc"] == ("sslmode",) for error in exc_info.value.errors())
+
+
+@pytest.mark.acceptance
 def test_config_driver_invalid_rejected():
     """Any other driver value is rejected by the Literal type."""
     with pytest.raises(ValidationError) as exc_info:

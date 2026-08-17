@@ -188,10 +188,12 @@ pip install datus-gaussdb
 ```
 
 **Features**:
-- GaussDB / openGauss (PostgreSQL-compatible), official gaussdb driver with sha256 auth
+- Official `gaussdb` driver on Linux (sha256, md5, and sm3 authentication)
+- Pure-Python `pg8000` driver on macOS and any platform (sha256 and md5 authentication)
 - Optional `psycopg2` driver escape hatch for md5-authenticated servers
+- TLS modes through `verify-full`, with `verify-ca` recommended for production
 - Database and schema namespace support with PostgreSQL-compatible SQL execution
-- Docker integration coverage against an openGauss instance
+- Ephemeral Docker TLS integration coverage against an openGauss instance
 
 ---
 
