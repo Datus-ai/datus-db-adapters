@@ -158,8 +158,9 @@ class GaussDBPsycopg2Dialect(PGDialect_psycopg2):
     """GaussDB/openGauss dialect using PostgreSQL's psycopg2 client.
 
     Linux continues to use the official ``gaussdb`` driver unless
-    ``driver: psycopg2`` is configured explicitly. macOS selects this path by
-    default because no compatible native GaussDB/openGauss libpq is available.
+    ``driver: psycopg2`` is configured explicitly. macOS defaults to the
+    pure-Python ``pg8000`` path because no compatible native
+    GaussDB/openGauss libpq is available.
     """
 
     name = "gaussdb"

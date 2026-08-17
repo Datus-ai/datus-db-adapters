@@ -16,12 +16,14 @@ Variable                     Default             Meaning
 ``GAUSSDB_DATABASE``         ``postgres``        default database
 ``GAUSSDB_SCHEMA``           ``public``          default schema
 ``GAUSSDB_DRIVER``           platform default    ``gaussdb``, ``pg8000`` or ``psycopg2``
+``GAUSSDB_SSLMODE``          ``prefer``           TLS mode
+``GAUSSDB_SSLROOTCERT``      unset                CA certificate used to verify the server
 ===========================  ==================  =========================
 
 IMPORTANT — platform caveat: the official ``gaussdb`` driver binds the
 GaussDB/openGauss build of libpq via ctypes, and only that build; there is no
-macOS distribution of it. Run this suite inside a Linux container (the same
-one that runs the openGauss server is fine)::
+macOS distribution of it. macOS therefore defaults to ``pg8000``. To exercise
+the official driver, run this suite inside a Linux container::
 
     docker run --rm -v "$PWD:/w" -w /w --network host python:3.12 \\
         bash -c "pip install -e datus-db-core -e datus-sqlalchemy \\
@@ -34,7 +36,7 @@ is inert on developer machines without a GaussDB instance.
 Off Linux, tests using the official driver are skipped up front: the driver
 binds whatever libpq it can find, and a vanilla PostgreSQL libpq makes it
 *segfault* on connect rather than raise — a crash no fixture can catch. The
-``psycopg2`` path is safe on macOS and is selected there by default. Set
+``pg8000`` path is safe on macOS and is selected there by default. Set
 ``GAUSSDB_FORCE_INTEGRATION=1`` only to run the official driver on a host that
 really does have the GaussDB client libraries.
 """
@@ -74,6 +76,8 @@ def _build_config() -> GaussDBConfig:
         database=os.getenv("GAUSSDB_DATABASE", "postgres"),
         schema_name=os.getenv("GAUSSDB_SCHEMA", "public"),
         driver=os.getenv("GAUSSDB_DRIVER") or ("pg8000" if sys.platform == "darwin" else "gaussdb"),
+        sslmode=os.getenv("GAUSSDB_SSLMODE", "prefer"),
+        sslrootcert=os.getenv("GAUSSDB_SSLROOTCERT") or None,
     )
 
 

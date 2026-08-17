@@ -15,18 +15,31 @@ pip install datus-gaussdb
 ## Configuration
 
 ```yaml
-services:
-  datasources:
-    gaussdb:
-      type: gaussdb
-      host: ${GAUSSDB_HOST}
-      port: ${GAUSSDB_PORT}
-      username: ${GAUSSDB_USER}
-      password: ${GAUSSDB_PASSWORD}
-      database: ${GAUSSDB_DATABASE}
-      schema: public
-      sslmode: prefer
+agent:
+  services:
+    datasources:
+      gaussdb:
+        type: gaussdb
+        host: ${GAUSSDB_HOST}
+        port: ${GAUSSDB_PORT}
+        username: ${GAUSSDB_USER}
+        password: ${GAUSSDB_PASSWORD}
+        database: ${GAUSSDB_DATABASE}
+        schema: public
+        # driver: pg8000  # optional; omit to use the platform default
+        sslmode: verify-ca
+        sslrootcert: /etc/datus/certs/gaussdb-ca.pem
 ```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `host`, `port` | yes | GaussDB/openGauss endpoint |
+| `username`, `password` | yes | Login credentials; supported authentication depends on `driver` |
+| `database` | yes | Database to connect to |
+| `schema` | no | Default schema; defaults to `public` |
+| `driver` | no | `gaussdb` on Linux and `pg8000` on macOS by default; `psycopg2` is an md5-only escape hatch |
+| `sslmode` | no | `disable`, `allow`, `prefer` (default), `require`, `verify-ca`, or `verify-full`; use `verify-ca` in production |
+| `sslrootcert` | for explicit verification | CA bundle used by `verify-ca`/`verify-full`; libpq's standard certificate locations are also honored |
 
 ```python
 from datus_gaussdb import GaussDBConfig, GaussDBConnector
@@ -70,13 +83,38 @@ platform:
       driver: pg8000
 ```
 
-For TLS it maps the full libpq `sslmode` vocabulary onto Python's `ssl`
-module; `verify-ca` / `verify-full` additionally need the CA bundle:
+All three drivers support the full libpq `sslmode` vocabulary. `verify-ca` is
+the recommended production setting: it encrypts the connection and rejects a
+server whose certificate is not signed by the configured CA. `verify-full`
+adds hostname verification, so the certificate must also contain the exact
+hostname used in `host`.
 
 ```yaml
-      sslmode: verify-full
-      sslrootcert: /etc/ssl/gauss-ca.pem
+      sslmode: verify-ca
+      sslrootcert: /etc/datus/certs/gaussdb-ca.pem
 ```
+
+| `sslmode` | Encryption | Certificate validation |
+|-----------|------------|------------------------|
+| `disable` | off | none |
+| `allow` | preferred only after a non-TLS connection fails | none |
+| `prefer` | preferred, but permits a non-TLS fallback | none |
+| `require` | required | none |
+| `verify-ca` | required | verifies the server certificate chain against `sslrootcert` |
+| `verify-full` | required | verifies the chain and the server hostname |
+
+The `pg8000` path treats `allow` like `prefer` (TLS first), because its API
+cannot express libpq's plaintext-first retry order.
+
+If the server enables TLS but does not require it, `prefer` can still connect
+without TLS after negotiation failures; it does not authenticate the server.
+If the server requires TLS, `prefer` normally connects with TLS, but explicitly
+select `require`, `verify-ca`, or `verify-full` so the client cannot fall back
+to plaintext against a differently configured endpoint. Only the two
+`verify-*` modes require the server CA to be configured on the client. The
+current adapter supports one-way TLS only: it accepts `sslrootcert`, but does
+not expose client-certificate fields such as `sslcert` or `sslkey` for mutual
+TLS.
 
 The `psycopg2` escape hatch requires the server to offer md5 authentication
 for that login: an `md5` rule in `pg_hba.conf` **and** a password stored as an
@@ -144,12 +182,23 @@ Unit tests need no database:
 cd datus-gaussdb && python -m pytest tests/unit/ -v
 ```
 
-Integration tests need a live server. The bundled compose file starts openGauss
-7.0.0-RC2 and provisions the `datus` login role:
+The repository runner starts an ephemeral openGauss 7.0.0-RC2 server, creates a
+temporary CA and server certificate, requires TLS on the server, and runs the
+positive and negative certificate-verification contracts:
+
+```bash
+ci/run-integration-tests.sh gaussdb
+```
+
+The generated certificates live in the compose volume only for that run and
+are removed by `docker compose down -v`; no Huawei Cloud or other persistent
+instance is required.
+
+To run against an existing GaussDB/openGauss service instead, start the service
+yourself and invoke the integration suite directly:
 
 ```bash
 cd datus-gaussdb
-docker compose up -d          # wait for the container to report healthy
 python scripts/init_tpch_data.py --drop
 python -m pytest tests/integration/ -v -m integration
 ```
@@ -163,17 +212,24 @@ GAUSSDB_USER=datus
 GAUSSDB_PASSWORD=Datus@123
 GAUSSDB_DATABASE=postgres
 GAUSSDB_SCHEMA=public
+GAUSSDB_DRIVER=pg8000         # platform default when unset
+GAUSSDB_SSLMODE=verify-ca
+GAUSSDB_SSLROOTCERT=/path/to/gaussdb-ca.pem
+GAUSSDB_WRONG_SSLROOTCERT=/path/to/untrusted-ca.pem
 ```
+
+Set both CA paths to run the positive trusted-CA and negative untrusted-CA TLS
+contracts; tests that require a missing path are skipped.
 
 Tear the environment down with `docker compose down -v`. The compose file
 documents two openGauss container quirks (the mandatory out-of-datadir
 `GAUSSLOG`, and the first post-initdb server start aborting on Docker Desktop
 for macOS) that its entrypoint wrapper works around.
 
-On macOS, integration tests use `pg8000` by default. To exercise the official
-driver, run them in a Linux container or explicitly set `GAUSSDB_DRIVER=gaussdb`
-on a Linux host; `GAUSSDB_DRIVER=pg8000` selects the pure-Python path on any
-platform.
+On macOS, integration tests use `pg8000` by default and also exercise the
+`psycopg2` escape hatch in the dedicated TLS contract. To exercise the official
+driver, run on Linux; `GAUSSDB_DRIVER=pg8000` selects the pure-Python path on
+any platform.
 
 ## Source checkouts
 
