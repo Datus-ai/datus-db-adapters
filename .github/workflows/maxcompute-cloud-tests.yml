@@ -1,9 +1,8 @@
 name: MaxCompute Cloud Tests
 
 on:
+  workflow_call:
   workflow_dispatch:
-  schedule:
-    - cron: "17 18 * * 1"
 
 permissions:
   contents: read

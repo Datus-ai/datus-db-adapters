@@ -7,6 +7,8 @@ on:
       - synchronize
       - reopened
   merge_group:
+  schedule:
+    - cron: "17 18 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -60,6 +62,14 @@ jobs:
             ci/run-unit-tests.sh
           fi
 
+      - name: Run impacted package build/import smoke
+        if: steps.changed-base.outputs.ref != ''
+        run: |
+          uv run --no-project --isolated \
+            --with packaging \
+            python ci/run_package_smoke.py \
+              --changed "${{ steps.changed-base.outputs.ref }}"
+
       - name: Run release tooling tests
         run: |
           uv run --no-project --isolated \
@@ -67,10 +77,96 @@ jobs:
             --with pytest \
             python -m pytest ci/tests --verbose
 
-  integration-tests:
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+  select-integration-tests:
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      compose: ${{ steps.select.outputs.compose }}
+      oracle: ${{ steps.select.outputs.oracle }}
+      cloud: ${{ steps.select.outputs.cloud }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Select integration targets
+        id: select
+        env:
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          if [ -n "${MERGE_GROUP_BASE_SHA}" ]; then
+            selection="$(python3 ci/select_affected.py \
+              --base "${MERGE_GROUP_BASE_SHA}" \
+              --format json)"
+            python3 ci/select_affected.py \
+              --base "${MERGE_GROUP_BASE_SHA}" \
+              --format summary >> "$GITHUB_STEP_SUMMARY"
+          else
+            selection="$(python3 ci/select_affected.py --all --format json)"
+            python3 ci/select_affected.py --all --format summary >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          python3 - "$selection" <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+
+          selection = json.loads(sys.argv[1])
+          compose_targets = selection["compose_targets"]
+          print(f"compose={json.dumps([target for target in compose_targets if target != 'oracle'], separators=(',', ':'))}")
+          print(f"oracle={str('oracle' in compose_targets).lower()}")
+          print(f"cloud={json.dumps(selection['cloud_targets'], separators=(',', ':'))}")
+          PY
+
+  compose-integration-tests:
+    if: needs.select-integration-tests.result == 'success' && needs.select-integration-tests.outputs.compose != '[]'
     needs:
       - unit-tests
+      - select-integration-tests
+    runs-on: self-hosted
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: ${{ fromJSON(needs.select-integration-tests.outputs.compose || '[]') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Run ${{ matrix.adapter }} integration tests
+        run: ci/run-integration-tests.sh "${{ matrix.adapter }}"
+
+      - name: Stop ${{ matrix.adapter }} integration services
+        if: always()
+        run: ci/run-integration-tests.sh --cleanup-only "${{ matrix.adapter }}"
+
+  oracle-integration-tests:
+    if: >-
+      always() &&
+      needs.unit-tests.result == 'success' &&
+      needs.select-integration-tests.result == 'success' &&
+      needs.select-integration-tests.outputs.oracle == 'true'
+    needs:
+      - unit-tests
+      - select-integration-tests
+      - compose-integration-tests
     runs-on: self-hosted
     timeout-minutes: 90
     steps:
@@ -89,27 +185,89 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Resolve changed test base
-        id: changed-base
-        shell: bash
-        run: |
-          case "${{ github.event_name }}" in
-            merge_group)
-              echo "ref=${{ github.event.merge_group.base_sha }}" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "ref=" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
+      - name: Run Oracle integration tests without parallel Compose load
+        run: ci/run-integration-tests.sh oracle
 
-      - name: Run impacted integration tests
+      - name: Stop Oracle integration services
+        if: always()
+        run: ci/run-integration-tests.sh --cleanup-only oracle
+
+  hologres-cloud-tests:
+    if: needs.select-integration-tests.result == 'success' && contains(fromJSON(needs.select-integration-tests.outputs.cloud || '[]'), 'hologres')
+    needs:
+      - unit-tests
+      - select-integration-tests
+    uses: ./.github/workflows/hologres-cloud-tests.yml
+    secrets: inherit
+
+  maxcompute-cloud-tests:
+    if: needs.select-integration-tests.result == 'success' && contains(fromJSON(needs.select-integration-tests.outputs.cloud || '[]'), 'maxcompute')
+    needs:
+      - unit-tests
+      - select-integration-tests
+    uses: ./.github/workflows/maxcompute-cloud-tests.yml
+    secrets: inherit
+
+  integration-tests:
+    if: always() && (github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs:
+      - unit-tests
+      - select-integration-tests
+      - compose-integration-tests
+      - oracle-integration-tests
+      - hologres-cloud-tests
+      - maxcompute-cloud-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify selected integration results
+        env:
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          SELECT_RESULT: ${{ needs.select-integration-tests.result }}
+          COMPOSE_RESULT: ${{ needs.compose-integration-tests.result }}
+          ORACLE_RESULT: ${{ needs.oracle-integration-tests.result }}
+          HOLOGRES_RESULT: ${{ needs.hologres-cloud-tests.result }}
+          MAXCOMPUTE_RESULT: ${{ needs.maxcompute-cloud-tests.result }}
+          COMPOSE_TARGETS: ${{ needs.select-integration-tests.outputs.compose }}
+          ORACLE_SELECTED: ${{ needs.select-integration-tests.outputs.oracle }}
+          CLOUD_TARGETS: ${{ needs.select-integration-tests.outputs.cloud }}
         run: |
-          if [ -n "${{ steps.changed-base.outputs.ref }}" ]; then
-            ci/run-integration-tests.sh --changed "${{ steps.changed-base.outputs.ref }}"
+          failed=0
+
+          require_result() {
+            local label="$1"
+            local actual="$2"
+            local expected="$3"
+            if [ "$actual" != "$expected" ]; then
+              echo "$label result was '$actual'; expected '$expected'." >&2
+              failed=1
+            fi
+          }
+
+          require_result "unit-tests" "$UNIT_RESULT" "success"
+          require_result "select-integration-tests" "$SELECT_RESULT" "success"
+
+          if [ "$COMPOSE_TARGETS" = "[]" ]; then
+            require_result "compose-integration-tests" "$COMPOSE_RESULT" "skipped"
           else
-            ci/run-integration-tests.sh
+            require_result "compose-integration-tests" "$COMPOSE_RESULT" "success"
           fi
 
-      - name: Stop integration services
-        if: always()
-        run: ci/run-integration-tests.sh --cleanup-only
+          if [ "$ORACLE_SELECTED" = "true" ]; then
+            require_result "oracle-integration-tests" "$ORACLE_RESULT" "success"
+          else
+            require_result "oracle-integration-tests" "$ORACLE_RESULT" "skipped"
+          fi
+
+          case "$CLOUD_TARGETS" in
+            *'"hologres"'*) require_result "hologres-cloud-tests" "$HOLOGRES_RESULT" "success" ;;
+            *) require_result "hologres-cloud-tests" "$HOLOGRES_RESULT" "skipped" ;;
+          esac
+          case "$CLOUD_TARGETS" in
+            *'"maxcompute"'*) require_result "maxcompute-cloud-tests" "$MAXCOMPUTE_RESULT" "success" ;;
+            *) require_result "maxcompute-cloud-tests" "$MAXCOMPUTE_RESULT" "skipped" ;;
+          esac
+
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more selected integration jobs failed." >&2
+            exit 1
+          fi

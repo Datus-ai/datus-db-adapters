@@ -56,6 +56,17 @@ list_packages() {
   done
 }
 
+is_known_package() {
+  local requested="$1"
+  local spec
+  for spec in "${PACKAGE_SPECS[@]}"; do
+    if [ "${spec%%:*}" = "$requested" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 requested_packages=()
 selected_packages=()
 changed_mode=0
@@ -105,68 +116,9 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-all_packages() {
-  local spec
-  for spec in "${PACKAGE_SPECS[@]}"; do
-    echo "${spec%%:*}"
-  done
-}
-
-packages_from_changed_files() {
-  local base_ref="$1"
-  local base_changed_files=""
-  local staged_files=""
-  local unstaged_files=""
-  local untracked_files=""
-  local changed_files=""
-
-  if ! base_changed_files="$(git diff --name-only "${base_ref}...HEAD")"; then
-    echo "Unable to determine changed packages from base ref '$base_ref'." >&2
-    return 1
-  fi
-  if ! staged_files="$(git diff --name-only --cached)"; then
-    echo "Unable to determine staged package changes." >&2
-    return 1
-  fi
-  if ! unstaged_files="$(git diff --name-only)"; then
-    echo "Unable to determine unstaged package changes." >&2
-    return 1
-  fi
-  if ! untracked_files="$(git ls-files --others --exclude-standard)"; then
-    echo "Unable to determine untracked package changes." >&2
-    return 1
-  fi
-
-  changed_files="$(
-    printf '%s\n' \
-      "$base_changed_files" \
-      "$staged_files" \
-      "$unstaged_files" \
-      "$untracked_files" |
-      awk 'NF && !seen[$0]++'
-  )"
-
-  if [ -z "$changed_files" ]; then
-    return 0
-  fi
-
-  if echo "$changed_files" | grep -Eq '^(pyproject\.toml|uv\.lock|ci/|\.github/workflows/|datus-db-core/|datus-sqlalchemy/)'; then
-    all_packages
-    return 0
-  fi
-
-  local spec package
-  for spec in "${PACKAGE_SPECS[@]}"; do
-    package="${spec%%:*}"
-    if echo "$changed_files" | grep -Eq "^${package}/"; then
-      echo "$package"
-    fi
-  done
-}
-
 if [ "$changed_mode" -eq 1 ]; then
   changed_packages=""
-  if ! changed_packages="$(packages_from_changed_files "$changed_base")"; then
+  if ! changed_packages="$(python3 ci/select_affected.py --base "$changed_base" --suite unit)"; then
     exit 1
   fi
   while IFS= read -r package; do
@@ -182,6 +134,13 @@ if [ "${#selected_packages[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
   echo "No package changes detected; skipping unit tests."
   exit 0
 fi
+
+for package in "${selected_packages[@]}"; do
+  if ! is_known_package "$package"; then
+    echo "Unknown package '$package'. Use --list to see valid package names." >&2
+    exit 2
+  fi
+done
 
 should_run_package() {
   local package="$1"
@@ -209,8 +168,8 @@ for spec in "${PACKAGE_SPECS[@]}"; do
   fi
 
   if [ ! -e "$test_path" ]; then
-    echo "Skipping $package: missing test path $test_path"
-    continue
+    echo "Missing unit test path for $package: $test_path" >&2
+    exit 1
   fi
 
   echo ""
