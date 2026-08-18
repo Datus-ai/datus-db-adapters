@@ -37,6 +37,9 @@ select only affected Compose and cloud targets from the transitive package graph
   package without starting databases.
 - Shared selection, dependency-lock, and common workflow changes expand to all
   relevant targets.
+- Oracle runs after the parallel Compose matrix because its 19c cold DBCA
+  initialization is resource-intensive; other selected Compose targets remain
+  parallel.
 
 Manual dispatch runs the full enabled sweep. The scheduled Monday run is the
 weekly full Compose and enabled cloud safety net. MaxCompute is explicitly disabled in

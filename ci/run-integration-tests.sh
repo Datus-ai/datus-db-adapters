@@ -326,6 +326,7 @@ wait_for_python_connector_readiness() {
   local deadline
   local probe_output
   local probe="$ROOT_DIR/ci/integration/readiness/$adapter.py"
+  local probe_module="ci.integration.readiness.$adapter"
 
   if [ ! -f "$probe" ]; then
     echo "Missing readiness probe for $adapter: $probe" >&2
@@ -339,7 +340,8 @@ wait_for_python_connector_readiness() {
 
   echo "Waiting for ${adapter} client readiness"
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if uv run --package "$package" --with pandas --with pyarrow python "$probe" >"$probe_output" 2>&1; then
+    if uv run --package "$package" --with pandas --with pyarrow \
+      python -m "$probe_module" >"$probe_output" 2>&1; then
       echo "${adapter} client readiness probe succeeded"
       return 0
     fi

@@ -1,8 +1,8 @@
 import os
 
-from _common import require_connection
-
 from datus_trino import TrinoConfig, TrinoConnector
+
+from ._common import require_connection
 
 config = TrinoConfig(
     host=os.getenv("TRINO_HOST", "127.0.0.1"),

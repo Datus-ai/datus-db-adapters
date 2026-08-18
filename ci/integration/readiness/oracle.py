@@ -1,8 +1,8 @@
 import os
 
-from _common import require_connection
-
 from datus_oracle import OracleConfig, OracleConnector
+
+from ._common import require_connection
 
 config = OracleConfig(
     host=os.getenv("ORACLE_HOST", "127.0.0.1"),

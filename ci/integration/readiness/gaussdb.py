@@ -1,9 +1,9 @@
 import os
 import sys
 
-from _common import require_connection
-
 from datus_gaussdb import GaussDBConfig, GaussDBConnector
+
+from ._common import require_connection
 
 config = GaussDBConfig(
     host=os.getenv("GAUSSDB_HOST", "127.0.0.1"),

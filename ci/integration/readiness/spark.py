@@ -1,8 +1,8 @@
 import os
 
-from _common import require_connection
-
 from datus_spark import SparkConfig, SparkConnector
+
+from ._common import require_connection
 
 config = SparkConfig(
     host=os.getenv("SPARK_HOST", "127.0.0.1"),

@@ -82,3 +82,16 @@ def test_cleanup_only_tolerates_a_missing_adapter_definition(tmp_path: Path) -> 
 
     assert result.returncode == 0
     assert "Missing integration adapter definition" in result.stderr
+
+
+def test_readiness_probes_run_as_modules_to_avoid_driver_shadowing() -> None:
+    source = RUNNER.read_text(encoding="utf-8")
+
+    assert 'probe_module="ci.integration.readiness.$adapter"' in source
+    assert 'python -m "$probe_module"' in source
+    assert 'python "$probe"' not in source
+
+    for probe in (CI_ROOT / "integration" / "readiness").glob("*.py"):
+        if probe.stem == "_common":
+            continue
+        assert "from ._common import require_connection" in probe.read_text(encoding="utf-8")

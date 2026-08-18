@@ -1,8 +1,8 @@
 import os
 
-from _common import require_connection
-
 from datus_greenplum import GreenplumConfig, GreenplumConnector
+
+from ._common import require_connection
 
 config = GreenplumConfig(
     host=os.getenv("GREENPLUM_HOST", "127.0.0.1"),

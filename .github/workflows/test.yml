@@ -82,6 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       compose: ${{ steps.select.outputs.compose }}
+      oracle: ${{ steps.select.outputs.oracle }}
       cloud: ${{ steps.select.outputs.cloud }}
     steps:
       - name: Checkout code
@@ -116,7 +117,9 @@ jobs:
           import sys
 
           selection = json.loads(sys.argv[1])
-          print(f"compose={json.dumps(selection['compose_targets'], separators=(',', ':'))}")
+          compose_targets = selection["compose_targets"]
+          print(f"compose={json.dumps([target for target in compose_targets if target != 'oracle'], separators=(',', ':'))}")
+          print(f"oracle={str('oracle' in compose_targets).lower()}")
           print(f"cloud={json.dumps(selection['cloud_targets'], separators=(',', ':'))}")
           PY
 
@@ -154,6 +157,41 @@ jobs:
         if: always()
         run: ci/run-integration-tests.sh --cleanup-only "${{ matrix.adapter }}"
 
+  oracle-integration-tests:
+    if: >-
+      always() &&
+      needs.unit-tests.result == 'success' &&
+      needs.select-integration-tests.result == 'success' &&
+      needs.select-integration-tests.outputs.oracle == 'true'
+    needs:
+      - unit-tests
+      - select-integration-tests
+      - compose-integration-tests
+    runs-on: self-hosted
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Run Oracle integration tests without parallel Compose load
+        run: ci/run-integration-tests.sh oracle
+
+      - name: Stop Oracle integration services
+        if: always()
+        run: ci/run-integration-tests.sh --cleanup-only oracle
+
   hologres-cloud-tests:
     if: needs.select-integration-tests.result == 'success' && contains(fromJSON(needs.select-integration-tests.outputs.cloud || '[]'), 'hologres')
     needs:
@@ -176,6 +214,7 @@ jobs:
       - unit-tests
       - select-integration-tests
       - compose-integration-tests
+      - oracle-integration-tests
       - hologres-cloud-tests
       - maxcompute-cloud-tests
     runs-on: ubuntu-latest
@@ -185,9 +224,11 @@ jobs:
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           SELECT_RESULT: ${{ needs.select-integration-tests.result }}
           COMPOSE_RESULT: ${{ needs.compose-integration-tests.result }}
+          ORACLE_RESULT: ${{ needs.oracle-integration-tests.result }}
           HOLOGRES_RESULT: ${{ needs.hologres-cloud-tests.result }}
           MAXCOMPUTE_RESULT: ${{ needs.maxcompute-cloud-tests.result }}
           COMPOSE_TARGETS: ${{ needs.select-integration-tests.outputs.compose }}
+          ORACLE_SELECTED: ${{ needs.select-integration-tests.outputs.oracle }}
           CLOUD_TARGETS: ${{ needs.select-integration-tests.outputs.cloud }}
         run: |
           failed=0
@@ -209,6 +250,12 @@ jobs:
             require_result "compose-integration-tests" "$COMPOSE_RESULT" "skipped"
           else
             require_result "compose-integration-tests" "$COMPOSE_RESULT" "success"
+          fi
+
+          if [ "$ORACLE_SELECTED" = "true" ]; then
+            require_result "oracle-integration-tests" "$ORACLE_RESULT" "success"
+          else
+            require_result "oracle-integration-tests" "$ORACLE_RESULT" "skipped"
           fi
 
           case "$CLOUD_TARGETS" in

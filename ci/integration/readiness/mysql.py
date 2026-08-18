@@ -1,8 +1,8 @@
 import os
 
-from _common import require_connection
-
 from datus_mysql import MySQLConfig, MySQLConnector
+
+from ._common import require_connection
 
 config = MySQLConfig(
     host=os.getenv("MYSQL_HOST", "127.0.0.1"),
