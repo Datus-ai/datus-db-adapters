@@ -39,7 +39,7 @@ agent:
 | `schema` | no | Default schema; defaults to `public` |
 | `driver` | no | `gaussdb` on Linux and `pg8000` on macOS by default; `psycopg2` is an md5-only escape hatch |
 | `sslmode` | no | `disable`, `allow`, `prefer` (default), `require`, `verify-ca`, or `verify-full`; use `verify-ca` in production |
-| `sslrootcert` | for explicit verification | CA bundle used by `verify-ca`/`verify-full`; libpq's standard certificate locations are also honored |
+| `sslrootcert` | for explicit verification | CA bundle used by `verify-ca`/`verify-full`. Accepts a path **or** the PEM content itself — pg8000 verifies straight from memory, and for the libpq drivers the adapter writes the content to a private temp file. libpq's standard certificate locations are also honored |
 
 ```python
 from datus_gaussdb import GaussDBConfig, GaussDBConnector

@@ -46,8 +46,10 @@ class GaussDBConfig(PostgreSQLConfig):
     sslrootcert: Optional[str] = Field(
         default=None,
         description=(
-            "Path to the CA certificate used to verify the server for sslmode "
-            "verify-ca/verify-full. Forwarded to every supported driver; the "
-            "libpq-based drivers can also use their standard certificate locations"
+            "CA certificate used to verify the server for sslmode "
+            "verify-ca/verify-full — either a path or the PEM content itself, so a "
+            "caller with no filesystem on the server can supply an uploaded "
+            "certificate. Forwarded to every supported driver; the libpq-based "
+            "drivers can also use their standard certificate locations"
         ),
     )

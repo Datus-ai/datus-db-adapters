@@ -398,3 +398,60 @@ def test_psycopg2_on_connect_registers_bool_caster():
     assert parse("0", None) is False
     assert parse(None, None) is None
     reg.assert_called_once_with("caster", conn)
+
+
+# ==================== Inline CA certificate ====================
+
+
+def test_pg8000_ssl_context_accepts_inline_pem():
+    """An uploaded certificate verifies from memory — no file is written."""
+    import ssl
+
+    from datus_gaussdb.sa_dialect import _build_pg8000_ssl_context
+
+    try:
+        ctx = _build_pg8000_ssl_context("verify-ca", _STUB_CERT)
+    except ssl.SSLError:
+        pytest.skip("stub certificate rejected by this OpenSSL build")
+
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.get_ca_certs(), "the inline certificate should be loaded into the trust store"
+
+
+def test_inline_pem_is_materialized_once_and_kept_private():
+    """libpq drivers only read a filename, so inline PEM has to hit the disk."""
+    import os
+
+    from datus_gaussdb import _ca_cert
+
+    path = _ca_cert.as_path(_STUB_CERT)
+
+    assert path != _STUB_CERT
+    assert open(path, encoding="utf-8").read() == _STUB_CERT
+    # A trust anchor other users can rewrite is worse than no verification.
+    assert os.stat(path).st_mode & 0o077 == 0
+    # Reused rather than re-written on every connection.
+    assert _ca_cert.as_path(_STUB_CERT) == path
+
+
+def test_ca_path_passes_through_untouched(tmp_path):
+    """A self-hosted deployment that mounts its CA file keeps working."""
+    from datus_gaussdb import _ca_cert
+
+    ca = tmp_path / "ca.pem"
+    ca.write_text(_STUB_CERT)
+
+    assert _ca_cert.as_path(str(ca)) == str(ca)
+    assert _ca_cert.as_path(None) is None
+    assert _ca_cert.is_inline_pem(str(ca)) is False
+
+
+def test_libpq_dialects_swap_inline_pem_for_a_path():
+    """Both libpq-based dialects hand the driver a filename, never the PEM."""
+    from datus_gaussdb.sa_dialect import _resolve_ca_kwarg
+
+    kwargs = {"sslrootcert": _STUB_CERT}
+    _resolve_ca_kwarg(kwargs)
+
+    assert kwargs["sslrootcert"] != _STUB_CERT
+    assert open(kwargs["sslrootcert"], encoding="utf-8").read() == _STUB_CERT
