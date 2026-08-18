@@ -222,6 +222,35 @@ def test_sys_databases_matches_postgresql():
 
 
 @pytest.mark.acceptance
+def test_sys_schemas_covers_oracle_compat_and_cloud_managed():
+    """A-compat views and Huawei Cloud's managed schemas are not the user's."""
+    sys_schemas = _make_connector()._sys_schemas()
+
+    assert {"sys", "resource_manager", "rdsAdmin", "rdsBackup", "rdsMetric", "rdsRepl"}.issubset(sys_schemas)
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "schema",
+    ["dbe_output", "dbe_xmlparser", "pkg_util", "prvt_ilm", "pg_temp_3", "pg_toast_temp_3"],
+)
+def test_is_sys_schema_matches_reserved_package_namespaces(schema):
+    """Built-in package schemas are matched by prefix, not by enumeration."""
+    assert _make_connector()._is_sys_schema(schema) is True
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("schema", ["public", "root", "analytics", "dbexport", "packages"])
+def test_is_sys_schema_keeps_user_schemas(schema):
+    """A login role's own schema is where its tables live — never filtered.
+
+    ``dbexport`` / ``packages`` guard the prefix rule against matching a name
+    that merely starts with the same letters as ``dbe_`` / ``pkg_``.
+    """
+    assert _make_connector()._is_sys_schema(schema) is False
+
+
+@pytest.mark.acceptance
 def test_get_schemas_uses_pg_namespace_and_filters_internal_prefixes():
     """Schema discovery uses pg_namespace and hides system and temporary schemas."""
     connector = _make_connector()
@@ -231,12 +260,21 @@ def test_get_schemas_uses_pg_namespace_and_filters_internal_prefixes():
         "pg_catalog",
         "dbe_perf",
         "pg_temp_3",
+        # A stock instance ships ~30 of these; walking them cost a round trip each.
+        "dbe_output",
+        "dbe_xmlparser",
+        "pkg_util",
+        "prvt_ilm",
+        "rdsBackup",
+        "sys",
+        # The connecting role's own schema stays.
+        "root",
     ]
     connector._execute_pandas = MagicMock(return_value=result)
 
     schemas = connector.get_schemas(database_name="analytics")
 
-    assert schemas == ["public"]
+    assert schemas == ["public", "root"]
     sql = connector._execute_pandas.call_args.args[0]
     assert "pg_namespace" in sql
     connector._execute_pandas.assert_called_once_with(sql, database_name="analytics")
