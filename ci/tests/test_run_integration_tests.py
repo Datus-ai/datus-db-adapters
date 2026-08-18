@@ -1,3 +1,4 @@
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -40,9 +41,19 @@ def test_runner_target_list_matches_impact_manifest() -> None:
 
 
 def test_each_adapter_definition_supports_dry_run() -> None:
-    adapters = sorted(path.stem for path in (CI_ROOT / "integration" / "adapters").glob("*.sh"))
+    definitions = sorted(
+        path for path in (CI_ROOT / "integration" / "adapters").glob("*.sh") if not path.stem.startswith("_")
+    )
 
-    for adapter in adapters:
+    for definition in definitions:
+        adapter = definition.stem
+        package_match = re.search(
+            r'^ADAPTER_PACKAGE="([^"]+)"$',
+            definition.read_text(encoding="utf-8"),
+            flags=re.MULTILINE,
+        )
+        assert package_match is not None, f"Missing ADAPTER_PACKAGE in {definition}"
+
         result = subprocess.run(
             [RUNNER, "--dry-run", adapter],
             cwd=REPO_ROOT,
@@ -51,4 +62,23 @@ def test_each_adapter_definition_supports_dry_run() -> None:
             text=True,
         )
         assert f"=== Integration tests: {adapter} ===" in result.stdout
-        assert f"package: datus-{adapter}" in result.stdout
+        assert f"package: {package_match.group(1)}" in result.stdout
+
+
+def test_cleanup_only_tolerates_a_missing_adapter_definition(tmp_path: Path) -> None:
+    ci_root = tmp_path / "ci"
+    runner = ci_root / "run-integration-tests.sh"
+    runner.parent.mkdir(parents=True)
+    runner.write_bytes(RUNNER.read_bytes())
+    runner.chmod(0o755)
+
+    result = subprocess.run(
+        [runner, "--cleanup-only", "postgresql"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Missing integration adapter definition" in result.stderr

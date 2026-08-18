@@ -278,6 +278,7 @@ def select_impacts(
 
         if path == PurePosixPath("pyproject.toml"):
             selection.unit_packages.update(packages)
+            selection.smoke_packages.update(packages)
             continue
 
         if (

@@ -205,7 +205,9 @@ list_adapters() {
 
 compose_down() {
   local adapter="$1"
-  load_adapter "$adapter"
+  if ! load_adapter "$adapter"; then
+    return 0
+  fi
   if [ -f "$ADAPTER_COMPOSE" ]; then
     docker_compose -f "$ADAPTER_COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
   fi
@@ -231,7 +233,9 @@ dump_adapter_diagnostics() {
   local service_name
   local container_id
 
-  load_adapter "$adapter"
+  if ! load_adapter "$adapter"; then
+    return 0
+  fi
   echo ""
   echo "=== Failure diagnostics: $adapter ===" >&2
   docker_compose -f "$ADAPTER_COMPOSE" ps -a >&2 || true

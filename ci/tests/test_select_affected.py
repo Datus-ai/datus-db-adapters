@@ -84,6 +84,17 @@ def test_documentation_change_does_not_select_tests() -> None:
     assert selection.smoke_packages == set()
 
 
+def test_root_pyproject_change_selects_all_unit_and_smoke_packages() -> None:
+    packages = set(load_workspace_packages(REPO_ROOT))
+
+    selection = select("pyproject.toml")
+
+    assert selection.unit_packages == packages
+    assert selection.smoke_packages == packages
+    assert selection.compose_targets == set()
+    assert selection.cloud_targets == set()
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -259,6 +270,7 @@ def test_version_only_pyproject_change_selects_smoke_without_integration() -> No
     path = "datus-gaussdb/pyproject.toml"
     current = (REPO_ROOT / path).read_text(encoding="utf-8")
     before = current.replace('version = "0.1.0"', 'version = "0.0.9"', 1)
+    assert before != current, "Update the datus-gaussdb version used by this fixture"
 
     selection = select_impacts(REPO_ROOT, [path], before_text=lambda _: before)
 
@@ -271,6 +283,7 @@ def test_external_dependency_pyproject_change_selects_runtime_dependents() -> No
     path = "datus-mysql/pyproject.toml"
     current = (REPO_ROOT / path).read_text(encoding="utf-8")
     before = current.replace("pymysql>=1.1.1", "pymysql>=1.1.0", 1)
+    assert before != current, "Update the pymysql pin used by this fixture"
 
     selection = select_impacts(REPO_ROOT, [path], before_text=lambda _: before)
 
