@@ -49,6 +49,8 @@ kind = "cloud"
 [targets.maxcompute]
 package = "datus-maxcompute"
 kind = "cloud"
+# No repository credentials or live CI instance are currently available.
+enabled = false
 
 [selection]
 packages_without_live_targets = [

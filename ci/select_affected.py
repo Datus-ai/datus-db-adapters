@@ -93,6 +93,7 @@ class IntegrationTarget:
     name: str
     package: str
     kind: str
+    enabled: bool
 
 
 @dataclass
@@ -136,7 +137,12 @@ def load_workspace_packages(repo_root: Path) -> dict[str, WorkspacePackage]:
 def load_integration_targets(targets_file: Path = TARGETS_FILE) -> dict[str, IntegrationTarget]:
     data = tomllib.loads(targets_file.read_text(encoding="utf-8"))
     return {
-        name: IntegrationTarget(name=name, package=canonicalize_name(config["package"]), kind=config["kind"])
+        name: IntegrationTarget(
+            name=name,
+            package=canonicalize_name(config["package"]),
+            kind=config["kind"],
+            enabled=config.get("enabled", True),
+        )
         for name, config in data["targets"].items()
     }
 
@@ -353,6 +359,8 @@ def select_impacts(
     integration_packages = runtime_affected | direct_integration_packages
 
     for target in targets.values():
+        if not target.enabled:
+            continue
         selected_globally = bool(global_all_reasons) or (target.kind == "compose" and bool(global_compose_reasons))
         if selected_globally or target.package in integration_packages:
             if target.kind == "compose":
@@ -378,6 +386,8 @@ def select_all(repo_root: Path) -> ImpactSelection:
         smoke_packages=set(packages),
     )
     for target in targets.values():
+        if not target.enabled:
+            continue
         if target.kind == "compose":
             selection.compose_targets.add(target.name)
         elif target.kind == "cloud":

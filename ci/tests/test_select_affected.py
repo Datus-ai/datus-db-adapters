@@ -1,4 +1,5 @@
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from ci.select_affected import (
     load_packages_without_live_targets,
     load_workspace_packages,
     package_pyproject_runtime_changed,
+    requirement_name,
     reverse_dependency_closure,
     select_all,
     select_impacts,
@@ -168,7 +170,7 @@ def test_shared_impact_or_dependency_change_selects_all_integration_targets(path
     selection = select(path)
 
     assert selection.compose_targets == COMPOSE_TARGETS
-    assert selection.cloud_targets == {"hologres", "maxcompute"}
+    assert selection.cloud_targets == {"hologres"}
 
 
 @pytest.mark.parametrize(
@@ -188,17 +190,25 @@ def test_release_and_format_tooling_does_not_select_integration(path: str) -> No
 
 
 @pytest.mark.parametrize(
-    ("path", "target"),
+    ("path", "expected_targets"),
     [
-        (".github/workflows/hologres-cloud-tests.yml", "hologres"),
-        (".github/workflows/maxcompute-cloud-tests.yml", "maxcompute"),
+        (".github/workflows/hologres-cloud-tests.yml", {"hologres"}),
+        (".github/workflows/maxcompute-cloud-tests.yml", set()),
     ],
 )
-def test_cloud_workflow_change_selects_only_its_cloud_target(path: str, target: str) -> None:
+def test_cloud_workflow_change_selects_only_enabled_cloud_target(path: str, expected_targets: set[str]) -> None:
     selection = select(path)
 
     assert selection.compose_targets == set()
-    assert selection.cloud_targets == {target}
+    assert selection.cloud_targets == expected_targets
+
+
+def test_disabled_cloud_target_runs_package_checks_without_live_test() -> None:
+    selection = select("datus-maxcompute/datus_maxcompute/connector.py")
+
+    assert selection.unit_packages == {"datus-maxcompute"}
+    assert selection.smoke_packages == {"datus-maxcompute"}
+    assert selection.cloud_targets == set()
 
 
 def test_workspace_dependency_graph_contains_transitive_starrocks_edge() -> None:
@@ -215,6 +225,8 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
 
     assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS
     assert {name for name, target in targets.items() if target.kind == "cloud"} == {"hologres", "maxcompute"}
+    assert {name for name, target in targets.items() if target.enabled} == COMPOSE_TARGETS | {"hologres"}
+    assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute"}
 
 
 def test_packages_without_live_targets_are_explicitly_registered() -> None:
@@ -228,7 +240,7 @@ def test_manual_full_selection_includes_every_target() -> None:
     selection = select_all(REPO_ROOT)
 
     assert selection.compose_targets == COMPOSE_TARGETS
-    assert selection.cloud_targets == {"hologres", "maxcompute"}
+    assert selection.cloud_targets == {"hologres"}
     assert selection.unit_packages == set(load_workspace_packages(REPO_ROOT))
 
 
@@ -269,8 +281,13 @@ dependencies = ["pymysql>=1.1.0"]
 def test_version_only_pyproject_change_selects_smoke_without_integration() -> None:
     path = "datus-gaussdb/pyproject.toml"
     current = (REPO_ROOT / path).read_text(encoding="utf-8")
-    before = current.replace('version = "0.1.0"', 'version = "0.0.9"', 1)
-    assert before != current, "Update the datus-gaussdb version used by this fixture"
+    current_version = tomllib.loads(current)["project"]["version"]
+    before = current.replace(
+        f'version = "{current_version}"',
+        f'version = "{current_version}.0"',
+        1,
+    )
+    assert before != current, "Failed to rewrite the parsed datus-gaussdb version"
 
     selection = select_impacts(REPO_ROOT, [path], before_text=lambda _: before)
 
@@ -282,8 +299,15 @@ def test_version_only_pyproject_change_selects_smoke_without_integration() -> No
 def test_external_dependency_pyproject_change_selects_runtime_dependents() -> None:
     path = "datus-mysql/pyproject.toml"
     current = (REPO_ROOT / path).read_text(encoding="utf-8")
-    before = current.replace("pymysql>=1.1.1", "pymysql>=1.1.0", 1)
-    assert before != current, "Update the pymysql pin used by this fixture"
+    current_dependencies = tomllib.loads(current)["project"]["dependencies"]
+    current_requirement = next(
+        (requirement for requirement in current_dependencies if requirement_name(requirement) == "pymysql"),
+        None,
+    )
+    assert current_requirement is not None, "datus-mysql must declare its pymysql runtime dependency"
+    replacement_requirement = "pymysql" if current_requirement != "pymysql" else "pymysql>=0"
+    before = current.replace(current_requirement, replacement_requirement, 1)
+    assert before != current, "Failed to rewrite the parsed pymysql requirement"
 
     selection = select_impacts(REPO_ROOT, [path], before_text=lambda _: before)
 
