@@ -5,11 +5,10 @@
 """SQLAlchemy dialects for GaussDB/openGauss client drivers.
 
 The official ``gaussdb`` driver is a psycopg3 fork with the module tree renamed
-psycopg->gaussdb. SQLAlchemy's built-in ``postgresql+psycopg`` dialect
-hard-imports ``psycopg`` submodules in ~15 places; rather than reimplementing
-the dialect, the (API-identical) ``gaussdb`` module tree is aliased into
-``sys.modules`` under the ``psycopg`` names before the dialect first touches
-them.
+psycopg->gaussdb. SQLAlchemy's built-in ``postgresql+psycopg`` dialect imports
+the concrete ``psycopg`` package from several driver-specific hooks. This
+module overrides those hooks to use ``gaussdb`` directly, so PostgreSQL's real
+``psycopg`` package and the GaussDB driver can coexist in one process.
 
 The optional psycopg2 path uses its own GaussDB-named dialect. This keeps the
 stock PostgreSQL dialect untouched while allowing PostgreSQL's macOS libpq to
@@ -26,9 +25,9 @@ URL forms::
     gaussdb+pg8000://user:password@host:port/database
 """
 
-import sys
-import types
+import importlib
 
+from sqlalchemy import util
 from sqlalchemy.dialects import registry
 from sqlalchemy.dialects.postgresql.pg8000 import PGDialect_pg8000
 from sqlalchemy.dialects.postgresql.psycopg import PGDialect_psycopg
@@ -49,82 +48,55 @@ def _gaussdb_bool_in(data):
     return data in _BOOL_TRUE_TEXTS
 
 
-_PSYCOPG_SUBMODULES = (
-    "adapt",
-    "pq",
-    "rows",
-    "sql",
-    "types",
-    "types.array",
-    "types.datetime",
-    "types.hstore",
-    "types.json",
-    "types.multirange",
-    "types.range",
-    "types.string",
-)
-
-
-def _alias_gaussdb_as_psycopg():
-    """Alias the gaussdb module tree under the ``psycopg`` names.
-
-    The parent dialect hard-imports ``psycopg`` submodules from roughly a
-    dozen call sites, so the fork is published under those names instead of
-    the dialect being reimplemented. Since a process cannot hold two
-    different modules under one name, real psycopg and this dialect are
-    mutually exclusive within a process; the conflicting case raises instead
-    of silently mixing the two drivers' adapter registries.
-    """
-    import_gaussdb()
-    aliased = sys.modules.get("psycopg")
-    if aliased is not None:
-        if aliased is not sys.modules["gaussdb"]:
-            raise ImportError(
-                "psycopg is already imported in this process, so the GaussDB "
-                "dialect cannot alias the gaussdb driver onto it. Use the "
-                "GaussDB datasource in a process that does not import psycopg "
-                "(psycopg2 is unaffected), or set driver='psycopg2' on the "
-                "GaussDB datasource."
-            )
-        return
-    import importlib
-
-    sys.modules["psycopg"] = sys.modules["gaussdb"]
-    for name in _PSYCOPG_SUBMODULES:
-        try:
-            sys.modules[f"psycopg.{name}"] = importlib.import_module(f"gaussdb.{name}")
-        except ImportError:
-            pass
-
-
-class _GaussDBDbapiProxy(types.ModuleType):
-    """Delegate to the gaussdb module while reporting a psycopg-3.x version.
-
-    The fork versions itself 1.x; PGDialect_psycopg refuses anything below
-    psycopg 3.0.2.
-    """
-
-    def __init__(self, module):
-        super().__init__(module.__name__)
-        self._module = module
-
-    def __getattr__(self, name):
-        return getattr(self._module, name)
-
-    @property
-    def __version__(self):
-        return "3.2.0"
+def _import_gaussdb_submodule(name: str):
+    """Import a driver submodule lazily without touching ``psycopg``."""
+    return importlib.import_module(f"gaussdb.{name}")
 
 
 class GaussDBDialect(PGDialect_psycopg):
+    """SQLAlchemy's psycopg dialect bound directly to the GaussDB fork.
+
+    ``PGDialect_psycopg`` is still the correct behavioral base because the
+    official driver preserves psycopg3's DB-API and adaptation interfaces.
+    Its driver-specific hooks import the concrete ``psycopg`` package,
+    though. Each such hook is overridden here so this dialect never mutates
+    or consumes the real PostgreSQL driver's module namespace.
+    """
+
     name = "gaussdb"
     driver = "psycopg"
     supports_statement_cache = True
 
+    def __init__(self, **kwargs):
+        # PGDialect_psycopg only performs its hard-coded ``psycopg`` imports
+        # when a DB-API module is supplied. Let it initialize the common
+        # PostgreSQL state without a driver, then install the real GaussDB
+        # module and the equivalent adapter map ourselves.
+        dbapi = kwargs.pop("dbapi", None)
+        super().__init__(dbapi=None, **kwargs)
+        self.dbapi = dbapi
+
+        if dbapi is None:
+            return
+
+        adapt = _import_gaussdb_submodule("adapt")
+        adapters_map = adapt.AdaptersMap(dbapi.adapters)
+        self._psycopg_adapters_map = adapters_map
+
+        if self._native_inet_types is False:
+            string_types = _import_gaussdb_submodule("types.string")
+            adapters_map.register_loader("inet", string_types.TextLoader)
+            adapters_map.register_loader("cidr", string_types.TextLoader)
+
+        json_types = _import_gaussdb_submodule("types.json")
+        if self._json_deserializer:
+            json_types.set_json_loads(self._json_deserializer, adapters_map)
+        if self._json_serializer:
+            json_types.set_json_dumps(self._json_serializer, adapters_map)
+
     @classmethod
     def import_dbapi(cls):
-        _alias_gaussdb_as_psycopg()
-        return _GaussDBDbapiProxy(sys.modules["gaussdb"])
+        return import_gaussdb()
 
     def create_connect_args(self, url):
         args, kwargs = super().create_connect_args(url)
@@ -133,17 +105,62 @@ class GaussDBDialect(PGDialect_psycopg):
         # (int, date, ...) into NULL. ClientCursor interpolates parameters
         # client-side (psycopg2 semantics), which is fully correct against
         # this server family.
-        kwargs.setdefault("cursor_factory", sys.modules["gaussdb"].ClientCursor)
+        kwargs.setdefault("cursor_factory", self.dbapi.ClientCursor)
         return args, kwargs
+
+    def _type_info_fetch(self, connection, name):
+        types = _import_gaussdb_submodule("types")
+        return types.TypeInfo.fetch(connection.connection.driver_connection, name)
+
+    def initialize(self, connection):
+        # Skip PGDialect_psycopg.initialize(), whose HSTORE registration
+        # imports psycopg directly, while preserving its behavior with the
+        # corresponding GaussDB module.
+        super(PGDialect_psycopg, self).initialize(connection)
+
+        if not self.insert_returning:
+            self.insert_executemany_returning = False
+
+        if self.use_native_hstore:
+            info = self._type_info_fetch(connection, "hstore")
+            self._has_native_hstore = info is not None
+            if self._has_native_hstore:
+                hstore = _import_gaussdb_submodule("types.hstore")
+                hstore.register_hstore(info, self._psycopg_adapters_map)
+                hstore.register_hstore(info, connection.connection.driver_connection)
+
+    @classmethod
+    def get_async_dialect_cls(cls, url):
+        raise NotImplementedError("The official GaussDB SQLAlchemy dialect currently supports synchronous engines only")
+
+    @util.memoized_property
+    def _psycopg_Json(self):
+        return _import_gaussdb_submodule("types.json").Json
+
+    @util.memoized_property
+    def _psycopg_Jsonb(self):
+        return _import_gaussdb_submodule("types.json").Jsonb
+
+    @util.memoized_property
+    def _psycopg_TransactionStatus(self):
+        return _import_gaussdb_submodule("pq").TransactionStatus
+
+    @util.memoized_property
+    def _psycopg_Range(self):
+        return _import_gaussdb_submodule("types.range").Range
+
+    @util.memoized_property
+    def _psycopg_Multirange(self):
+        return _import_gaussdb_submodule("types.multirange").Multirange
 
     def _get_server_version_info(self, connection):
         return _get_server_version_info(connection)
 
     def on_connect(self):
         parent = super().on_connect()
-        gaussdb_mod = sys.modules["gaussdb"]
+        adapt = _import_gaussdb_submodule("adapt")
 
-        class _TolerantBoolLoader(gaussdb_mod.adapt.Loader):
+        class _TolerantBoolLoader(adapt.Loader):
             def load(self, data):
                 return bytes(data).decode("ascii") in _BOOL_TRUE_TEXTS
 
