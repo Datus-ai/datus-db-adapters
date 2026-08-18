@@ -128,6 +128,7 @@ class GaussDBDialect(PGDialect_psycopg):
 
     def create_connect_args(self, url):
         args, kwargs = super().create_connect_args(url)
+        _resolve_ca_kwarg(kwargs)
         # GaussDB/openGauss silently turns binary-format bound parameters
         # (int, date, ...) into NULL. ClientCursor interpolates parameters
         # client-side (psycopg2 semantics), which is fully correct against
@@ -167,6 +168,11 @@ class GaussDBPsycopg2Dialect(PGDialect_psycopg2):
     driver = "psycopg2"
     supports_statement_cache = True
 
+    def create_connect_args(self, url):
+        args, kwargs = super().create_connect_args(url)
+        _resolve_ca_kwarg(kwargs)
+        return args, kwargs
+
     def _get_server_version_info(self, connection):
         return _get_server_version_info(connection)
 
@@ -186,6 +192,15 @@ class GaussDBPsycopg2Dialect(PGDialect_psycopg2):
             ext.register_type(tolerant_bool, conn)
 
         return connect
+
+
+def _resolve_ca_kwarg(kwargs: dict) -> None:
+    """Point ``sslrootcert`` at a file, in place, for the libpq-based drivers."""
+    from ._ca_cert import as_path
+
+    cert = kwargs.get("sslrootcert")
+    if cert:
+        kwargs["sslrootcert"] = as_path(cert)
 
 
 def _build_pg8000_ssl_context(sslmode, sslrootcert):
@@ -208,6 +223,15 @@ def _build_pg8000_ssl_context(sslmode, sslrootcert):
     """
     import ssl as ssl_module
 
+    from ._ca_cert import is_inline_pem
+
+    def _context() -> "ssl_module.SSLContext":
+        # An uploaded certificate never needs to touch the disk here: pg8000
+        # takes an SSLContext, and one can be built from the PEM text itself.
+        if is_inline_pem(sslrootcert):
+            return ssl_module.create_default_context(cadata=sslrootcert)
+        return ssl_module.create_default_context(cafile=sslrootcert)
+
     mode = (sslmode or "prefer").strip().lower()
     if mode == "disable":
         return False
@@ -216,13 +240,13 @@ def _build_pg8000_ssl_context(sslmode, sslrootcert):
     if mode == "require":
         if not sslrootcert:
             return True
-        context = ssl_module.create_default_context(cafile=sslrootcert)
+        context = _context()
         context.check_hostname = False
         return context
     if mode in ("verify-ca", "verify-full"):
         if not sslrootcert:
             raise ValueError(f"sslmode={mode} requires sslrootcert to point at the CA certificate")
-        context = ssl_module.create_default_context(cafile=sslrootcert)
+        context = _context()
         context.check_hostname = mode == "verify-full"
         return context
     raise ValueError(
