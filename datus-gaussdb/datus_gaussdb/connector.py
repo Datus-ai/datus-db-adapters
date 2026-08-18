@@ -14,6 +14,15 @@ from .config import GaussDBConfig
 
 logger = get_logger(__name__)
 
+# Namespaces GaussDB reserves for its built-in packages. A stock instance ships
+# ~30 of them (dbe_output, dbe_task, pkg_util, prvt_ilm, ...), all holding
+# functions rather than tables, and the roster grows between kernel versions —
+# so they are matched by prefix instead of enumerated. Without this, schema
+# discovery hands the caller 30+ empty schemas and anything that then walks them
+# pays a round trip each: over a cross-region link that alone blew a catalog
+# listing past its 30s budget.
+_SYS_SCHEMA_PREFIXES = ("dbe_", "pkg_", "prvt_")
+
 
 @dataclass
 class DbTraits:
@@ -83,9 +92,32 @@ class GaussDBConnector(PostgreSQLConnector):
             "dbe_pldeveloper",
             "dbe_sql_util",
             "pkg_service",
+            "resource_manager",
             "snapshot",
             "sqladvisor",
+            # Oracle-compatibility views, present in A-compat mode.
+            "sys",
+            # Injected by Huawei Cloud's managed service, not by the kernel, so
+            # they appear on cloud instances only — and in camelCase.
+            "rdsAdmin",
+            "rdsBackup",
+            "rdsMetric",
+            "rdsRepl",
         }
+
+    def _is_sys_schema(self, schema: str) -> bool:
+        """Whether *schema* is GaussDB's rather than the user's.
+
+        Deliberately does NOT treat the login role's own schema as system:
+        openGauss auto-creates one per user, and that is exactly where an
+        ordinary user's tables land.
+        """
+        return (
+            schema in self._sys_schemas()
+            or schema.startswith(_SYS_SCHEMA_PREFIXES)
+            or schema.startswith("pg_temp_")
+            or schema.startswith("pg_toast_temp_")
+        )
 
     # ==================== Feature Probing ====================
 
@@ -155,12 +187,7 @@ class GaussDBConnector(PostgreSQLConnector):
         schemas = result["schema_name"].tolist()
 
         if not include_sys:
-            sys_schemas = self._sys_schemas()
-            schemas = [
-                s
-                for s in schemas
-                if s not in sys_schemas and not s.startswith("pg_temp_") and not s.startswith("pg_toast_temp_")
-            ]
+            schemas = [s for s in schemas if not self._is_sys_schema(s)]
         return schemas
 
     @override
