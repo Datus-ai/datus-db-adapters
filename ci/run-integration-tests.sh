@@ -2,18 +2,26 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ADAPTER_DEFINITION_DIR="$ROOT_DIR/ci/integration/adapters"
 cd "$ROOT_DIR"
 
 ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark oracle gaussdb)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 CURRENT_ADAPTER=""
+# shellcheck disable=SC2034  # Used by the sourced GaussDB adapter definition.
 GAUSSDB_TLS_HOST_DIR=""
+
+ADAPTER_NAME=""
+ADAPTER_PACKAGE=""
+ADAPTER_COMPOSE=""
+ADAPTER_TEST_PATH=""
+ADAPTER_SERVICES=()
 
 usage() {
   cat <<'USAGE'
 Usage: ci/run-integration-tests.sh [--list] [--dry-run] [--changed base-ref] [adapter ...]
-       ci/run-integration-tests.sh --cleanup-only
+       ci/run-integration-tests.sh --cleanup-only [adapter ...]
 
 Runs Docker-backed DB adapter integration tests.
 
@@ -21,7 +29,7 @@ Options:
   --changed REF    Select impacted adapters from git diff REF...HEAD.
   --list           List configured adapter targets.
   --dry-run        Print selected adapters without starting Docker.
-  --cleanup-only   Stop all configured integration compose projects.
+  --cleanup-only   Stop the requested adapters, or every adapter when none are given.
   -h, --help       Show this help.
 USAGE
 }
@@ -89,7 +97,6 @@ install_docker_compose() {
     curl -fsSL --retry 3 -o "$bin_path" "$url"
     chmod +x "$bin_path"
   fi
-
   DOCKER_COMPOSE=("$bin_path")
 }
 
@@ -131,218 +138,76 @@ is_known_adapter() {
   return 1
 }
 
-adapter_package() {
-  echo "datus-$1"
+reset_adapter_definition() {
+  unset -f \
+    export_adapter_env \
+    adapter_env_summary \
+    prepare_adapter_dependencies \
+    prepare_adapter_test_artifacts \
+    cleanup_adapter_test_artifacts \
+    wait_for_adapter_client_readiness 2>/dev/null || true
+
+  ADAPTER_NAME=""
+  ADAPTER_PACKAGE=""
+  ADAPTER_COMPOSE=""
+  ADAPTER_TEST_PATH=""
+  ADAPTER_SERVICES=()
+
+  prepare_adapter_dependencies() { :; }
+  prepare_adapter_test_artifacts() { :; }
+  cleanup_adapter_test_artifacts() { :; }
 }
 
-adapter_compose() {
-  echo "datus-$1/docker-compose.yml"
-}
+load_adapter() {
+  local requested="$1"
+  local definition="$ADAPTER_DEFINITION_DIR/$requested.sh"
 
-adapter_test_path() {
-  echo "datus-$1/tests/integration"
-}
+  if ! is_known_adapter "$requested"; then
+    echo "Unknown adapter '$requested'. Use --list to see valid adapter names." >&2
+    return 1
+  fi
+  if [ ! -f "$definition" ]; then
+    echo "Missing integration adapter definition: $definition" >&2
+    return 1
+  fi
 
-adapter_services() {
-  case "$1" in
-    postgresql) echo "postgres:300" ;;
-    mysql) echo "mysql:300" ;;
-    clickhouse) echo "clickhouse:300" ;;
-    starrocks) echo "starrocks:600" ;;
-    doris) echo "doris-fe:600 doris-be:600 hive-metastore:600" ;;
-    trino) echo "trino:300" ;;
-    greenplum) echo "greenplum:600" ;;
-    hive) echo "hive-metastore:600 hive-server:900" ;;
-    spark) echo "spark-thrift:900" ;;
-    oracle) echo "oracle:1200" ;;
-    gaussdb) echo "gaussdb:600" ;;
-    *) echo "Unknown adapter '$1'" >&2; return 1 ;;
-  esac
+  reset_adapter_definition
+  # shellcheck source=/dev/null
+  source "$definition"
+
+  if [ "$ADAPTER_NAME" != "$requested" ]; then
+    echo "Adapter definition $definition declared '$ADAPTER_NAME', expected '$requested'." >&2
+    return 1
+  fi
+  if [ -z "$ADAPTER_PACKAGE" ] || [ -z "$ADAPTER_COMPOSE" ] || [ -z "$ADAPTER_TEST_PATH" ]; then
+    echo "Adapter definition $definition is incomplete." >&2
+    return 1
+  fi
+  if [ "${#ADAPTER_SERVICES[@]}" -eq 0 ]; then
+    echo "Adapter definition $definition does not declare services." >&2
+    return 1
+  fi
+  for required_function in export_adapter_env adapter_env_summary wait_for_adapter_client_readiness; do
+    if ! declare -F "$required_function" >/dev/null; then
+      echo "Adapter definition $definition is missing $required_function()." >&2
+      return 1
+    fi
+  done
 }
 
 list_adapters() {
   local adapter
   for adapter in "${ALL_ADAPTERS[@]}"; do
-    printf '%s\t%s\t%s\t%s\n' \
-      "$adapter" \
-      "$(adapter_package "$adapter")" \
-      "$(adapter_compose "$adapter")" \
-      "$(adapter_test_path "$adapter")"
+    load_adapter "$adapter"
+    printf '%s\t%s\t%s\t%s\n' "$ADAPTER_NAME" "$ADAPTER_PACKAGE" "$ADAPTER_COMPOSE" "$ADAPTER_TEST_PATH"
   done
-}
-
-export_adapter_env() {
-  case "$1" in
-    postgresql)
-      export POSTGRESQL_HOST_PORT="${POSTGRESQL_HOST_PORT:-25432}"
-      export POSTGRESQL_HOST="127.0.0.1"
-      export POSTGRESQL_PORT="$POSTGRESQL_HOST_PORT"
-      export POSTGRESQL_USER="test_user"
-      export POSTGRESQL_PASSWORD="test_password"
-      export POSTGRESQL_DATABASE="test"
-      export POSTGRESQL_SCHEMA="public"
-      ;;
-    mysql)
-      export MYSQL_HOST_PORT="${MYSQL_HOST_PORT:-23306}"
-      export MYSQL_HOST="127.0.0.1"
-      export MYSQL_PORT="$MYSQL_HOST_PORT"
-      export MYSQL_USER="test_user"
-      export MYSQL_PASSWORD="test_password"
-      export MYSQL_DATABASE="test"
-      ;;
-    clickhouse)
-      export CLICKHOUSE_HTTP_HOST_PORT="${CLICKHOUSE_HTTP_HOST_PORT:-28123}"
-      export CLICKHOUSE_NATIVE_HOST_PORT="${CLICKHOUSE_NATIVE_HOST_PORT:-29000}"
-      export CLICKHOUSE_HOST="127.0.0.1"
-      export CLICKHOUSE_PORT="$CLICKHOUSE_HTTP_HOST_PORT"
-      export CLICKHOUSE_USER="default_user"
-      export CLICKHOUSE_PASSWORD="default_test"
-      export CLICKHOUSE_DATABASE="default_test"
-      ;;
-    starrocks)
-      export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
-      export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
-      export STARROCKS_HOST="127.0.0.1"
-      export STARROCKS_PORT="$STARROCKS_QUERY_HOST_PORT"
-      export STARROCKS_USER="root"
-      export STARROCKS_PASSWORD=""
-      export STARROCKS_CATALOG="default_catalog"
-      export STARROCKS_DATABASE="test"
-      ;;
-    doris)
-      export DORIS_QUERY_HOST_PORT="${DORIS_QUERY_HOST_PORT:-49030}"
-      export DORIS_HTTP_HOST_PORT="${DORIS_HTTP_HOST_PORT:-48030}"
-      export DORIS_HOST="127.0.0.1"
-      export DORIS_PORT="$DORIS_QUERY_HOST_PORT"
-      export DORIS_USER="root"
-      export DORIS_PASSWORD=""
-      export DORIS_CATALOG="internal"
-      export DORIS_DATABASE="test"
-      export HIVE_METASTORE_URI="thrift://hive-metastore:9083"
-      ;;
-    trino)
-      export TRINO_HOST_PORT="${TRINO_HOST_PORT:-28080}"
-      export TRINO_HOST="127.0.0.1"
-      export TRINO_PORT="$TRINO_HOST_PORT"
-      export TRINO_USER="trino"
-      export TRINO_PASSWORD=""
-      export TRINO_CATALOG="tpch"
-      export TRINO_SCHEMA="tiny"
-      export TRINO_HTTP_SCHEME="http"
-      ;;
-    greenplum)
-      export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-25433}"
-      export GREENPLUM_HOST="127.0.0.1"
-      export GREENPLUM_PORT="$GREENPLUM_HOST_PORT"
-      export GREENPLUM_USER="gpadmin"
-      export GREENPLUM_PASSWORD="pivotal"
-      export GREENPLUM_DATABASE="test"
-      export GREENPLUM_SCHEMA="public"
-      ;;
-    hive)
-      export HIVE_METASTORE_HOST_PORT="${HIVE_METASTORE_HOST_PORT:-29083}"
-      export HIVE_THRIFT_HOST_PORT="${HIVE_THRIFT_HOST_PORT:-20000}"
-      export HIVE_WEBUI_HOST_PORT="${HIVE_WEBUI_HOST_PORT:-20002}"
-      export HIVE_HOST="127.0.0.1"
-      export HIVE_PORT="$HIVE_THRIFT_HOST_PORT"
-      export HIVE_USERNAME="hive"
-      export HIVE_PASSWORD=""
-      export HIVE_DATABASE="default"
-      ;;
-    spark)
-      export SPARK_THRIFT_HOST_PORT="${SPARK_THRIFT_HOST_PORT:-21000}"
-      export SPARK_UI_HOST_PORT="${SPARK_UI_HOST_PORT:-24040}"
-      export SPARK_HOST="127.0.0.1"
-      export SPARK_PORT="$SPARK_THRIFT_HOST_PORT"
-      export SPARK_USER="spark"
-      export SPARK_PASSWORD=""
-      export SPARK_DATABASE="default"
-      export SPARK_AUTH_MECHANISM="NONE"
-      ;;
-    oracle)
-      export ORACLE_HOST_PORT="${ORACLE_HOST_PORT:-21521}"
-      export ORACLE_HOST="127.0.0.1"
-      export ORACLE_PORT="$ORACLE_HOST_PORT"
-      export ORACLE_USER="datus_test"
-      export ORACLE_PASSWORD="test_password"
-      export ORACLE_SID="${ORACLE_SID:-ORCLCDB}"
-      export ORACLE_PDB="${ORACLE_PDB:-ORCLPDB1}"
-      export ORACLE_SERVICE_NAME="${ORACLE_SERVICE_NAME:-$ORACLE_PDB}"
-      export ORACLE_SCHEMA="DATUS_TEST"
-      export ORACLE_SYS_PASSWORD="${ORACLE_SYS_PASSWORD:-test_sys_password}"
-      export ORACLE_READY_TIMEOUT="${ORACLE_READY_TIMEOUT:-1200}"
-      ;;
-    gaussdb)
-      export GAUSSDB_HOST_PORT="${GAUSSDB_HOST_PORT:-25434}"
-      export GAUSSDB_HOST="127.0.0.1"
-      export GAUSSDB_PORT="$GAUSSDB_HOST_PORT"
-      export GAUSSDB_USER="datus"
-      export GAUSSDB_PASSWORD="Datus@123"
-      export GAUSSDB_DATABASE="postgres"
-      ;;
-  esac
-}
-
-adapter_env_summary() {
-  case "$1" in
-    postgresql) echo "env: POSTGRESQL_HOST=$POSTGRESQL_HOST POSTGRESQL_PORT=$POSTGRESQL_PORT POSTGRESQL_DATABASE=$POSTGRESQL_DATABASE POSTGRESQL_SCHEMA=$POSTGRESQL_SCHEMA" ;;
-    mysql) echo "env: MYSQL_HOST=$MYSQL_HOST MYSQL_PORT=$MYSQL_PORT MYSQL_DATABASE=$MYSQL_DATABASE" ;;
-    clickhouse) echo "env: CLICKHOUSE_HOST=$CLICKHOUSE_HOST CLICKHOUSE_PORT=$CLICKHOUSE_PORT CLICKHOUSE_DATABASE=$CLICKHOUSE_DATABASE" ;;
-    starrocks) echo "env: STARROCKS_HOST=$STARROCKS_HOST STARROCKS_PORT=$STARROCKS_PORT STARROCKS_CATALOG=$STARROCKS_CATALOG STARROCKS_DATABASE=$STARROCKS_DATABASE" ;;
-    doris) echo "env: DORIS_HOST=$DORIS_HOST DORIS_PORT=$DORIS_PORT DORIS_CATALOG=$DORIS_CATALOG DORIS_DATABASE=$DORIS_DATABASE" ;;
-    trino) echo "env: TRINO_HOST=$TRINO_HOST TRINO_PORT=$TRINO_PORT TRINO_CATALOG=$TRINO_CATALOG TRINO_SCHEMA=$TRINO_SCHEMA" ;;
-    greenplum) echo "env: GREENPLUM_HOST=$GREENPLUM_HOST GREENPLUM_PORT=$GREENPLUM_PORT GREENPLUM_DATABASE=$GREENPLUM_DATABASE GREENPLUM_SCHEMA=$GREENPLUM_SCHEMA" ;;
-    hive) echo "env: HIVE_HOST=$HIVE_HOST HIVE_PORT=$HIVE_PORT HIVE_DATABASE=$HIVE_DATABASE" ;;
-    spark) echo "env: SPARK_HOST=$SPARK_HOST SPARK_PORT=$SPARK_PORT SPARK_DATABASE=$SPARK_DATABASE SPARK_AUTH_MECHANISM=$SPARK_AUTH_MECHANISM" ;;
-    oracle) echo "env: ORACLE_HOST=$ORACLE_HOST ORACLE_PORT=$ORACLE_PORT ORACLE_SERVICE_NAME=$ORACLE_SERVICE_NAME ORACLE_SCHEMA=$ORACLE_SCHEMA" ;;
-    gaussdb) echo "env: GAUSSDB_HOST=$GAUSSDB_HOST GAUSSDB_PORT=$GAUSSDB_PORT GAUSSDB_DATABASE=$GAUSSDB_DATABASE GAUSSDB_SSLMODE=${GAUSSDB_SSLMODE:-unset}" ;;
-  esac
-}
-
-prepare_adapter_dependencies() {
-  local adapter="$1"
-  local machine
-  local operating_system
-  local vendor_arch
-  local library
-
-  case "$adapter" in
-    gaussdb)
-      operating_system="$(uname -s)"
-      if [ "$operating_system" != "Linux" ]; then
-        echo "GaussDB vendored client libraries are Linux-only; using the pure-Python pg8000 driver on $operating_system"
-        return 0
-      fi
-
-      machine="$(uname -m)"
-      case "$machine" in
-        x86_64|amd64) vendor_arch="x86_64" ;;
-        aarch64|arm64) vendor_arch="aarch64" ;;
-        *)
-          echo "Unsupported architecture for GaussDB integration tests: $machine" >&2
-          return 1
-          ;;
-      esac
-
-      echo "Preparing GaussDB client libraries for $vendor_arch"
-      require_command python3
-      python3 datus-gaussdb/scripts/fetch_vendor_libpq.py --arch "$vendor_arch"
-      for library in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1; do
-        if [ ! -f "datus-gaussdb/datus_gaussdb/_vendor/${vendor_arch}/${library}" ]; then
-          echo "GaussDB client library was not vendored: $library" >&2
-          return 1
-        fi
-      done
-      ;;
-  esac
 }
 
 compose_down() {
   local adapter="$1"
-  local compose_file
-  compose_file="$(adapter_compose "$adapter")"
-  if [ -f "$compose_file" ]; then
-    docker_compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
+  load_adapter "$adapter"
+  if [ -f "$ADAPTER_COMPOSE" ]; then
+    docker_compose -f "$ADAPTER_COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
   fi
 }
 
@@ -360,30 +225,20 @@ cleanup_started() {
   done
 }
 
-cleanup_gaussdb_tls_artifacts() {
-  if [ -n "$GAUSSDB_TLS_HOST_DIR" ] && [ -d "$GAUSSDB_TLS_HOST_DIR" ]; then
-    rm -f -- "$GAUSSDB_TLS_HOST_DIR/ca.crt" "$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
-    rmdir "$GAUSSDB_TLS_HOST_DIR" 2>/dev/null || true
-  fi
-  GAUSSDB_TLS_HOST_DIR=""
-  unset GAUSSDB_SSLMODE GAUSSDB_SSLROOTCERT GAUSSDB_WRONG_SSLROOTCERT
-}
-
 dump_adapter_diagnostics() {
   local adapter="$1"
-  local compose_file
   local spec
   local service_name
   local container_id
 
-  compose_file="$(adapter_compose "$adapter")"
+  load_adapter "$adapter"
   echo ""
   echo "=== Failure diagnostics: $adapter ===" >&2
-  docker_compose -f "$compose_file" ps -a >&2 || true
+  docker_compose -f "$ADAPTER_COMPOSE" ps -a >&2 || true
 
-  for spec in $(adapter_services "$adapter"); do
+  for spec in "${ADAPTER_SERVICES[@]}"; do
     service_name="${spec%%:*}"
-    container_id="$(docker_compose -f "$compose_file" ps -a -q "$service_name" 2>/dev/null || true)"
+    container_id="$(docker_compose -f "$ADAPTER_COMPOSE" ps -a -q "$service_name" 2>/dev/null || true)"
     if [ -z "$container_id" ]; then
       echo "No container found for service '$service_name'." >&2
       continue
@@ -395,7 +250,7 @@ dump_adapter_diagnostics() {
       "$container_id" >&2 || true
 
     echo "--- Logs: $service_name ---" >&2
-    docker_compose -f "$compose_file" logs --no-color --tail=300 "$service_name" >&2 || true
+    docker_compose -f "$ADAPTER_COMPOSE" logs --no-color --tail=300 "$service_name" >&2 || true
   done
 
   echo "--- Runner memory ---" >&2
@@ -417,12 +272,82 @@ cleanup_on_exit() {
   local exit_status=$?
   trap - EXIT
 
-  if [ "$exit_status" -ne 0 ] && [ -n "$CURRENT_ADAPTER" ]; then
-    dump_adapter_diagnostics "$CURRENT_ADAPTER"
+  if [ -n "$CURRENT_ADAPTER" ]; then
+    if [ "$exit_status" -ne 0 ]; then
+      dump_adapter_diagnostics "$CURRENT_ADAPTER"
+    else
+      load_adapter "$CURRENT_ADAPTER"
+    fi
+    cleanup_adapter_test_artifacts
   fi
   cleanup_started
-  cleanup_gaussdb_tls_artifacts
   exit "$exit_status"
+}
+
+wait_for_service_health() {
+  local compose_file="$1"
+  local service_name="$2"
+  local timeout_seconds="$3"
+  local container_id=""
+  local status=""
+  local deadline=$((SECONDS + timeout_seconds))
+
+  container_id="$(docker_compose -f "$compose_file" ps -q "$service_name")"
+  if [ -z "$container_id" ]; then
+    echo "No container found for service '$service_name' in $compose_file" >&2
+    docker_compose -f "$compose_file" ps || true
+    return 1
+  fi
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || echo unknown)"
+    if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+      echo "Service '$service_name' is $status"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for service '$service_name' from $compose_file" >&2
+  docker_compose -f "$compose_file" ps || true
+  docker_compose -f "$compose_file" logs --tail=200 || true
+  return 1
+}
+
+wait_for_python_connector_readiness() {
+  local adapter="$1"
+  local package="$2"
+  local timeout_env_name
+  local timeout_seconds
+  local deadline
+  local probe_output
+  local probe="$ROOT_DIR/ci/integration/readiness/$adapter.py"
+
+  if [ ! -f "$probe" ]; then
+    echo "Missing readiness probe for $adapter: $probe" >&2
+    return 1
+  fi
+
+  timeout_env_name="$(echo "${adapter}_READY_TIMEOUT" | tr '[:lower:]' '[:upper:]')"
+  timeout_seconds="${!timeout_env_name:-300}"
+  deadline=$((SECONDS + timeout_seconds))
+  probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-${adapter}-readiness-$$.log"
+
+  echo "Waiting for ${adapter} client readiness"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if uv run --package "$package" --with pandas --with pyarrow python "$probe" >"$probe_output" 2>&1; then
+      echo "${adapter} client readiness probe succeeded"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for ${adapter} client readiness" >&2
+  if [ -s "$probe_output" ]; then
+    echo "Last ${adapter} readiness probe output:" >&2
+    sed 's/^/  /' "$probe_output" >&2
+  fi
+  return 1
 }
 
 cleanup_only=0
@@ -478,326 +403,27 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$cleanup_only" -eq 1 ]; then
-  cleanup_all
+  if [ "${#requested_adapters[@]}" -eq 0 ]; then
+    cleanup_all
+  else
+    for adapter in "${requested_adapters[@]}"; do
+      compose_down "$adapter"
+    done
+  fi
   exit 0
 fi
-
-wait_for_service_health() {
-  local compose_file="$1"
-  local service_name="$2"
-  local timeout_seconds="$3"
-  local container_id=""
-  local status=""
-  local deadline=$((SECONDS + timeout_seconds))
-
-  container_id="$(docker_compose -f "$compose_file" ps -q "$service_name")"
-  if [ -z "$container_id" ]; then
-    echo "No container found for service '$service_name' in $compose_file" >&2
-    docker_compose -f "$compose_file" ps || true
-    return 1
-  fi
-
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || echo unknown)"
-    if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
-      echo "Service '$service_name' is $status"
-      return 0
-    fi
-    sleep 5
-  done
-
-  echo "Timed out waiting for service '$service_name' from $compose_file" >&2
-  docker_compose -f "$compose_file" ps || true
-  docker_compose -f "$compose_file" logs --tail=200 || true
-  return 1
-}
-
-wait_for_adapter_client_readiness() {
-  local adapter="$1"
-
-  case "$adapter" in
-    postgresql)
-      wait_for_python_connector_readiness "postgresql" "datus-postgresql"
-      ;;
-    mysql)
-      wait_for_python_connector_readiness "mysql" "datus-mysql"
-      ;;
-    clickhouse)
-      wait_for_python_connector_readiness "clickhouse" "datus-clickhouse"
-      ;;
-    starrocks)
-      uv run --package datus-starrocks python datus-starrocks/scripts/wait_for_starrocks.py --timeout "${STARROCKS_READY_TIMEOUT:-300}"
-      ;;
-    doris)
-      uv run --package datus-doris python datus-doris/scripts/wait_for_doris.py --timeout "${DORIS_READY_TIMEOUT:-600}"
-      ;;
-    trino)
-      wait_for_python_connector_readiness "trino" "datus-trino"
-      ;;
-    greenplum)
-      wait_for_python_connector_readiness "greenplum" "datus-greenplum"
-      ;;
-    hive)
-      wait_for_python_connector_readiness "hive" "datus-hive"
-      ;;
-    spark)
-      wait_for_python_connector_readiness "spark" "datus-spark"
-      ;;
-    oracle)
-      wait_for_python_connector_readiness "oracle" "datus-oracle"
-      ;;
-    gaussdb)
-      wait_for_python_connector_readiness "gaussdb" "datus-gaussdb"
-      ;;
-  esac
-}
-
-prepare_adapter_test_artifacts() {
-  local adapter="$1"
-  local compose_file="$2"
-
-  case "$adapter" in
-    gaussdb)
-      cleanup_gaussdb_tls_artifacts
-      GAUSSDB_TLS_HOST_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-gaussdb-tls.XXXXXX")"
-      docker_compose -f "$compose_file" cp gaussdb:/gaussdb-tls/ca.crt "$GAUSSDB_TLS_HOST_DIR/ca.crt"
-      docker_compose -f "$compose_file" cp gaussdb:/gaussdb-tls/wrong-ca.crt "$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
-      # The native GaussDB/libpq client rejects CA files readable by group or other users.
-      chmod 0600 "$GAUSSDB_TLS_HOST_DIR/ca.crt" "$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
-      export GAUSSDB_SSLMODE="verify-ca"
-      export GAUSSDB_SSLROOTCERT="$GAUSSDB_TLS_HOST_DIR/ca.crt"
-      export GAUSSDB_WRONG_SSLROOTCERT="$GAUSSDB_TLS_HOST_DIR/wrong-ca.crt"
-      ;;
-  esac
-}
-
-wait_for_python_connector_readiness() {
-  local adapter="$1"
-  local package="$2"
-  local timeout_env_name
-  local timeout_seconds
-  local deadline
-  local probe_output
-
-  timeout_env_name="$(echo "${adapter}_READY_TIMEOUT" | tr '[:lower:]' '[:upper:]')"
-  timeout_seconds="${!timeout_env_name:-300}"
-  deadline=$((SECONDS + timeout_seconds))
-  probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-${adapter}-readiness-$$.log"
-
-  echo "Waiting for ${adapter} client readiness"
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if uv run --package "$package" --with pandas --with pyarrow python - "$adapter" <<'PY' >"$probe_output" 2>&1; then
-import os
-import sys
-
-adapter = sys.argv[1]
-
-if adapter == "postgresql":
-    from datus_postgresql import PostgreSQLConfig, PostgreSQLConnector
-
-    config = PostgreSQLConfig(
-        host=os.getenv("POSTGRESQL_HOST", "127.0.0.1"),
-        port=int(os.getenv("POSTGRESQL_PORT", "5432")),
-        username=os.getenv("POSTGRESQL_USER", "test_user"),
-        password=os.getenv("POSTGRESQL_PASSWORD", "test_password"),
-        database=os.getenv("POSTGRESQL_DATABASE", "test"),
-        schema_name=os.getenv("POSTGRESQL_SCHEMA", "public"),
-        timeout_seconds=5,
-    )
-    connector = PostgreSQLConnector(config)
-elif adapter == "mysql":
-    from datus_mysql import MySQLConfig, MySQLConnector
-
-    config = MySQLConfig(
-        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        username=os.getenv("MYSQL_USER", "test_user"),
-        password=os.getenv("MYSQL_PASSWORD", "test_password"),
-        database=os.getenv("MYSQL_DATABASE", "test"),
-        timeout_seconds=5,
-    )
-    connector = MySQLConnector(config)
-elif adapter == "clickhouse":
-    from datus_clickhouse import ClickHouseConfig, ClickHouseConnector
-
-    config = ClickHouseConfig(
-        host=os.getenv("CLICKHOUSE_HOST", "127.0.0.1"),
-        port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        username=os.getenv("CLICKHOUSE_USER", "default_user"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", "default_test"),
-        database=os.getenv("CLICKHOUSE_DATABASE", "default_test"),
-        timeout_seconds=5,
-    )
-    connector = ClickHouseConnector(config)
-elif adapter == "trino":
-    from datus_trino import TrinoConfig, TrinoConnector
-
-    config = TrinoConfig(
-        host=os.getenv("TRINO_HOST", "127.0.0.1"),
-        port=int(os.getenv("TRINO_PORT", "8080")),
-        username=os.getenv("TRINO_USER", "trino"),
-        password=os.getenv("TRINO_PASSWORD", ""),
-        catalog=os.getenv("TRINO_CATALOG", "tpch"),
-        schema_name=os.getenv("TRINO_SCHEMA", "tiny"),
-        http_scheme=os.getenv("TRINO_HTTP_SCHEME", "http"),
-        timeout_seconds=5,
-    )
-    connector = TrinoConnector(config)
-elif adapter == "greenplum":
-    from datus_greenplum import GreenplumConfig, GreenplumConnector
-
-    config = GreenplumConfig(
-        host=os.getenv("GREENPLUM_HOST", "127.0.0.1"),
-        port=int(os.getenv("GREENPLUM_PORT", "5432")),
-        username=os.getenv("GREENPLUM_USER", "gpadmin"),
-        password=os.getenv("GREENPLUM_PASSWORD", "pivotal"),
-        database=os.getenv("GREENPLUM_DATABASE", "test"),
-        schema_name=os.getenv("GREENPLUM_SCHEMA", "public"),
-        timeout_seconds=5,
-    )
-    connector = GreenplumConnector(config)
-elif adapter == "hive":
-    from datus_hive import HiveConfig, HiveConnector
-
-    config = HiveConfig(
-        host=os.getenv("HIVE_HOST", "127.0.0.1"),
-        port=int(os.getenv("HIVE_PORT", "10000")),
-        username=os.getenv("HIVE_USERNAME", "hive"),
-        password=os.getenv("HIVE_PASSWORD", ""),
-        database=os.getenv("HIVE_DATABASE", "default"),
-        auth=os.getenv("HIVE_AUTH") or None,
-        timeout_seconds=5,
-    )
-    connector = HiveConnector(config)
-elif adapter == "spark":
-    from datus_spark import SparkConfig, SparkConnector
-
-    config = SparkConfig(
-        host=os.getenv("SPARK_HOST", "127.0.0.1"),
-        port=int(os.getenv("SPARK_PORT", "10000")),
-        username=os.getenv("SPARK_USER", "spark"),
-        password=os.getenv("SPARK_PASSWORD", ""),
-        database=os.getenv("SPARK_DATABASE", "default"),
-        auth_mechanism=os.getenv("SPARK_AUTH_MECHANISM", "NONE"),
-        timeout_seconds=5,
-    )
-    connector = SparkConnector(config)
-elif adapter == "oracle":
-    from datus_oracle import OracleConfig, OracleConnector
-
-    config = OracleConfig(
-        host=os.getenv("ORACLE_HOST", "127.0.0.1"),
-        port=int(os.getenv("ORACLE_PORT", "1521")),
-        username=os.getenv("ORACLE_USER", "datus_test"),
-        password=os.getenv("ORACLE_PASSWORD", "test_password"),
-        service_name=os.getenv("ORACLE_SERVICE_NAME", "ORCLPDB1"),
-        schema_name=os.getenv("ORACLE_SCHEMA", "DATUS_TEST"),
-        timeout_seconds=5,
-    )
-    connector = OracleConnector(config)
-elif adapter == "gaussdb":
-    from datus_gaussdb import GaussDBConfig, GaussDBConnector
-
-    config = GaussDBConfig(
-        host=os.getenv("GAUSSDB_HOST", "127.0.0.1"),
-        port=int(os.getenv("GAUSSDB_PORT", "5432")),
-        username=os.getenv("GAUSSDB_USER", "datus"),
-        password=os.getenv("GAUSSDB_PASSWORD", "Datus@123"),
-        database=os.getenv("GAUSSDB_DATABASE", "postgres"),
-        schema_name=os.getenv("GAUSSDB_SCHEMA", "public"),
-        driver=os.getenv("GAUSSDB_DRIVER") or ("pg8000" if sys.platform == "darwin" else "gaussdb"),
-        sslmode=os.getenv("GAUSSDB_SSLMODE", "prefer"),
-        sslrootcert=os.getenv("GAUSSDB_SSLROOTCERT") or None,
-        timeout_seconds=5,
-    )
-    connector = GaussDBConnector(config)
-else:
-    raise RuntimeError(f"unsupported adapter readiness probe: {adapter}")
-
-try:
-    if not connector.test_connection():
-        raise RuntimeError(f"{adapter} connector readiness test returned false")
-finally:
-    connector.close()
-PY
-      echo "${adapter} client readiness probe succeeded"
-      return 0
-    fi
-    sleep 5
-  done
-
-  echo "Timed out waiting for ${adapter} client readiness" >&2
-  if [ -s "$probe_output" ]; then
-    echo "Last ${adapter} readiness probe output:" >&2
-    sed 's/^/  /' "$probe_output" >&2
-  fi
-  return 1
-}
-
-adapters_from_changed_files() {
-  local base_ref="$1"
-  local base_changed_files=""
-  local staged_files=""
-  local unstaged_files=""
-  local untracked_files=""
-  local changed_files=""
-
-  if ! base_changed_files="$(git diff --name-only "${base_ref}...HEAD")"; then
-    echo "Unable to determine changed adapters from base ref '$base_ref'." >&2
-    return 1
-  fi
-  if ! staged_files="$(git diff --name-only --cached)"; then
-    echo "Unable to determine staged adapter changes." >&2
-    return 1
-  fi
-  if ! unstaged_files="$(git diff --name-only)"; then
-    echo "Unable to determine unstaged adapter changes." >&2
-    return 1
-  fi
-  if ! untracked_files="$(git ls-files --others --exclude-standard)"; then
-    echo "Unable to determine untracked adapter changes." >&2
-    return 1
-  fi
-
-  changed_files="$(
-    printf '%s\n' \
-      "$base_changed_files" \
-      "$staged_files" \
-      "$unstaged_files" \
-      "$untracked_files" |
-      awk 'NF && !seen[$0]++'
-  )"
-
-  if [ -z "$changed_files" ]; then
-    return 0
-  fi
-
-  if echo "$changed_files" | grep -Eq '^(pyproject\.toml|ci/|\.github/workflows/|datus-db-core/|datus-sqlalchemy/)'; then
-    printf '%s\n' "${ALL_ADAPTERS[@]}"
-    return 0
-  fi
-
-  local adapter
-  for adapter in "${ALL_ADAPTERS[@]}"; do
-    if echo "$changed_files" | grep -Eq "^datus-${adapter}/"; then
-      echo "$adapter"
-    fi
-  done
-}
 
 selected_adapters=()
 if [ "$changed_mode" -eq 1 ]; then
   changed_adapters=""
-  if ! changed_adapters="$(adapters_from_changed_files "$changed_base")"; then
+  if ! changed_adapters="$(python3 ci/select_affected.py --base "$changed_base" --suite integration --kind compose)"; then
     exit 1
   fi
   while IFS= read -r adapter; do
     [ -n "$adapter" ] && selected_adapters+=("$adapter")
   done < <(printf '%s\n' "$changed_adapters" | awk '!seen[$0]++')
-else
-  if [ "${#requested_adapters[@]}" -gt 0 ]; then
-    selected_adapters=("${requested_adapters[@]}")
-  fi
+elif [ "${#requested_adapters[@]}" -gt 0 ]; then
+  selected_adapters=("${requested_adapters[@]}")
 fi
 
 if [ "${#selected_adapters[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
@@ -818,14 +444,15 @@ done
 
 if [ "$dry_run" -eq 1 ]; then
   for adapter in "${selected_adapters[@]}"; do
-    export_adapter_env "$adapter"
+    load_adapter "$adapter"
+    export_adapter_env
     echo ""
-    echo "=== Integration tests: $adapter ==="
-    echo "package: $(adapter_package "$adapter")"
-    echo "compose: $(adapter_compose "$adapter")"
-    echo "tests: $(adapter_test_path "$adapter")"
-    echo "services: $(adapter_services "$adapter")"
-    adapter_env_summary "$adapter"
+    echo "=== Integration tests: $ADAPTER_NAME ==="
+    echo "package: $ADAPTER_PACKAGE"
+    echo "compose: $ADAPTER_COMPOSE"
+    echo "tests: $ADAPTER_TEST_PATH"
+    echo "services: ${ADAPTER_SERVICES[*]}"
+    adapter_env_summary
   done
   exit 0
 fi
@@ -834,17 +461,15 @@ preflight
 trap cleanup_on_exit EXIT
 
 for adapter in "${selected_adapters[@]}"; do
+  load_adapter "$adapter"
   CURRENT_ADAPTER="$adapter"
-  compose_file="$(adapter_compose "$adapter")"
-  test_path="$(adapter_test_path "$adapter")"
-  package="$(adapter_package "$adapter")"
 
-  if [ ! -f "$compose_file" ]; then
-    echo "Missing compose file for $adapter: $compose_file" >&2
+  if [ ! -f "$ADAPTER_COMPOSE" ]; then
+    echo "Missing compose file for $adapter: $ADAPTER_COMPOSE" >&2
     exit 1
   fi
-  if [ ! -d "$test_path" ]; then
-    echo "Missing integration test path for $adapter: $test_path" >&2
+  if [ ! -d "$ADAPTER_TEST_PATH" ]; then
+    echo "Missing integration test path for $adapter: $ADAPTER_TEST_PATH" >&2
     exit 1
   fi
 
@@ -852,23 +477,22 @@ for adapter in "${selected_adapters[@]}"; do
   echo "=== Integration tests: $adapter ==="
   compose_down "$adapter"
   STARTED_ADAPTERS+=("$adapter")
-  export_adapter_env "$adapter"
-  prepare_adapter_dependencies "$adapter"
-  docker_compose -f "$compose_file" up -d --build
+  export_adapter_env
+  prepare_adapter_dependencies
+  docker_compose -f "$ADAPTER_COMPOSE" up -d --build
 
-  for spec in $(adapter_services "$adapter"); do
+  for spec in "${ADAPTER_SERVICES[@]}"; do
     service_name="${spec%%:*}"
     timeout_seconds="${spec##*:}"
-    wait_for_service_health "$compose_file" "$service_name" "$timeout_seconds"
+    wait_for_service_health "$ADAPTER_COMPOSE" "$service_name" "$timeout_seconds"
   done
-  prepare_adapter_test_artifacts "$adapter" "$compose_file"
-  wait_for_adapter_client_readiness "$adapter"
+  prepare_adapter_test_artifacts
+  wait_for_adapter_client_readiness
 
-  uv run --package "$package" --with pytest --with pandas --with pyarrow pytest "$test_path" -m integration --tb=short --verbose
+  uv run --package "$ADAPTER_PACKAGE" --with pytest --with pandas --with pyarrow \
+    pytest "$ADAPTER_TEST_PATH" -m integration --tb=short --verbose
 
   compose_down "$adapter"
-  if [ "$adapter" = "gaussdb" ]; then
-    cleanup_gaussdb_tls_artifacts
-  fi
+  cleanup_adapter_test_artifacts
   CURRENT_ADAPTER=""
 done

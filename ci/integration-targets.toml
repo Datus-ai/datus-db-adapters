@@ -1,0 +1,60 @@
+[targets.postgresql]
+package = "datus-postgresql"
+kind = "compose"
+
+[targets.mysql]
+package = "datus-mysql"
+kind = "compose"
+
+[targets.clickhouse]
+package = "datus-clickhouse"
+kind = "compose"
+
+[targets.starrocks]
+package = "datus-starrocks"
+kind = "compose"
+
+[targets.doris]
+package = "datus-doris"
+kind = "compose"
+
+[targets.trino]
+package = "datus-trino"
+kind = "compose"
+
+[targets.greenplum]
+package = "datus-greenplum"
+kind = "compose"
+
+[targets.hive]
+package = "datus-hive"
+kind = "compose"
+
+[targets.spark]
+package = "datus-spark"
+kind = "compose"
+
+[targets.oracle]
+package = "datus-oracle"
+kind = "compose"
+
+[targets.gaussdb]
+package = "datus-gaussdb"
+kind = "compose"
+
+[targets.hologres]
+package = "datus-hologres"
+kind = "cloud"
+
+[targets.maxcompute]
+package = "datus-maxcompute"
+kind = "cloud"
+
+[selection]
+packages_without_live_targets = [
+    "datus-clickzetta",
+    "datus-db-core",
+    "datus-redshift",
+    "datus-snowflake",
+    "datus-sqlalchemy",
+]

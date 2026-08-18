@@ -1,9 +1,8 @@
 name: Hologres Cloud Tests
 
 on:
+  workflow_call:
   workflow_dispatch:
-  schedule:
-    - cron: "41 18 * * 1"
 
 permissions:
   contents: read

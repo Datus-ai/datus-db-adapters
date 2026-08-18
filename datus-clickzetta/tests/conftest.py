@@ -6,6 +6,7 @@
 
 import os
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -182,13 +183,19 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """Automatically mark tests based on their location and names."""
+    tests_root = Path(__file__).resolve().parent
     for item in items:
+        try:
+            location_parts = Path(str(item.fspath)).resolve().relative_to(tests_root).parts
+        except ValueError:
+            location_parts = ()
+
         # Mark tests in unit/ directory as unit tests
-        if "unit" in str(item.fspath):
+        if "unit" in location_parts:
             item.add_marker(pytest.mark.unit)
 
         # Mark tests in integration/ directory as integration tests
-        if "integration" in str(item.fspath):
+        if "integration" in location_parts:
             item.add_marker(pytest.mark.integration)
 
         # Mark tests that require actual ClickZetta connection
