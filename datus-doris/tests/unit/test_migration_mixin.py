@@ -17,15 +17,26 @@ def test_describe_migration_capabilities(connector):
 
     assert result["supported"] is True
     assert result["dialect_family"] == "mysql-like"
-    # Doris derives both the key model and the distribution clause when they are
-    # omitted, so neither is a hard requirement.
-    assert result["requires"] == []
-    assert "One of DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY" in result["recommends"]
+    assert result["requires"] == [
+        "One of DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY",
+        "DISTRIBUTED BY HASH(cols) BUCKETS N (or BUCKETS AUTO)",
+    ]
+    # Documented so a reader knows what the engine would have derived instead.
     assert "key model" in result["defaults_when_omitted"]
     assert "distribution" in result["defaults_when_omitted"]
     assert result["type_hints"]["unbounded VARCHAR"].startswith("VARCHAR(65533)")
     assert "DUPLICATE KEY" in result["example_ddl"]
     assert "DISTRIBUTED BY HASH" in result["example_ddl"]
+
+
+def test_requires_matches_what_validate_ddl_enforces(connector):
+    """``requires`` is the contract ``validate_ddl`` implements; keep them in sync."""
+    requires = connector.describe_migration_capabilities()["requires"]
+    errors = connector.validate_ddl("CREATE TABLE db.t (id BIGINT NOT NULL)")
+
+    assert len(errors) == len(requires)
+    assert any("DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY" in error for error in errors)
+    assert any("DISTRIBUTED BY" in error for error in errors)
 
 
 def test_describe_migration_capabilities_forbids_unsupported_clauses(connector):
@@ -38,17 +49,36 @@ def test_describe_migration_capabilities_forbids_unsupported_clauses(connector):
 
 
 @pytest.mark.parametrize(
-    "ddl",
+    ("ddl", "expected_error"),
     [
-        # Doris derives DUPLICATE KEY over a short-key prefix.
-        "CREATE TABLE db.t (id BIGINT NOT NULL) DISTRIBUTED BY HASH(id) BUCKETS 10",
-        # Doris defaults to random distribution with 10 buckets.
-        "CREATE TABLE db.t (id BIGINT NOT NULL) DUPLICATE KEY(id)",
-        # Both derived at once.
-        "CREATE TABLE db.t (id BIGINT NOT NULL)",
+        # Doris would derive DUPLICATE KEY over a short-key prefix; a migration
+        # must not inherit a key model nobody chose.
+        (
+            "CREATE TABLE db.t (id BIGINT NOT NULL) DISTRIBUTED BY HASH(id) BUCKETS 10",
+            "must define one of",
+        ),
+        # Doris would default to random distribution with 10 buckets.
+        (
+            "CREATE TABLE db.t (id BIGINT NOT NULL) DUPLICATE KEY(id)",
+            "must include a DISTRIBUTED BY clause",
+        ),
     ],
 )
-def test_validate_ddl_accepts_omitted_key_and_distribution(connector, ddl):
+def test_validate_ddl_requires_explicit_layout(connector, ddl, expected_error):
+    assert any(expected_error in error for error in connector.validate_ddl(ddl))
+
+
+def test_validate_ddl_explains_what_doris_would_have_derived(connector):
+    """The message must not read as a parse error — Doris accepts this DDL."""
+    errors = connector.validate_ddl("CREATE TABLE db.t (id BIGINT NOT NULL)")
+
+    assert any("Doris would otherwise derive a key model" in error for error in errors)
+    assert any("random distribution with 10 buckets" in error for error in errors)
+
+
+@pytest.mark.parametrize("bucket_clause", ["BUCKETS 10", "BUCKETS AUTO", ""])
+def test_validate_ddl_accepts_any_explicit_bucket_form(connector, bucket_clause):
+    ddl = f"CREATE TABLE db.t (id BIGINT NOT NULL) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) {bucket_clause}"
     assert connector.validate_ddl(ddl) == []
 
 
@@ -78,7 +108,8 @@ def test_validate_ddl_accepts_omitted_key_and_distribution(connector, ddl):
             "DISTRIBUTED BY RANDOM",
         ),
         (
-            "CREATE TABLE db.t (\n  started_at TIME,\n  id BIGINT NOT NULL\n) DUPLICATE KEY(id)",
+            "CREATE TABLE db.t (started_at TIME, id BIGINT NOT NULL) "
+            "DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10",
             "TIME columns",
         ),
     ],
@@ -209,8 +240,8 @@ def test_validate_ddl_ignores_keywords_inside_quoted_regions(connector, ddl):
     assert connector.validate_ddl(ddl) == []
 
 
-def test_validate_ddl_does_not_read_clauses_out_of_string_literals(connector):
-    """A PRIMARY KEY mention inside a literal must not count as a key clause."""
+def test_validate_ddl_does_not_read_required_clauses_out_of_string_literals(connector):
+    """Clauses that only appear inside a literal must not satisfy the requirements."""
     ddl = """
     CREATE TABLE db.t (
         id BIGINT NOT NULL,
@@ -219,7 +250,10 @@ def test_validate_ddl_does_not_read_clauses_out_of_string_literals(connector):
     PRIMARY KEY(id)
     """
 
-    assert any("PRIMARY KEY is not a Doris table model" in error for error in connector.validate_ddl(ddl))
+    errors = connector.validate_ddl(ddl)
+
+    assert any("PRIMARY KEY is not a Doris table model" in error for error in errors)
+    assert any("must include a DISTRIBUTED BY clause" in error for error in errors)
 
 
 @pytest.mark.parametrize(

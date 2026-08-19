@@ -28,10 +28,10 @@ Generate Apache Doris-compatible SQL from metadata-provided object and column na
 
 - Choose exactly one Doris key model: `DUPLICATE KEY` to retain detail rows, `UNIQUE KEY` for latest-row/upsert semantics, or `AGGREGATE KEY` to pre-aggregate value columns. These three are the only key models `CREATE TABLE` accepts.
 - Do not generate `PRIMARY KEY` as a table model. Express row-identity requirements with `UNIQUE KEY` instead.
-- The key clause is optional, so omitting it does not fail — Doris derives `AGGREGATE KEY` when any column declares an aggregate function, and otherwise `DUPLICATE KEY` over a short-key prefix of at most 3 columns or 36 bytes. Declare the model explicitly whenever the intended semantics matter.
+- Always write the key clause out. Omitting it does not fail — Doris derives `AGGREGATE KEY` when any column declares an aggregate function, and otherwise `DUPLICATE KEY` over a short-key prefix of at most 3 columns or 36 bytes — but a derived key model is one nobody reviewed, and it cannot be changed without recreating the table.
 - Place key columns first, in declaration order. Key columns cannot be `FLOAT`, `DOUBLE`, `STRING`, `JSON`, `VARIANT`, or a complex type; use `DECIMAL` in place of floating point and `VARCHAR` in place of string-like types.
 - In an `AGGREGATE KEY` table every non-key column requires an aggregation annotation such as `SUM`, `MAX`, `MIN`, `REPLACE`, `REPLACE_IF_NOT_NULL`, `BITMAP_UNION`, or `HLL_UNION`.
-- `DISTRIBUTED BY` is also optional and defaults to random distribution with 10 buckets. Specify `DISTRIBUTED BY HASH(...)` with an explicit bucket count or `BUCKETS AUTO` whenever the distribution matters.
+- Always write `DISTRIBUTED BY` out as well. It is optional and defaults to random distribution with 10 buckets, which rarely suits the data; specify `DISTRIBUTED BY HASH(...)` with an explicit bucket count or `BUCKETS AUTO`.
 - Do not combine `DISTRIBUTED BY RANDOM` with `UNIQUE KEY`; it is also rejected for an `AGGREGATE KEY` table containing `REPLACE` or `REPLACE_IF_NOT_NULL` columns.
 - `AUTO_INCREMENT` is supported on Duplicate Key and Unique Key tables only. The column must be `BIGINT NOT NULL` without a default value, and a table may declare at most one.
 - Doris rejects `TIME` columns on OLAP tables. Model a time-of-day value as `VARCHAR` or fold it into a `DATETIME`.

@@ -746,22 +746,28 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
     def describe_migration_capabilities(self) -> Dict[str, Any]:
         """Describe Doris-specific DDL and type-mapping requirements.
 
-        ``requires`` lists only what Doris genuinely rejects when omitted. The
-        key model and the distribution clause are *not* in it: Doris derives
-        both when they are absent (see ``defaults_when_omitted``). They stay in
-        ``recommends`` because a migration that lets Doris guess silently
-        inherits a key model and bucket layout nobody chose.
+        ``requires`` is what ``validate_ddl`` enforces, so the two stay in sync.
+        It is deliberately stricter than the engine: Doris accepts a table with
+        no key clause and no distribution clause and derives both silently (see
+        ``defaults_when_omitted``). A migration that takes those derived values
+        lands a key model and bucket layout nobody chose, on a table nobody will
+        re-examine, so both clauses must be written out explicitly here.
         """
         return {
             "supported": True,
             "dialect_family": "mysql-like",
-            "requires": [],
-            "recommends": [
+            "requires": [
                 "One of DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY",
                 "DISTRIBUTED BY HASH(cols) BUCKETS N (or BUCKETS AUTO)",
+            ],
+            "recommends": [
                 'PROPERTIES ("replication_num" = "N") sized to the cluster',
             ],
             "defaults_when_omitted": {
+                "note": (
+                    "Doris derives these when they are absent, but a migration must not rely on it: "
+                    "validate_ddl rejects DDL that leaves either clause implicit"
+                ),
                 "key model": (
                     "AGGREGATE KEY when any column declares an aggregate function, otherwise "
                     "DUPLICATE KEY over a short-key prefix (at most 3 columns / 36 bytes)"
@@ -867,12 +873,18 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         return [name for score, name in scored[:max_keys] if score > 0] or [eligible[0][0]["name"]]
 
     def validate_ddl(self, ddl: str) -> List[str]:
-        """Return Doris compatibility errors for a proposed table DDL.
+        """Return migration-blocking problems in a proposed Doris table DDL.
 
-        Only conditions Doris actually rejects are reported. The key model and
-        the ``DISTRIBUTED BY`` clause are both optional — Doris derives them
-        when absent — so their absence is not an error here; see
-        ``describe_migration_capabilities()["recommends"]``.
+        Two classes of problem are reported together:
+
+        * statements Doris itself rejects (unsupported clauses, key column
+          types, AUTO_INCREMENT rules, RANDOM distribution on a unique table);
+        * statements Doris accepts but a migration must not ship — a missing
+          key clause or distribution clause, which Doris would silently derive.
+
+        The second class is a deliberate policy: see
+        ``describe_migration_capabilities()["defaults_when_omitted"]`` for what
+        the engine would have chosen instead.
         """
         from datus_db_core.sql_utils import mask_sql_quoted_regions, strip_sql_comments
 
@@ -885,13 +897,27 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         has_unique_key = bool(re.search(r"\bUNIQUE\s+KEY\b", upper))
         has_aggregate_key = bool(re.search(r"\bAGGREGATE\s+KEY\b", upper))
 
-        # PRIMARY KEY exists in Doris' internal KeysType enum, but CREATE TABLE
-        # only accepts AGGREGATE | UNIQUE | DUPLICATE. A statement whose only
-        # key clause is PRIMARY KEY therefore cannot be created on Doris.
-        if not (has_duplicate_key or has_unique_key or has_aggregate_key) and re.search(r"\bPRIMARY\s+KEY\b", upper):
+        if not (has_duplicate_key or has_unique_key or has_aggregate_key):
+            # PRIMARY KEY exists in Doris' internal KeysType enum, but CREATE
+            # TABLE only accepts AGGREGATE | UNIQUE | DUPLICATE, so a statement
+            # whose only key clause is PRIMARY KEY cannot be created at all.
+            if re.search(r"\bPRIMARY\s+KEY\b", upper):
+                errors.append(
+                    "PRIMARY KEY is not a Doris table model; use UNIQUE KEY for upsert semantics, "
+                    "or DUPLICATE KEY to retain detail rows"
+                )
+            else:
+                errors.append(
+                    "Doris DDL must define one of: DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY. "
+                    "Doris would otherwise derive a key model from the column list, "
+                    "which a migration must not leave implicit"
+                )
+
+        if not re.search(r"\bDISTRIBUTED\s+BY\b", upper):
             errors.append(
-                "PRIMARY KEY is not a Doris table model; use UNIQUE KEY for upsert semantics, "
-                "or DUPLICATE KEY to retain detail rows"
+                "Doris DDL must include a DISTRIBUTED BY clause. "
+                "Doris would otherwise default to random distribution with 10 buckets, "
+                "which a migration must not leave implicit"
             )
 
         errors.extend(self._validate_auto_increment(upper, has_aggregate_key))
