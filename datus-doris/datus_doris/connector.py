@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from datus_db_core import (
     TABLE_TYPE,
+    BaseSqlConnector,
     CatalogSupportMixin,
     ExecuteSQLResult,
     MaterializedViewSupportMixin,
@@ -21,19 +22,36 @@ from datus_db_core import (
 from datus_mysql import MySQLConnector
 
 from .config import DorisConfig
+from .handlers import parse_doris_identifier
 
 logger = get_logger(__name__)
 
 _INTEGER_TYPES = frozenset({"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "INT2", "INT4", "INT8", "LARGEINT"})
 _SWITCH_RE = re.compile(r"^\s*SWITCH\s+(.+?)\s*;?\s*$", flags=re.IGNORECASE | re.DOTALL)
 
+# ``information_schema.COLUMNS.COLUMN_KEY`` values Doris emits for key columns.
+# Sourced from ``KeysType.toMetadata()``; a non-key column reports an empty string.
+_COLUMN_KEY_VALUES = frozenset({"PRI", "DUP", "UNI", "AGG"})
+_UNIQUE_COLUMN_KEY_VALUES = frozenset({"PRI", "UNI"})
+
+# Types Doris rejects as OLAP key columns (ColumnDefinition.validate).
+_NON_KEY_TYPES = frozenset(
+    {"FLOAT", "DOUBLE", "STRING", "TEXT", "JSON", "JSONB", "VARIANT", "ARRAY", "MAP", "STRUCT", "BITMAP", "HLL"}
+)
+
 
 def _parse_doris_context_switch(sql: str) -> Optional[Dict[str, Any]]:
-    """Parse Doris context commands, including with older datus-db-core releases."""
+    """Parse the Doris context commands ``SWITCH <catalog>`` and ``USE [<catalog>.]<database>``.
+
+    ``SWITCH`` is matched locally first: a SQL parser that does not know the
+    keyword can read ``SWITCH internal`` as an expression with an alias instead
+    of a context command, which would silently drop the catalog change.
+    """
     switch_match = _SWITCH_RE.match(sql)
     if switch_match:
         target = switch_match.group(1).rstrip(";").strip()
-        parsed_target = parse_context_switch(f"USE {target}", dialect="starrocks")
+        # Reuse the USE parser to unwrap quoting on the catalog identifier.
+        parsed_target = parse_context_switch(f"USE {target}", dialect="doris")
         if not parsed_target:
             return None
         catalog_name = parsed_target.get("database_name") or parsed_target.get("catalog_name")
@@ -44,12 +62,6 @@ def _parse_doris_context_switch(sql: str) -> Optional[Dict[str, Any]]:
             "database_name": "",
             "schema_name": "",
         }
-
-    if re.match(r"^\s*USE\b", sql, flags=re.IGNORECASE):
-        # Doris and StarRocks share USE [catalog.]database semantics. Parsing
-        # through the older dialect name keeps this adapter compatible with
-        # datus-db-core versions released before the Doris dialect was added.
-        return parse_context_switch(sql, dialect="starrocks")
 
     return parse_context_switch(sql, dialect="doris")
 
@@ -499,11 +511,38 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
                 "type": rows["Type"][i],
                 "nullable": rows["Null"][i] == "YES",
                 "default_value": rows["Default"][i],
-                "pk": rows["Key"][i] == "PRI",
+                "pk": self._is_unique_key_column(rows["Key"][i]),
+                "key": bool(self._normalize_column_key(rows["Key"][i])),
+                "key_type": self._normalize_column_key(rows["Key"][i]),
                 "comment": rows["Comment"][i],
             }
             for i in range(len(rows))
         ]
+
+    @staticmethod
+    def _normalize_column_key(value: Any) -> str:
+        """Normalize ``information_schema.COLUMNS.COLUMN_KEY`` for a Doris column.
+
+        Doris fills this from ``KeysType.toMetadata()`` for every key column, so
+        the value is the *table model* rather than MySQL's per-column key flag:
+        ``DUP`` (Duplicate Key), ``UNI`` (Unique Key), ``AGG`` (Aggregate Key),
+        or ``PRI``. Non-key columns get an empty string.
+        """
+        if value is None:
+            return ""
+        text = str(value).strip().upper()
+        return text if text in _COLUMN_KEY_VALUES else ""
+
+    @classmethod
+    def _is_unique_key_column(cls, value: Any) -> bool:
+        """Report whether a key column carries unique-row semantics.
+
+        Only Unique Key (and the internal Primary Key model) identify a row.
+        Duplicate Key and Aggregate Key columns are sort/group keys that permit
+        repeated values, so reporting them as primary keys would mislead callers
+        that build joins or upserts from the schema.
+        """
+        return cls._normalize_column_key(value) in _UNIQUE_COLUMN_KEY_VALUES
 
     # ==================== Database Management ====================
 
@@ -558,6 +597,25 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         if database_name:
             return f"{self.quote_identifier(database_name)}.{quoted_table}"
         return quoted_table
+
+    @override
+    def _reset_filter_tables(
+        self,
+        tables: Optional[List[str]] = None,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+    ) -> List[str]:
+        """Expand a table filter to fully-qualified names, keeping the catalog.
+
+        The MySQL base drops ``catalog_name`` before delegating, which would
+        silently resolve an explicitly requested catalog back to the connector's
+        current one.
+        """
+        database_name = database_name or self.database_name
+        return BaseSqlConnector._reset_filter_tables(
+            self, tables, self._resolve_catalog(catalog_name), database_name, ""
+        )
 
     @override
     def _sqlalchemy_schema(
@@ -686,24 +744,59 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
     # ==================== MigrationTargetMixin ====================
 
     def describe_migration_capabilities(self) -> Dict[str, Any]:
-        """Describe Doris-specific DDL and type-mapping requirements."""
+        """Describe Doris-specific DDL and type-mapping requirements.
+
+        ``requires`` lists only what Doris genuinely rejects when omitted. The
+        key model and the distribution clause are *not* in it: Doris derives
+        both when they are absent (see ``defaults_when_omitted``). They stay in
+        ``recommends`` because a migration that lets Doris guess silently
+        inherits a key model and bucket layout nobody chose.
+        """
         return {
             "supported": True,
             "dialect_family": "mysql-like",
-            "requires": [
+            "requires": [],
+            "recommends": [
                 "One of DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY",
-                "DISTRIBUTED BY HASH(cols) BUCKETS N",
+                "DISTRIBUTED BY HASH(cols) BUCKETS N (or BUCKETS AUTO)",
+                'PROPERTIES ("replication_num" = "N") sized to the cluster',
             ],
-            "forbids": ["FOREIGN KEY", "FULLTEXT INDEX", "CHECK"],
+            "defaults_when_omitted": {
+                "key model": (
+                    "AGGREGATE KEY when any column declares an aggregate function, otherwise "
+                    "DUPLICATE KEY over a short-key prefix (at most 3 columns / 36 bytes)"
+                ),
+                "distribution": "DISTRIBUTED BY RANDOM with 10 buckets",
+            },
+            "forbids": [
+                "PRIMARY KEY as a table model (Doris uses UNIQUE KEY for upsert semantics)",
+                "FOREIGN KEY",
+                "FULLTEXT INDEX",
+                "CHECK",
+                "TIME columns (not supported for OLAP tables)",
+                "FLOAT / DOUBLE / STRING / JSON / VARIANT / ARRAY / MAP / STRUCT as key columns",
+                "AUTO_INCREMENT in an AGGREGATE KEY table",
+                "DISTRIBUTED BY RANDOM in a UNIQUE KEY table",
+            ],
             "type_hints": {
-                "unbounded VARCHAR": "VARCHAR(65533)",
-                "TEXT": "STRING",
+                "unbounded VARCHAR": "VARCHAR(65533) (or STRING when longer)",
+                "CHAR(n)": "CHAR(n) up to 255, VARCHAR beyond that",
+                "TEXT": "STRING (TEXT is accepted as an alias)",
                 "TIMESTAMP": "DATETIME",
-                "TIMESTAMPTZ": "DATETIME",
-                "TIME": "VARCHAR(20) (Doris has no native TIME)",
+                "TIMESTAMPTZ": "DATETIME (TIMESTAMPTZ exists in Doris 4.x; verify the target version)",
+                "TIME": "VARCHAR(20) (TIME columns are rejected on OLAP tables)",
                 "UUID": "VARCHAR(36)",
                 "HUGEINT": "LARGEINT",
+                "INET / CIDR": "IPV4 or IPV6",
+                "semi-structured JSON": "VARIANT for schema-on-read, JSON for opaque documents",
+                "BYTEA / BLOB": "VARBINARY",
             },
+            "key_column_rules": [
+                "Key columns come first, in declaration order",
+                "FLOAT and DOUBLE cannot be key columns — use DECIMAL",
+                "STRING / JSON / VARIANT and complex types cannot be key columns — use VARCHAR",
+                "In an AGGREGATE KEY table every non-key column needs an aggregate function",
+            ],
             "example_ddl": (
                 "CREATE TABLE db.t (\n"
                 "  id BIGINT NOT NULL,\n"
@@ -716,7 +809,13 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         }
 
     def suggest_table_layout(self, columns: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Suggest Doris duplicate-key and distribution columns."""
+        """Suggest Doris duplicate-key and distribution columns.
+
+        The three-column ceiling and the ten-bucket default match what Doris
+        itself derives when the clauses are omitted
+        (``shortkey_max_column_count = 3``, ``default_bucket_num = 10``), so an
+        explicit layout stays close to the engine's own choice.
+        """
         if not columns:
             return {"duplicate_key": [], "distributed_by": [], "buckets": 10}
 
@@ -727,19 +826,27 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
     def _score_keys(columns: List[Dict[str, Any]], max_keys: int = 3) -> List[str]:
         """Select key columns using priority rules.
 
-        Priority:
+        Columns Doris rejects as keys (FLOAT, DOUBLE, STRING, JSON, VARIANT and
+        the complex types) are excluded outright rather than scored, so the
+        suggestion can always be written as a key clause.
+
+        Priority among the remaining columns:
           1. Columns with 'id' or '_id' suffix (+100)
           2. INT/BIGINT type columns (+50)
           3. Non-nullable columns preferred (+10)
-          4. Fallback to first column
+          4. Fallback to the first eligible column
         """
-        import re as _re
+        eligible = []
+        for col in columns:
+            base_type = re.sub(r"\(.*\)", "", str(col.get("type", "")).upper()).strip()
+            if base_type not in _NON_KEY_TYPES:
+                eligible.append((col, base_type))
+        if not eligible:
+            return []
 
         scored = []
-        for col in columns:
+        for col, base_type in eligible:
             name = col["name"]
-            col_type = str(col.get("type", "")).upper()
-            base_type = _re.sub(r"\(.*\)", "", col_type).strip()
             nullable = col.get("nullable", True)
 
             score = 0
@@ -755,27 +862,40 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         scored.sort(key=lambda x: (-x[0], x[1]))
 
         if scored[0][0] == 0:
-            return [columns[0]["name"]]
+            return [eligible[0][0]["name"]]
 
-        return [name for score, name in scored[:max_keys] if score > 0] or [columns[0]["name"]]
+        return [name for score, name in scored[:max_keys] if score > 0] or [eligible[0][0]["name"]]
 
     def validate_ddl(self, ddl: str) -> List[str]:
-        """Return Doris compatibility errors for a proposed table DDL."""
-        errors: List[str] = []
+        """Return Doris compatibility errors for a proposed table DDL.
+
+        Only conditions Doris actually rejects are reported. The key model and
+        the ``DISTRIBUTED BY`` clause are both optional — Doris derives them
+        when absent — so their absence is not an error here; see
+        ``describe_migration_capabilities()["recommends"]``.
+        """
         from datus_db_core.sql_utils import mask_sql_quoted_regions, strip_sql_comments
 
+        errors: List[str] = []
         upper = mask_sql_quoted_regions(strip_sql_comments(ddl)).upper()
+
         has_duplicate_key = bool(re.search(r"\bDUPLICATE\s+KEY\b", upper)) and not re.search(
             r"\bON\s+DUPLICATE\s+KEY\b", upper
         )
-        if not (has_duplicate_key or re.search(r"\bUNIQUE\s+KEY\b", upper) or re.search(r"\bAGGREGATE\s+KEY\b", upper)):
-            errors.append("Doris DDL must define one of: DUPLICATE KEY / UNIQUE KEY / AGGREGATE KEY")
+        has_unique_key = bool(re.search(r"\bUNIQUE\s+KEY\b", upper))
+        has_aggregate_key = bool(re.search(r"\bAGGREGATE\s+KEY\b", upper))
 
-        if not re.search(r"\bDISTRIBUTED\s+BY\b", upper):
-            errors.append("Doris DDL must include a DISTRIBUTED BY clause")
+        # PRIMARY KEY exists in Doris' internal KeysType enum, but CREATE TABLE
+        # only accepts AGGREGATE | UNIQUE | DUPLICATE. A statement whose only
+        # key clause is PRIMARY KEY therefore cannot be created on Doris.
+        if not (has_duplicate_key or has_unique_key or has_aggregate_key) and re.search(r"\bPRIMARY\s+KEY\b", upper):
+            errors.append(
+                "PRIMARY KEY is not a Doris table model; use UNIQUE KEY for upsert semantics, "
+                "or DUPLICATE KEY to retain detail rows"
+            )
 
-        if re.search(r"\bAUTO_INCREMENT\b", upper) and not re.search(r"\bUNIQUE\s+KEY\b", upper):
-            errors.append("Doris AUTO_INCREMENT columns require a UNIQUE KEY table")
+        errors.extend(self._validate_auto_increment(upper, has_aggregate_key))
+        errors.extend(self._validate_distribution(upper, has_unique_key))
 
         if re.search(r"\bFOREIGN\s+KEY\b", upper):
             errors.append("Doris does not support FOREIGN KEY")
@@ -786,23 +906,161 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         if re.search(r"\bCHECK\s*\(", upper):
             errors.append("Doris does not support CHECK constraints")
 
+        # \bTIME\b cannot match inside TIMESTAMP/TIMESTAMPTZ, so no extra guard is needed.
+        if re.search(r"[(,]\s*\w+\s+TIME\b", upper):
+            errors.append("Doris does not support TIME columns on OLAP tables; use VARCHAR or DATETIME")
+
+        errors.extend(self._validate_key_column_types(upper))
+        return errors
+
+    @staticmethod
+    def _validate_auto_increment(upper: str, has_aggregate_key: bool) -> List[str]:
+        """Check Doris' AUTO_INCREMENT rules.
+
+        Doris allows AUTO_INCREMENT on Duplicate Key and Unique Key tables. The
+        column must be a NOT NULL BIGINT without a default, and a table may
+        carry at most one.
+        """
+        errors: List[str] = []
+        matches = list(re.finditer(r"\bAUTO_INCREMENT\b", upper))
+        if not matches:
+            return errors
+
+        if has_aggregate_key:
+            errors.append("Doris AUTO_INCREMENT is only supported in DUPLICATE KEY and UNIQUE KEY tables")
+        if len(matches) > 1:
+            errors.append("Doris allows at most one AUTO_INCREMENT column per table")
+
+        # Inspect the column definition the first marker sits in: everything
+        # back to the preceding comma or opening parenthesis.
+        start = max(upper.rfind(",", 0, matches[0].start()), upper.rfind("(", 0, matches[0].start()))
+        column_def = upper[start + 1 : matches[0].end()]
+        if not re.search(r"\bBIGINT\b", column_def):
+            errors.append("Doris AUTO_INCREMENT columns must be BIGINT")
+        if re.search(r"\bNULL\b", column_def) and not re.search(r"\bNOT\s+NULL\b", column_def):
+            errors.append("Doris AUTO_INCREMENT columns must be NOT NULL")
+        if re.search(r"\bDEFAULT\b", column_def):
+            errors.append("Doris AUTO_INCREMENT columns cannot have a DEFAULT value")
+        return errors
+
+    @staticmethod
+    def _validate_distribution(upper: str, has_unique_key: bool) -> List[str]:
+        """Check the distribution clause against the declared key model."""
+        errors: List[str] = []
+        if re.search(r"\bDISTRIBUTED\s+BY\s+RANDOM\b", upper) and has_unique_key:
+            errors.append("Doris rejects DISTRIBUTED BY RANDOM on a UNIQUE KEY table; use DISTRIBUTED BY HASH")
+        return errors
+
+    @classmethod
+    def _validate_key_column_types(cls, upper: str) -> List[str]:
+        """Reject key columns whose declared type Doris forbids as a key.
+
+        Only the columns named in the key clause are checked, and only when
+        their type is declared in the same statement. ``upper`` has had its
+        quoted regions blanked out, so a backtick-quoted column name is invisible
+        here and is skipped rather than guessed at — the same trade-off the other
+        checks make to stay free of false positives.
+        """
+        key_match = re.search(r"\b(?:DUPLICATE|UNIQUE|AGGREGATE)\s+KEY\s*\(([^)]*)\)", upper)
+        if not key_match:
+            return []
+
+        key_columns = {part.strip() for part in key_match.group(1).split(",") if part.strip()}
+        errors: List[str] = []
+        for column in sorted(key_columns):
+            declared = re.search(rf"[(,]\s*{re.escape(column)}\s+([A-Z0-9_]+)", upper)
+            if declared and declared.group(1) in _NON_KEY_TYPES:
+                errors.append(
+                    f"Doris does not allow {declared.group(1)} column '{column.lower()}' as a key column; "
+                    "use DECIMAL for FLOAT/DOUBLE or VARCHAR for STRING-like types"
+                )
         return errors
 
     def map_source_type(self, source_dialect: str, source_type: str) -> str | None:
-        """Map a source type when Doris requires a dialect-specific override."""
-        base = source_type.strip().upper()
-        # Strip params for matching
-        import re as _re
+        """Map a source type when Doris requires a dialect-specific override.
 
-        base_noparam = _re.sub(r"\(.*\)", "", base).strip()
-        # Deterministic overrides for well-known pairings
+        ``TIMESTAMPTZ`` maps to ``DATETIME`` rather than Doris' own
+        ``TIMESTAMPTZ``: the latter only exists from Doris 4.x, and this
+        mapping has to hold for every version the adapter can connect to.
+        """
+        base_noparam = re.sub(r"\(.*\)", "", source_type.strip().upper()).strip()
         overrides = {
             "HUGEINT": "LARGEINT",
             "TIMESTAMP": "DATETIME",
             "TIMESTAMPTZ": "DATETIME",
             "TIMESTAMP WITH TIME ZONE": "DATETIME",
             "TEXT": "STRING",
+            "CLOB": "STRING",
             "TIME": "VARCHAR(20)",
             "UUID": "VARCHAR(36)",
+            "BYTEA": "VARBINARY",
+            "BLOB": "VARBINARY",
+            "INET": "IPV4",
+            "CIDR": "IPV4",
+            "JSONB": "JSON",
+            "UINT8": "SMALLINT",
+            "UINT16": "INT",
+            "UINT32": "BIGINT",
+            "UINT64": "LARGEINT",
         }
         return overrides.get(base_noparam)
+
+    @override
+    def dry_run_ddl(self, ddl: str, target_table: str) -> List[str]:
+        """Create the table under a temporary name, then drop it.
+
+        The strongest validation available: Doris analyses the full statement,
+        so derived key models, distribution defaults, and type restrictions are
+        all exercised. ``target_table`` is replaced with a unique scratch name
+        so an existing table is never touched, and the scratch table is dropped
+        even when creation fails midway.
+        """
+        import uuid
+
+        errors = self.validate_ddl(ddl)
+
+        parsed = parse_doris_identifier(target_table)
+        scratch_name = f"__datus_dry_run_{uuid.uuid4().hex[:12]}"
+        scratch_full_name = self.full_name(
+            catalog_name=parsed["catalog_name"],
+            database_name=parsed["database_name"] or self.database_name,
+            table_name=scratch_name,
+        )
+
+        original = self.full_name(
+            catalog_name=parsed["catalog_name"],
+            database_name=parsed["database_name"] or self.database_name,
+            table_name=parsed["table_name"],
+        )
+        scratch_ddl = self._retarget_ddl(ddl, parsed["table_name"], original, scratch_full_name)
+
+        try:
+            result = self.execute_ddl(scratch_ddl)
+            if not result.success:
+                errors.append(str(result.error))
+        except Exception as e:  # noqa: BLE001 - surfaced as a validation error
+            errors.append(str(e))
+        finally:
+            try:
+                self.execute_ddl(f"DROP TABLE IF EXISTS {scratch_full_name}")
+            except Exception as e:  # noqa: BLE001 - cleanup must not mask the result
+                logger.warning(f"Could not drop dry-run table {scratch_full_name}: {e}")
+        return errors
+
+    @staticmethod
+    def _retarget_ddl(ddl: str, table_name: str, original_full_name: str, scratch_full_name: str) -> str:
+        """Point a CREATE TABLE statement at the scratch table name."""
+        if original_full_name and original_full_name in ddl:
+            return ddl.replace(original_full_name, scratch_full_name, 1)
+        # Fall back to rewriting whatever identifier follows CREATE TABLE, so a
+        # differently-quoted or differently-qualified name is still retargeted.
+        pattern = re.compile(
+            r"(CREATE\s+(?:EXTERNAL\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)([`\"\w.]+)",
+            flags=re.IGNORECASE,
+        )
+        retargeted, count = pattern.subn(lambda m: f"{m.group(1)}{scratch_full_name}", ddl, count=1)
+        if count:
+            return retargeted
+        if table_name:
+            return ddl.replace(table_name, scratch_full_name, 1)
+        return ddl

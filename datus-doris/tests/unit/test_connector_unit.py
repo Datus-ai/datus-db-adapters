@@ -9,6 +9,7 @@ import pytest
 import datus_doris
 from datus_db_core import SQLType
 from datus_doris import DorisConfig, DorisConnector
+from datus_doris.handlers import build_doris_uri, parse_doris_identifier, resolve_doris_context
 from datus_doris.skills import get_doris_sql_generation_notes
 
 
@@ -299,6 +300,29 @@ def test_registers_doris_adapter():
         "doris",
         DorisConnector,
         config_class=DorisConfig,
+        display_name="Apache Doris",
         capabilities={"catalog", "database"},
+        uri_builder=build_doris_uri,
+        context_resolver=resolve_doris_context,
+        parser_dialect="doris",
+        identifier_parser=parse_doris_identifier,
         sql_generation_notes=get_doris_sql_generation_notes,
     )
+
+
+@pytest.mark.parametrize(
+    ("column_key", "expected_key_type", "expected_pk"),
+    [
+        # Doris fills COLUMN_KEY from the table model for every key column.
+        ("DUP", "DUP", False),
+        ("AGG", "AGG", False),
+        ("UNI", "UNI", True),
+        ("PRI", "PRI", True),
+        ("", "", False),
+        (None, "", False),
+        ("uni", "UNI", True),
+    ],
+)
+def test_column_key_maps_table_model_to_key_flags(column_key, expected_key_type, expected_pk):
+    assert DorisConnector._normalize_column_key(column_key) == expected_key_type
+    assert DorisConnector._is_unique_key_column(column_key) is expected_pk

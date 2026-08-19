@@ -10,30 +10,41 @@ Generate Apache Doris-compatible SQL from metadata-provided object and column na
 ## Namespaces and identifiers
 
 - Address objects as `[catalog.]database.table`; use the `internal` catalog for Doris-managed tables unless metadata selects an external catalog.
-- Use `SWITCH catalog` to change catalog and `USE [catalog.]database` to change database context.
+- Use `SWITCH catalog` to change catalog and `USE [catalog.]database` to change database context. `SWITCH` takes a single catalog identifier and never a dotted name.
 - Quote identifiers with backticks when needed. Use string literals rather than identifier quotes for values.
-- Preserve catalog context for external tables; do not silently rewrite a three-part name as a MySQL schema/table name.
+- Preserve catalog context for external tables; do not silently rewrite a three-part name as a two-part schema/table name.
+- Every catalog, external ones included, exposes `information_schema`, so `catalog.information_schema.tables` is a valid way to read metadata without switching session context.
 
 ## Queries, functions, and types
 
 - Use Doris-supported MySQL-style query syntax, `LIMIT`, joins, common table expressions, and window functions; verify functions rather than assuming full MySQL compatibility.
-- Use Doris data types such as `BOOLEAN`, integer types including `LARGEINT`, `DECIMAL`, `CHAR`, `VARCHAR`, `STRING`, `DATE`, `DATETIME`, `TIMESTAMPTZ`, `ARRAY`, `MAP`, `STRUCT`, `JSON`, and `VARIANT` only where supported by the target version and table model.
-- Use Doris `DATE_TRUNC(datetime, unit)` or the documented alternate order. Do not assume the StarRocks-only `DATE_TRUNC(unit, datetime)` convention is portable to older Doris versions.
+- Use Doris data types such as `BOOLEAN`, integer types including `LARGEINT`, `DECIMAL`, `CHAR`, `VARCHAR`, `STRING`, `DATE`, `DATETIME`, `ARRAY`, `MAP`, `STRUCT`, `JSON`, and `VARIANT` only where supported by the target version and table model.
+- Treat `TIMESTAMPTZ`, `IPV4`, `IPV6`, and `VARBINARY` as newer types: confirm target-version support before generating them, and fall back to `DATETIME` or `VARCHAR` when the version is unknown.
+- Bound string types by their limits: `VARCHAR` holds at most 65533 bytes and `CHAR` at most 255. Use `STRING` for longer values. `TEXT` is accepted as an alias for `STRING`.
+- Doris accepts `DATE_TRUNC` with either argument order — `DATE_TRUNC(datetime, unit)` and `DATE_TRUNC(unit, datetime)` both resolve. Prefer the order the surrounding codebase already uses rather than rewriting existing expressions.
 - Use aggregate-state types such as `BITMAP`, `HLL`, `QUANTILE_STATE`, and `AGG_STATE` only with their matching functions and table-model rules.
 
 ## OLAP table design
 
-- Choose exactly one Doris key model: `DUPLICATE KEY` to retain detail rows, `UNIQUE KEY` for latest-row/upsert semantics, or `AGGREGATE KEY` to pre-aggregate value columns.
-- Place key columns before value columns and preserve the selected model's update, delete, and aggregation semantics.
-- Define partitioning for pruning and lifecycle management when needed. Define `DISTRIBUTED BY HASH(...)` or `DISTRIBUTED BY RANDOM` and a suitable bucket count or automatic bucketing for the target version.
-- Keep partition columns within the key where the selected model requires it. Use aggregation annotations such as `SUM`, `MAX`, `MIN`, `REPLACE`, or `BITMAP_UNION` only on Aggregate Key value columns.
-- Use Doris `PROPERTIES (...)` only for documented table properties. Do not copy StarRocks property names or version defaults without verification.
+- Choose exactly one Doris key model: `DUPLICATE KEY` to retain detail rows, `UNIQUE KEY` for latest-row/upsert semantics, or `AGGREGATE KEY` to pre-aggregate value columns. These three are the only key models `CREATE TABLE` accepts.
+- Do not generate `PRIMARY KEY` as a table model. Express row-identity requirements with `UNIQUE KEY` instead.
+- The key clause is optional, so omitting it does not fail — Doris derives `AGGREGATE KEY` when any column declares an aggregate function, and otherwise `DUPLICATE KEY` over a short-key prefix of at most 3 columns or 36 bytes. Declare the model explicitly whenever the intended semantics matter.
+- Place key columns first, in declaration order. Key columns cannot be `FLOAT`, `DOUBLE`, `STRING`, `JSON`, `VARIANT`, or a complex type; use `DECIMAL` in place of floating point and `VARCHAR` in place of string-like types.
+- In an `AGGREGATE KEY` table every non-key column requires an aggregation annotation such as `SUM`, `MAX`, `MIN`, `REPLACE`, `REPLACE_IF_NOT_NULL`, `BITMAP_UNION`, or `HLL_UNION`.
+- `DISTRIBUTED BY` is also optional and defaults to random distribution with 10 buckets. Specify `DISTRIBUTED BY HASH(...)` with an explicit bucket count or `BUCKETS AUTO` whenever the distribution matters.
+- Do not combine `DISTRIBUTED BY RANDOM` with `UNIQUE KEY`; it is also rejected for an `AGGREGATE KEY` table containing `REPLACE` or `REPLACE_IF_NOT_NULL` columns.
+- `AUTO_INCREMENT` is supported on Duplicate Key and Unique Key tables only. The column must be `BIGINT NOT NULL` without a default value, and a table may declare at most one.
+- Doris rejects `TIME` columns on OLAP tables. Model a time-of-day value as `VARCHAR` or fold it into a `DATETIME`.
+- `CREATE TABLE` accepts an optional `ORDER BY (...)` sort key alongside the key clause; treat it as version-sensitive and verify support before generating it.
+- Define partitioning for pruning and lifecycle management when needed, and keep partition columns within the key where the selected model requires it.
+- Use Doris `PROPERTIES (...)` only for documented table properties, and size `replication_num` to the actual cluster.
 
 ## Writes and materialized views
 
 - Interpret writes through the table model: Duplicate Key appends detail rows, Unique Key performs key-based upserts, and Aggregate Key merges value columns by their declared aggregate functions.
 - Use partial-column updates only with a supported model, merge-on-write configuration, and the required session or statement option.
-- Distinguish synchronous single-table materialized views from asynchronous materialized views. Use the correct `CREATE MATERIALIZED VIEW` shape, refresh clause, partitioning, and distribution syntax for the intended kind.
+- Distinguish synchronous single-table materialized views from asynchronous materialized views. A synchronous view is a rollup index attached to its base table and is inspected with `SHOW CREATE MATERIALIZED VIEW <name> ON <table>`; an asynchronous view is an independently queryable object listed by `mv_infos()` and inspected with `SHOW CREATE MATERIALIZED VIEW <name>`.
+- Use the correct `CREATE MATERIALIZED VIEW` shape, refresh clause, partitioning, and distribution syntax for the intended kind. An asynchronous view cannot reference an auto-increment column.
 
 ## Data loading capabilities
 
@@ -46,4 +57,4 @@ Generate Apache Doris-compatible SQL from metadata-provided object and column na
 
 ## Avoid common dialect leaks
 
-Before returning SQL, reject MySQL storage engines, `AUTO_INCREMENT` assumptions that ignore Doris rules, StarRocks `PRIMARY KEY` table syntax, PostgreSQL casts used without validation, and load syntax copied between Doris and StarRocks without checking the backend.
+Before returning SQL, reject MySQL storage engines, `AUTO_INCREMENT` declarations that ignore the Doris type and table-model rules, `PRIMARY KEY` used as a table model, `FOREIGN KEY`, `CHECK`, and `FULLTEXT` clauses, PostgreSQL casts used without validation, and table properties or load syntax carried over from another OLAP engine without checking them against the target Doris version.
