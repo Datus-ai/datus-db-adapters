@@ -2,99 +2,196 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""SQLAlchemy dialect tests that never touch the real ``gaussdb`` driver.
+"""SQLAlchemy dialect tests that never touch the native ``gaussdb`` driver."""
 
-The driver binds a GaussDB-specific libpq at import time and is unavailable on
-macOS, so every test here works against a stub module installed in
-``sys.modules`` for the duration of the test.
-"""
-
+import ast
+import inspect
 import sys
+import textwrap
 import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from sqlalchemy.dialects import registry
+from sqlalchemy.dialects.postgresql.base import PGDialect
 from sqlalchemy.dialects.postgresql.psycopg import PGDialect_psycopg
 from sqlalchemy.dialects.postgresql.psycopg2 import PGDialect_psycopg2
 
 from datus_gaussdb import sa_dialect
-from datus_gaussdb.sa_dialect import GaussDBDialect, GaussDBPsycopg2Dialect, _GaussDBDbapiProxy
+from datus_gaussdb.sa_dialect import GaussDBDialect, GaussDBPsycopg2Dialect
 
 
 def _stub_gaussdb_module() -> types.ModuleType:
     """Minimal stand-in for the gaussdb driver module."""
     module = types.ModuleType("gaussdb")
     module.__version__ = "1.0.4"
+    module.adapters = object()
+    module.paramstyle = "pyformat"
     module.ClientCursor = type("ClientCursor", (), {})
     module.Error = type("Error", (Exception,), {})
     return module
 
 
-# ==================== _GaussDBDbapiProxy ====================
+def _stub_gaussdb_submodules(monkeypatch):
+    """Install API-shaped driver submodules without importing native libpq."""
+
+    class AdaptersMap:
+        def __init__(self, adapters):
+            self.source = adapters
+            self.loaders = {}
+
+        def register_loader(self, name, loader):
+            self.loaders[name] = loader
+
+    class Loader:
+        pass
+
+    modules = {
+        "adapt": types.SimpleNamespace(AdaptersMap=AdaptersMap, Loader=Loader),
+        "types": types.SimpleNamespace(TypeInfo=type("TypeInfo", (), {})),
+        "types.string": types.SimpleNamespace(TextLoader=type("TextLoader", (), {})),
+        "types.json": types.SimpleNamespace(
+            Json=type("Json", (), {}),
+            Jsonb=type("Jsonb", (), {}),
+            set_json_loads=MagicMock(),
+            set_json_dumps=MagicMock(),
+        ),
+        "types.hstore": types.SimpleNamespace(register_hstore=MagicMock()),
+        "types.range": types.SimpleNamespace(Range=type("Range", (), {})),
+        "types.multirange": types.SimpleNamespace(Multirange=type("Multirange", (), {})),
+        "pq": types.SimpleNamespace(TransactionStatus=type("TransactionStatus", (), {"IDLE": 0})),
+    }
+    monkeypatch.setattr(sa_dialect, "_import_gaussdb_submodule", modules.__getitem__)
+    return modules
+
+
+# ==================== Driver coexistence ====================
 
 
 @pytest.mark.acceptance
-def test_dbapi_proxy_reports_psycopg3_version():
-    """PGDialect_psycopg refuses anything below psycopg 3.0.2, so the 1.x fork lies."""
-    module = _stub_gaussdb_module()
-
-    proxy = _GaussDBDbapiProxy(module)
-
-    assert module.__version__ == "1.0.4"
-    assert proxy.__version__ == "3.2.0"
-
-
-@pytest.mark.acceptance
-def test_dbapi_proxy_delegates_attributes():
-    """Everything other than the version comes straight from the driver module."""
-    module = _stub_gaussdb_module()
-
-    proxy = _GaussDBDbapiProxy(module)
-
-    assert proxy.ClientCursor is module.ClientCursor
-    assert proxy.Error is module.Error
-    assert proxy.__name__ == "gaussdb"
-
-
-@pytest.mark.acceptance
-def test_dbapi_proxy_raises_for_unknown_attribute():
-    """Missing driver attributes surface as AttributeError, not None."""
-    proxy = _GaussDBDbapiProxy(_stub_gaussdb_module())
-    missing = "no_such_attribute"
-
-    with pytest.raises(AttributeError):
-        getattr(proxy, missing)
-
-
-# ==================== Driver aliasing ====================
-
-
-@pytest.mark.acceptance
-def test_import_dbapi_aliases_gaussdb_when_psycopg_is_not_loaded(monkeypatch):
-    """GaussDB-first processes install the compatible driver under psycopg."""
+def test_import_dbapi_does_not_install_a_psycopg_alias(monkeypatch):
+    """GaussDB-first processes leave the real driver's namespace untouched."""
     gaussdb = _stub_gaussdb_module()
-    monkeypatch.setitem(sys.modules, "gaussdb", gaussdb)
     monkeypatch.delitem(sys.modules, "psycopg", raising=False)
     monkeypatch.setattr(sa_dialect, "import_gaussdb", lambda: gaussdb)
 
     dbapi = GaussDBDialect.import_dbapi()
 
-    assert sys.modules["psycopg"] is gaussdb
-    assert dbapi._module is gaussdb
+    assert dbapi is gaussdb
+    assert "psycopg" not in sys.modules
 
 
 @pytest.mark.acceptance
-def test_import_dbapi_rejects_an_already_loaded_psycopg(monkeypatch):
-    """Psycopg-first processes fail clearly instead of mixing registries."""
+def test_import_dbapi_preserves_an_already_loaded_psycopg(monkeypatch):
+    """SaaS can load PostgreSQL storage before the official GaussDB driver."""
     gaussdb = _stub_gaussdb_module()
     psycopg = types.ModuleType("psycopg")
-    monkeypatch.setitem(sys.modules, "gaussdb", gaussdb)
+    psycopg_rows = types.ModuleType("psycopg.rows")
     monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+    monkeypatch.setitem(sys.modules, "psycopg.rows", psycopg_rows)
     monkeypatch.setattr(sa_dialect, "import_gaussdb", lambda: gaussdb)
 
-    with pytest.raises(ImportError, match="psycopg is already imported"):
-        GaussDBDialect.import_dbapi()
+    dbapi = GaussDBDialect.import_dbapi()
+
+    assert dbapi is gaussdb
+    assert sys.modules["psycopg"] is psycopg
+    assert sys.modules["psycopg.rows"] is psycopg_rows
+
+
+@pytest.mark.acceptance
+def test_dialect_initialization_uses_gaussdb_adapters_without_touching_psycopg(monkeypatch):
+    gaussdb = _stub_gaussdb_module()
+    psycopg = types.ModuleType("psycopg")
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+    _stub_gaussdb_submodules(monkeypatch)
+
+    dialect = GaussDBDialect(dbapi=gaussdb)
+
+    assert dialect.dbapi is gaussdb
+    assert dialect._psycopg_adapters_map.source is gaussdb.adapters
+    assert sys.modules["psycopg"] is psycopg
+
+
+@pytest.mark.acceptance
+def test_driver_specific_type_hooks_resolve_from_gaussdb(monkeypatch):
+    gaussdb = _stub_gaussdb_module()
+    modules = _stub_gaussdb_submodules(monkeypatch)
+    dialect = GaussDBDialect(dbapi=gaussdb)
+
+    assert dialect._psycopg_Json is modules["types.json"].Json
+    assert dialect._psycopg_Jsonb is modules["types.json"].Jsonb
+    assert dialect._psycopg_TransactionStatus is modules["pq"].TransactionStatus
+    assert dialect._psycopg_Range is modules["types.range"].Range
+    assert dialect._psycopg_Multirange is modules["types.multirange"].Multirange
+
+
+@pytest.mark.acceptance
+def test_dialect_initialization_configures_gaussdb_json_and_inet(monkeypatch):
+    gaussdb = _stub_gaussdb_module()
+    modules = _stub_gaussdb_submodules(monkeypatch)
+    loads = MagicMock()
+    dumps = MagicMock()
+
+    dialect = GaussDBDialect(
+        dbapi=gaussdb,
+        native_inet_types=False,
+        json_deserializer=loads,
+        json_serializer=dumps,
+    )
+
+    adapters = dialect._psycopg_adapters_map
+    assert adapters.loaders == {
+        "inet": modules["types.string"].TextLoader,
+        "cidr": modules["types.string"].TextLoader,
+    }
+    modules["types.json"].set_json_loads.assert_called_once_with(loads, adapters)
+    modules["types.json"].set_json_dumps.assert_called_once_with(dumps, adapters)
+
+
+@pytest.mark.acceptance
+def test_initialize_registers_hstore_through_gaussdb(monkeypatch):
+    modules = _stub_gaussdb_submodules(monkeypatch)
+    dialect = GaussDBDialect.__new__(GaussDBDialect)
+    dialect.insert_returning = True
+    dialect.use_native_hstore = True
+    dialect._psycopg_adapters_map = object()
+    dialect._type_info_fetch = MagicMock(return_value="hstore-info")
+    connection = MagicMock()
+
+    with patch.object(PGDialect, "initialize", return_value=None):
+        dialect.initialize(connection)
+
+    register = modules["types.hstore"].register_hstore
+    assert register.call_args_list == [
+        call("hstore-info", dialect._psycopg_adapters_map),
+        call("hstore-info", connection.connection.driver_connection),
+    ]
+
+
+@pytest.mark.acceptance
+def test_official_driver_async_dialect_is_explicitly_unsupported():
+    with pytest.raises(NotImplementedError, match="synchronous engines only"):
+        GaussDBDialect.get_async_dialect_cls(MagicMock())
+
+
+@pytest.mark.acceptance
+def test_all_sqlalchemy_psycopg_import_hooks_are_overridden():
+    """Fail loudly if a SQLAlchemy upgrade adds a new concrete-driver import."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(PGDialect_psycopg)))
+    class_node = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    hard_import_hooks = set()
+
+    for node in class_node.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for child in ast.walk(node):
+            if isinstance(child, ast.Import) and any(alias.name.startswith("psycopg") for alias in child.names):
+                hard_import_hooks.add(node.name)
+            if isinstance(child, ast.ImportFrom) and (child.module or "").startswith("psycopg"):
+                hard_import_hooks.add(node.name)
+
+    missing = hard_import_hooks - GaussDBDialect.__dict__.keys()
+    assert not missing, f"GaussDBDialect must override new psycopg-bound hooks: {sorted(missing)}"
 
 
 # ==================== _get_server_version_info ====================
@@ -150,11 +247,11 @@ def test_psycopg2_server_version_info_uses_gaussdb_parser():
 
 
 @pytest.mark.acceptance
-def test_create_connect_args_injects_client_cursor(monkeypatch):
+def test_create_connect_args_injects_client_cursor():
     """Binary-format bound parameters come back NULL, so a ClientCursor is forced."""
     module = _stub_gaussdb_module()
-    monkeypatch.setitem(sys.modules, "gaussdb", module)
     dialect = GaussDBDialect.__new__(GaussDBDialect)
+    dialect.dbapi = module
 
     with patch.object(
         PGDialect_psycopg,
@@ -169,12 +266,12 @@ def test_create_connect_args_injects_client_cursor(monkeypatch):
 
 
 @pytest.mark.acceptance
-def test_create_connect_args_keeps_explicit_cursor_factory(monkeypatch):
+def test_create_connect_args_keeps_explicit_cursor_factory():
     """An explicitly configured cursor_factory is not overwritten."""
     module = _stub_gaussdb_module()
-    monkeypatch.setitem(sys.modules, "gaussdb", module)
     custom_cursor = type("CustomCursor", (), {})
     dialect = GaussDBDialect.__new__(GaussDBDialect)
+    dialect.dbapi = module
 
     with patch.object(
         PGDialect_psycopg,
@@ -217,6 +314,12 @@ def test_stock_postgresql_psycopg2_dialect_is_unchanged():
     assert registry.load("postgresql.psycopg2") is PGDialect_psycopg2
 
 
+@pytest.mark.acceptance
+def test_stock_postgresql_psycopg_dialect_is_unchanged():
+    """The official GaussDB dialect does not replace PostgreSQL's psycopg3 dialect."""
+    assert registry.load("postgresql.psycopg") is PGDialect_psycopg
+
+
 # ==================== pg8000 dialect ====================
 
 
@@ -232,11 +335,15 @@ def test_pg8000_dialect_identity_and_registration():
     assert registry.load("gaussdb.pg8000") is GaussDBPg8000Dialect
 
 
-def test_pg8000_import_dbapi_is_gauss_module():
+def test_pg8000_import_dbapi_is_gauss_module_and_preserves_psycopg(monkeypatch):
     from datus_gaussdb import _pg8000_gauss
     from datus_gaussdb.sa_dialect import GaussDBPg8000Dialect
 
+    psycopg = types.ModuleType("psycopg")
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+
     assert GaussDBPg8000Dialect.import_dbapi() is _pg8000_gauss
+    assert sys.modules["psycopg"] is psycopg
 
 
 @pytest.mark.parametrize(
@@ -376,6 +483,22 @@ def test_pg8000_on_connect_registers_bool_adapter():
     hook = dialect.on_connect()
     hook(conn)
     conn.register_in_adapter.assert_called_once_with(16, _gaussdb_bool_in)
+
+
+def test_official_driver_on_connect_registers_gaussdb_bool_loader(monkeypatch):
+    modules = _stub_gaussdb_submodules(monkeypatch)
+    dialect = GaussDBDialect.__new__(GaussDBDialect)
+    conn = MagicMock()
+
+    with patch.object(PGDialect_psycopg, "on_connect", return_value=None):
+        hook = dialect.on_connect()
+    hook(conn)
+
+    name, loader = conn.adapters.register_loader.call_args.args
+    assert name == "bool"
+    assert issubclass(loader, modules["adapt"].Loader)
+    assert loader.load(object(), b"1") is True
+    assert loader.load(object(), b"0") is False
 
 
 def test_psycopg2_on_connect_registers_bool_caster():

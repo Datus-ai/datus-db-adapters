@@ -70,7 +70,9 @@ identifiers.
 
 GaussDB defaults to `sha256` password authentication, which vanilla PostgreSQL
 drivers do not implement. The default `gaussdb` driver speaks it natively, so a
-stock server works with no server-side changes.
+stock server works with no server-side changes. Its SQLAlchemy dialect binds
+directly to the renamed driver, so it can coexist in one process with the real
+`psycopg` package used by PostgreSQL connections and storage backends.
 
 The `pg8000` driver reaches the same result without libpq: it extends the
 pure-Python [pg8000](https://pypi.org/project/pg8000/) driver with GaussDB's
