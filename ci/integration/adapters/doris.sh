@@ -4,7 +4,7 @@ ADAPTER_NAME="doris"
 ADAPTER_PACKAGE="datus-doris"
 ADAPTER_COMPOSE="datus-doris/docker-compose.yml"
 ADAPTER_TEST_PATH="datus-doris/tests/integration"
-ADAPTER_SERVICES=("doris-fe:600" "doris-be:600" "hive-metastore:600")
+ADAPTER_SERVICES=("doris:600" "hive-metastore:600")
 
 export_adapter_env() {
   export DORIS_QUERY_HOST_PORT="${DORIS_QUERY_HOST_PORT:-49030}"
