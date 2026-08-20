@@ -112,7 +112,7 @@ def test_reset_filter_tables_is_empty_without_tables(connector):
     ],
 )
 def test_retarget_ddl_rewrites_the_create_target(ddl):
-    retargeted = DorisConnector._retarget_ddl(ddl, "t", "`internal`.`db`.`t`", "`internal`.`db`.`scratch`")
+    retargeted = DorisConnector._retarget_ddl(ddl, "`internal`.`db`.`scratch`")
 
     assert "`internal`.`db`.`scratch`" in retargeted
     assert "db.t" not in retargeted.replace("`internal`.`db`.`scratch`", "")
@@ -122,7 +122,7 @@ def test_retarget_ddl_rewrites_the_connectors_own_rendering():
     """The CREATE target is rewritten whatever spelling it arrives in."""
     ddl = "CREATE TABLE `internal`.`db`.`t` (id BIGINT) DUPLICATE KEY(id)"
 
-    retargeted = DorisConnector._retarget_ddl(ddl, "t", "`internal`.`db`.`t`", "`internal`.`db`.`scratch`")
+    retargeted = DorisConnector._retarget_ddl(ddl, "`internal`.`db`.`scratch`")
 
     assert retargeted == "CREATE TABLE `internal`.`db`.`scratch` (id BIGINT) DUPLICATE KEY(id)"
 
@@ -137,43 +137,33 @@ def test_retarget_ddl_ignores_the_qualified_name_outside_the_create_target():
     """
     ddl = "/* rebuild of `internal`.`db`.`t` */\nCREATE TABLE `internal`.`db`.`t` (id BIGINT) DUPLICATE KEY(id)"
 
-    retargeted = DorisConnector._retarget_ddl(ddl, "t", "`internal`.`db`.`t`", "`internal`.`db`.`scratch`")
+    retargeted = DorisConnector._retarget_ddl(ddl, "`internal`.`db`.`scratch`")
 
     assert "CREATE TABLE `internal`.`db`.`scratch` (" in retargeted
     assert "CREATE TABLE `internal`.`db`.`t` (" not in retargeted
 
 
-def test_retarget_ddl_falls_back_to_the_qualified_name_outside_a_create():
-    """No CREATE TABLE prefix, but the qualified name is present."""
-    ddl = "ALTER TABLE `internal`.`db`.`t` ADD COLUMN c INT"
+@pytest.mark.parametrize(
+    "ddl",
+    [
+        "ALTER TABLE `internal`.`db`.`t` ADD COLUMN c INT",
+        "ALTER TABLE t ADD COLUMN c INT",
+        "ALTER TABLE tenant_t ADD COLUMN c INT",
+        "-- rebuild t\nDROP TABLE t",
+        "/* t backup */ TRUNCATE TABLE t",
+        "SELECT 1",
+    ],
+)
+def test_retarget_ddl_leaves_a_non_create_statement_alone(ddl):
+    """Only a CREATE TABLE target is rewritten; dry_run_ddl skips the rest.
 
-    retargeted = DorisConnector._retarget_ddl(ddl, "t", "`internal`.`db`.`t`", "`internal`.`db`.`scratch`")
-
-    assert retargeted == "ALTER TABLE `internal`.`db`.`scratch` ADD COLUMN c INT"
-
-
-def test_retarget_ddl_falls_back_to_a_bare_name_replacement():
-    """Neither the qualified name nor a CREATE TABLE prefix is present."""
-    ddl = "ALTER TABLE t ADD COLUMN c INT"
-
-    retargeted = DorisConnector._retarget_ddl(ddl, "t", "`internal`.`db`.`t`", "`internal`.`db`.`scratch`")
-
-    assert retargeted == "ALTER TABLE `internal`.`db`.`scratch` ADD COLUMN c INT"
-
-
-def test_retarget_ddl_bare_name_fallback_respects_identifier_boundaries():
-    """A longer identifier that merely contains the target name is left alone."""
-    ddl = "ALTER TABLE tenant_t ADD COLUMN c INT"
-
-    retargeted = DorisConnector._retarget_ddl(ddl, "t", "`internal`.`db`.`t`", "`internal`.`db`.`scratch`")
-
-    assert retargeted == ddl
-
-
-def test_retarget_ddl_returns_the_statement_unchanged_when_nothing_matches():
-    ddl = "SELECT 1"
-
-    assert DorisConnector._retarget_ddl(ddl, "", "", "`internal`.`db`.`scratch`") == ddl
+    A textual fallback used to rewrite the first occurrence of the table name
+    anywhere in the statement. Where that occurrence sat in a comment, the
+    rewrite landed there and the real target survived — while dry_run_ddl's
+    guard saw the scratch name and executed the statement, so a DROP or a
+    TRUNCATE reached the real table.
+    """
+    assert DorisConnector._retarget_ddl(ddl, "`internal`.`db`.`scratch`") == ddl
 
 
 def test_dry_run_ddl_refuses_to_execute_when_retargeting_fails(connector):
@@ -182,6 +172,23 @@ def test_dry_run_ddl_refuses_to_execute_when_retargeting_fails(connector):
     connector.execute_ddl = MagicMock()
 
     errors = connector.dry_run_ddl("SELECT 1", "")
+
+    assert any("skipped the server-side dry run" in error for error in errors)
+    connector.execute_ddl.assert_not_called()
+
+
+def test_dry_run_ddl_refuses_a_destructive_statement_naming_the_table_in_a_comment(connector):
+    """The comment used to absorb the rewrite, letting DROP reach the real table.
+
+    The bare-name fallback rewrote `t` inside the leading comment, which put the
+    scratch name in the statement and satisfied the guard while `DROP TABLE t`
+    still named the real table. Only a CREATE TABLE target is rewritten now, so
+    this is refused before execute_ddl is reached.
+    """
+    connector.database_name = "db"
+    connector.execute_ddl = MagicMock()
+
+    errors = connector.dry_run_ddl("-- rebuild t\nDROP TABLE t", "db.t")
 
     assert any("skipped the server-side dry run" in error for error in errors)
     connector.execute_ddl.assert_not_called()

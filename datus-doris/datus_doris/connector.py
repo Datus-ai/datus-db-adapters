@@ -1080,10 +1080,11 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
 
         The strongest validation available: Doris analyses the full statement,
         so derived key models, distribution defaults, and type restrictions are
-        all exercised. ``target_table`` is replaced with a unique scratch name
-        so an existing table is never touched, and the scratch table is dropped
-        even when creation fails midway. Nothing is executed unless that
-        replacement is visible in the statement being sent.
+        all exercised. The ``CREATE TABLE`` target is replaced with a unique
+        scratch name in ``target_table``'s catalog and database, so an existing
+        table is never touched, and the scratch table is dropped even when
+        creation fails midway. Nothing is executed unless that replacement is
+        visible in the statement being sent.
         """
         import uuid
 
@@ -1097,12 +1098,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
             table_name=scratch_name,
         )
 
-        original = self.full_name(
-            catalog_name=parsed["catalog_name"],
-            database_name=parsed["database_name"] or self.database_name,
-            table_name=parsed["table_name"],
-        )
-        scratch_ddl = self._retarget_ddl(ddl, parsed["table_name"], original, scratch_full_name)
+        scratch_ddl = self._retarget_ddl(ddl, scratch_full_name)
         if scratch_name not in scratch_ddl:
             # Nothing was rewritten, so executing the statement would run it
             # against whatever it already named. Report that instead: the text
@@ -1124,32 +1120,30 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         return errors
 
     @staticmethod
-    def _retarget_ddl(ddl: str, table_name: str, original_full_name: str, scratch_full_name: str) -> str:
+    def _retarget_ddl(ddl: str, scratch_full_name: str) -> str:
         """Point a CREATE TABLE statement at the scratch table name.
 
-        The identifier after ``CREATE ... TABLE`` is rewritten first because it
-        is the only rule anchored on the statement's actual target, and it
-        already covers a differently-quoted or differently-qualified spelling. A
-        substring replacement cannot take that role: the qualified name also
-        appears in a leading comment or a ``COMMENT`` literal often enough, and
-        rewriting that occurrence instead would leave the CREATE pointing at the
-        real table.
+        Only the identifier after ``CREATE ... TABLE`` is rewritten. It is the
+        one rule anchored on the statement's actual target, and it already
+        covers a differently-quoted or differently-qualified spelling.
+
+        A textual replacement cannot stand in for it. The table name also
+        appears in a leading comment or a ``COMMENT`` literal often enough, so
+        rewriting the first occurrence can consume the replacement while leaving
+        the real target in place — and the statement still looks retargeted,
+        because the scratch name is now somewhere in it. ``dry_run_ddl``
+        executes what this returns, so that combination runs the original
+        statement against the real table.
+
+        Anything that is not a ``CREATE TABLE`` therefore comes back unchanged
+        and ``dry_run_ddl`` skips the server-side pass. Nothing is lost by that:
+        this is a create-and-drop probe, so pointing an ``ALTER`` or a ``DROP``
+        at a scratch name that was never created only ever reports "table not
+        found", which says nothing about the statement it was asked to check.
         """
         pattern = re.compile(
             r"(CREATE\s+(?:EXTERNAL\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)([`\"\w.]+)",
             flags=re.IGNORECASE,
         )
         retargeted, count = pattern.subn(lambda m: f"{m.group(1)}{scratch_full_name}", ddl, count=1)
-        if count:
-            return retargeted
-        # Not a CREATE TABLE statement. Fall back to the qualified name, then to
-        # the bare name bounded as a whole identifier so a longer name that
-        # merely contains it is left alone.
-        if original_full_name and original_full_name in ddl:
-            return ddl.replace(original_full_name, scratch_full_name, 1)
-        if table_name:
-            bounded = rf"(?<![\w`.]){re.escape(table_name)}(?![\w`])"
-            retargeted, count = re.subn(bounded, lambda _m: scratch_full_name, ddl, count=1)
-            if count:
-                return retargeted
-        return ddl
+        return retargeted if count else ddl
