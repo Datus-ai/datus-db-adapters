@@ -82,6 +82,56 @@ def test_dry_run_ddl_reports_implicit_layout_even_though_doris_accepts_it(
 
 
 @pytest.mark.integration
+def test_dry_run_ddl_reports_an_implicit_bucket_count(connector: DorisConnector, config: DorisConfig):
+    """Doris creates this table with 10 buckets; the policy still refuses it.
+
+    A DISTRIBUTED BY clause that stops short of BUCKETS is the same silent
+    default as an omitted clause, and is equally unreviewable in a migration.
+    """
+    target = f"{config.database}.datus_dry_run_no_buckets"
+    ddl = (
+        f"CREATE TABLE {target} (`id` BIGINT NOT NULL) ENGINE=OLAP "
+        "DUPLICATE KEY (`id`) DISTRIBUTED BY HASH(`id`) "
+        'PROPERTIES ("replication_num" = "1")'
+    )
+
+    errors = connector.dry_run_ddl(ddl, target)
+
+    assert any("must state a bucket count" in error for error in errors)
+    _assert_no_scratch_tables(connector, config)
+    assert "datus_dry_run_no_buckets" not in _table_names(connector, config)
+
+
+@pytest.mark.integration
+def test_dry_run_ddl_does_not_create_a_table_named_in_a_leading_comment(
+    connector: DorisConnector,
+    config: DorisConfig,
+):
+    """Retargeting must follow the CREATE target, not the first textual match.
+
+    When a comment above the statement names the same table, a substring
+    replacement consumes itself there and leaves CREATE TABLE pointing at the
+    real name — which the dry run would then create for good, since cleanup
+    only ever drops the scratch name.
+    """
+    target = f"{config.database}.datus_dry_run_commented"
+    ddl = f"""
+        /* rebuild of {target} */
+        CREATE TABLE {target} (
+            `id` BIGINT NOT NULL
+        ) ENGINE=OLAP
+        DUPLICATE KEY (`id`)
+        DISTRIBUTED BY HASH(`id`) BUCKETS 1
+        PROPERTIES ("replication_num" = "1")
+    """
+
+    assert connector.dry_run_ddl(ddl, target) == []
+
+    _assert_no_scratch_tables(connector, config)
+    assert "datus_dry_run_commented" not in _table_names(connector, config)
+
+
+@pytest.mark.integration
 def test_dry_run_ddl_leaves_an_existing_table_untouched(
     connector: DorisConnector,
     config: DorisConfig,

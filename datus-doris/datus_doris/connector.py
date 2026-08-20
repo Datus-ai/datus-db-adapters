@@ -779,7 +779,10 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
                     "AGGREGATE KEY when any column declares an aggregate function, otherwise "
                     "DUPLICATE KEY over a short-key prefix (at most 3 columns / 36 bytes)"
                 ),
-                "distribution": "DISTRIBUTED BY RANDOM with 10 buckets",
+                "distribution": (
+                    "DISTRIBUTED BY RANDOM with 10 buckets; a DISTRIBUTED BY clause that omits "
+                    "BUCKETS takes 10 as well (FeConstants.default_bucket_num)"
+                ),
             },
             "forbids": [
                 "PRIMARY KEY as a table model (Doris uses UNIQUE KEY for upsert semantics)",
@@ -800,7 +803,10 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
                 "TIME": "VARCHAR(20) (TIME columns are rejected on OLAP tables)",
                 "UUID": "VARCHAR(36)",
                 "HUGEINT": "LARGEINT",
-                "INET / CIDR": "IPV4 or IPV6",
+                "INET / CIDR": (
+                    "VARCHAR(43) — IPV4/IPV6 store a bare address, so a netmask or the wrong "
+                    "address family is silently stored as NULL"
+                ),
                 "semi-structured JSON": "VARIANT for schema-on-read, JSON for opaque documents",
                 "BYTEA / BLOB": "STRING (VARBINARY exists from Doris 4.0 but cannot be used in CREATE TABLE)",
             },
@@ -896,7 +902,8 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         from datus_db_core.sql_utils import mask_sql_quoted_regions, strip_sql_comments
 
         errors: List[str] = []
-        upper = mask_sql_quoted_regions(strip_sql_comments(ddl)).upper()
+        uncommented = strip_sql_comments(ddl).upper()
+        upper = mask_sql_quoted_regions(uncommented)
 
         has_duplicate_key = bool(re.search(r"\bDUPLICATE\s+KEY\b", upper)) and not re.search(
             r"\bON\s+DUPLICATE\s+KEY\b", upper
@@ -926,6 +933,15 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
                 "Doris would otherwise default to random distribution with 10 buckets, "
                 "which a migration must not leave implicit"
             )
+        elif not re.search(r"\bBUCKETS\b", upper):
+            # BUCKETS is optional in the grammar; omitting it takes
+            # FeConstants.default_bucket_num, which is the same class of silent
+            # default as an omitted DISTRIBUTED BY clause.
+            errors.append(
+                "Doris DDL must state a bucket count: BUCKETS N or BUCKETS AUTO. "
+                "Doris would otherwise default to 10 buckets, "
+                "which a migration must not leave implicit"
+            )
 
         errors.extend(self._validate_auto_increment(upper, has_aggregate_key))
         errors.extend(self._validate_distribution(upper, has_unique_key))
@@ -939,8 +955,11 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         if re.search(r"\bCHECK\s*\(", upper):
             errors.append("Doris does not support CHECK constraints")
 
-        # \bTIME\b cannot match inside TIMESTAMP/TIMESTAMPTZ, so no extra guard is needed.
-        if re.search(r"[(,]\s*\w+\s+TIME\b", upper):
+        # \bTIME\b cannot match inside TIMESTAMP/TIMESTAMPTZ, so no extra guard is
+        # needed. A quoted column name is checked against the unmasked statement:
+        # mask_sql_quoted_regions blanks it to whitespace, and inferring one back
+        # out of that whitespace flags an indented column simply named "time".
+        if re.search(r"[(,]\s*\w+\s+TIME\b", upper) or re.search(r"[(,]\s*[`\"][^`\"]+[`\"]\s+TIME\b", uncommented):
             errors.append("Doris does not support TIME columns on OLAP tables; use VARCHAR or DATETIME")
 
         errors.extend(self._validate_key_column_types(upper))
@@ -970,7 +989,11 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         column_def = upper[start + 1 : matches[0].end()]
         if not re.search(r"\bBIGINT\b", column_def):
             errors.append("Doris AUTO_INCREMENT columns must be BIGINT")
-        if re.search(r"\bNULL\b", column_def) and not re.search(r"\bNOT\s+NULL\b", column_def):
+        # Doris columns are nullable unless NOT NULL is written out
+        # (ColumnNullableType.DEFAULT), so absence of any keyword is a rejection
+        # too: InternalCatalog.checkAutoIncColumns reports
+        # ERR_AUTO_INCREMENT_COLUMN_NULLABLE on column.isAllowNull().
+        if not re.search(r"\bNOT\s+NULL\b", column_def):
             errors.append("Doris AUTO_INCREMENT columns must be NOT NULL")
         if re.search(r"\bDEFAULT\b", column_def):
             errors.append("Doris AUTO_INCREMENT columns cannot have a DEFAULT value")
@@ -1020,6 +1043,14 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         ``VARBINARY`` exists from Doris 4.0, but only as a type an external
         catalog can expose — ``CREATE TABLE`` rejects it, so a migration that
         took it as a hint would emit DDL no Doris version accepts.
+
+        ``INET`` and ``CIDR`` map to ``VARCHAR(43)`` rather than to an IP type.
+        ``IPV4`` accepts ``0.0.0.0``-``255.255.255.255`` and ``IPV6`` accepts a
+        bare address; neither holds a netmask, and PostgreSQL ``cidr`` always
+        carries one while ``inet`` may. Doris stores an out-of-range or
+        malformed value as NULL rather than failing the load, so a narrower
+        target would drop rows silently. 43 is the longest such value: a
+        39-character IPv6 address plus ``/128``.
         """
         base_noparam = re.sub(r"\(.*\)", "", source_type.strip().upper()).strip()
         overrides = {
@@ -1033,8 +1064,8 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
             "UUID": "VARCHAR(36)",
             "BYTEA": "STRING",
             "BLOB": "STRING",
-            "INET": "IPV4",
-            "CIDR": "IPV4",
+            "INET": "VARCHAR(43)",
+            "CIDR": "VARCHAR(43)",
             "JSONB": "JSON",
             "UINT8": "SMALLINT",
             "UINT16": "INT",
@@ -1051,7 +1082,8 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         so derived key models, distribution defaults, and type restrictions are
         all exercised. ``target_table`` is replaced with a unique scratch name
         so an existing table is never touched, and the scratch table is dropped
-        even when creation fails midway.
+        even when creation fails midway. Nothing is executed unless that
+        replacement is visible in the statement being sent.
         """
         import uuid
 
@@ -1071,6 +1103,12 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
             table_name=parsed["table_name"],
         )
         scratch_ddl = self._retarget_ddl(ddl, parsed["table_name"], original, scratch_full_name)
+        if scratch_name not in scratch_ddl:
+            # Nothing was rewritten, so executing the statement would run it
+            # against whatever it already named. Report that instead: the text
+            # checks above still stand, only the server-side pass is skipped.
+            errors.append("Could not retarget the statement to a scratch table name; skipped the server-side dry run")
+            return errors
 
         try:
             result = self.execute_ddl(scratch_ddl)
@@ -1087,11 +1125,16 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
 
     @staticmethod
     def _retarget_ddl(ddl: str, table_name: str, original_full_name: str, scratch_full_name: str) -> str:
-        """Point a CREATE TABLE statement at the scratch table name."""
-        if original_full_name and original_full_name in ddl:
-            return ddl.replace(original_full_name, scratch_full_name, 1)
-        # Fall back to rewriting whatever identifier follows CREATE TABLE, so a
-        # differently-quoted or differently-qualified name is still retargeted.
+        """Point a CREATE TABLE statement at the scratch table name.
+
+        The identifier after ``CREATE ... TABLE`` is rewritten first because it
+        is the only rule anchored on the statement's actual target, and it
+        already covers a differently-quoted or differently-qualified spelling. A
+        substring replacement cannot take that role: the qualified name also
+        appears in a leading comment or a ``COMMENT`` literal often enough, and
+        rewriting that occurrence instead would leave the CREATE pointing at the
+        real table.
+        """
         pattern = re.compile(
             r"(CREATE\s+(?:EXTERNAL\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)([`\"\w.]+)",
             flags=re.IGNORECASE,
@@ -1099,6 +1142,14 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         retargeted, count = pattern.subn(lambda m: f"{m.group(1)}{scratch_full_name}", ddl, count=1)
         if count:
             return retargeted
+        # Not a CREATE TABLE statement. Fall back to the qualified name, then to
+        # the bare name bounded as a whole identifier so a longer name that
+        # merely contains it is left alone.
+        if original_full_name and original_full_name in ddl:
+            return ddl.replace(original_full_name, scratch_full_name, 1)
         if table_name:
-            return ddl.replace(table_name, scratch_full_name, 1)
+            bounded = rf"(?<![\w`.]){re.escape(table_name)}(?![\w`])"
+            retargeted, count = re.subn(bounded, lambda _m: scratch_full_name, ddl, count=1)
+            if count:
+                return retargeted
         return ddl

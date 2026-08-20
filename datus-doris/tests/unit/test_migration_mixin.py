@@ -54,6 +54,24 @@ def test_no_migration_hint_ever_targets_varbinary(connector):
         assert connector.map_source_type("postgres", source) != "VARBINARY"
 
 
+def test_no_migration_hint_targets_an_ip_type_that_cannot_hold_the_source_value(connector):
+    """``IPV4``/``IPV6`` hold a bare address, and reject the rest by writing NULL.
+
+    PostgreSQL ``cidr`` always carries a netmask and ``inet`` may, and either
+    can be v4 or v6. Doris stores an out-of-range or malformed value as NULL
+    rather than failing the load, so a hint naming an IP type would drop rows
+    silently. Asserted as a property so any future edit reintroducing one fails
+    whatever spelling it arrives under.
+    """
+    hints = connector.describe_migration_capabilities()["type_hints"]
+
+    for source in ("INET", "CIDR"):
+        assert connector.map_source_type("postgres", source) not in ("IPV4", "IPV6")
+    # The two hint surfaces must agree: the capability report is what an agent
+    # reads when it does not call map_source_type.
+    assert hints["INET / CIDR"].startswith(connector.map_source_type("postgres", "INET"))
+
+
 def test_describe_migration_capabilities_forbids_unsupported_clauses(connector):
     forbids = connector.describe_migration_capabilities()["forbids"]
 
@@ -91,10 +109,26 @@ def test_validate_ddl_explains_what_doris_would_have_derived(connector):
     assert any("random distribution with 10 buckets" in error for error in errors)
 
 
-@pytest.mark.parametrize("bucket_clause", ["BUCKETS 10", "BUCKETS AUTO", ""])
+@pytest.mark.parametrize("bucket_clause", ["BUCKETS 10", "BUCKETS AUTO"])
 def test_validate_ddl_accepts_any_explicit_bucket_form(connector, bucket_clause):
     ddl = f"CREATE TABLE db.t (id BIGINT NOT NULL) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) {bucket_clause}"
     assert connector.validate_ddl(ddl) == []
+
+
+def test_validate_ddl_rejects_an_implicit_bucket_count(connector):
+    """BUCKETS is optional to Doris and defaults to 10, so the policy covers it too.
+
+    ``requires`` advertises ``BUCKETS N (or BUCKETS AUTO)``; a DISTRIBUTED BY
+    clause that stops short of one leaves the bucket layout to
+    ``FeConstants.default_bucket_num``, which is the same silent default the
+    key-clause and distribution-clause rules exist to prevent.
+    """
+    ddl = "CREATE TABLE db.t (id BIGINT NOT NULL) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id)"
+
+    errors = connector.validate_ddl(ddl)
+
+    assert any("must state a bucket count" in error for error in errors)
+    assert any("default to 10 buckets" in error for error in errors)
 
 
 @pytest.mark.parametrize(
@@ -124,6 +158,16 @@ def test_validate_ddl_accepts_any_explicit_bucket_form(connector, bucket_clause)
         ),
         (
             "CREATE TABLE db.t (started_at TIME, id BIGINT NOT NULL) "
+            "DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10",
+            "TIME columns",
+        ),
+        (
+            "CREATE TABLE db.t (`started_at` TIME, id BIGINT NOT NULL) "
+            "DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10",
+            "TIME columns",
+        ),
+        (
+            'CREATE TABLE db.t ("started_at" TIME, id BIGINT NOT NULL) '
             "DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10",
             "TIME columns",
         ),
@@ -171,6 +215,12 @@ def test_validate_ddl_accepts_auto_increment_on_detail_and_upsert_models(connect
             "CREATE TABLE db.t (id BIGINT NULL AUTO_INCREMENT) UNIQUE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10",
             "must be NOT NULL",
         ),
+        # No nullability keyword at all: ColumnNullableType.DEFAULT makes the
+        # column nullable, so Doris rejects this exactly as it rejects NULL.
+        (
+            "CREATE TABLE db.t (id BIGINT AUTO_INCREMENT) UNIQUE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10",
+            "must be NOT NULL",
+        ),
         (
             "CREATE TABLE db.t (id BIGINT NOT NULL DEFAULT 1 AUTO_INCREMENT) "
             "UNIQUE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10",
@@ -204,6 +254,54 @@ def test_validate_ddl_rejects_forbidden_key_column_types(connector, column_type,
     )
 
     assert any("as a key column" in error for error in connector.validate_ddl(ddl))
+
+
+@pytest.mark.parametrize(
+    "ddl",
+    [
+        # A column named "time". The quoted-name check runs against the
+        # unmasked statement for exactly this reason: a rule that inferred the
+        # blanked-out identifier from the surrounding whitespace would flag the
+        # indentation here instead.
+        """
+        CREATE TABLE db.t (
+            id BIGINT NOT NULL,
+            time INT
+        )
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        """,
+        # A quoted column named "time" carrying another type: the quoted-name
+        # rule must read the type that follows, not the name.
+        """
+        CREATE TABLE db.t (id BIGINT NOT NULL, `time` INT)
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        """,
+        # A property key mentioning time must not be read as a column.
+        """
+        CREATE TABLE db.t (id BIGINT NOT NULL, dt DATE)
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        PROPERTIES ("dynamic_partition.time_unit" = "DAY")
+        """,
+        # TIME as a result type is fine; only storing one is rejected.
+        """
+        CREATE TABLE db.t (id BIGINT NOT NULL, dur INT)
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        COMMENT 'CAST(x AS TIME) is allowed'
+        """,
+        # DATETIME must not trip \bTIME\b.
+        """
+        CREATE TABLE db.t (id BIGINT NOT NULL, ts DATETIME)
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 10
+        """,
+    ],
+)
+def test_validate_ddl_does_not_mistake_other_constructs_for_a_time_column(connector, ddl):
+    assert connector.validate_ddl(ddl) == []
 
 
 def test_validate_ddl_allows_forbidden_key_types_as_value_columns(connector):
@@ -336,7 +434,8 @@ def test_suggest_table_layout_returns_no_keys_when_every_column_is_ineligible(co
         ("UUID", "VARCHAR(36)"),
         ("BYTEA", "STRING"),
         ("BLOB", "STRING"),
-        ("INET", "IPV4"),
+        ("INET", "VARCHAR(43)"),
+        ("CIDR", "VARCHAR(43)"),
         ("JSONB", "JSON"),
         ("DECIMAL(18,2)", None),
     ],

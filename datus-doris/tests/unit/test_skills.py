@@ -23,8 +23,11 @@ def test_doris_sql_skill_is_packaged_and_notes_strip_frontmatter():
     assert "INSERT INTO SELECT" in notes
     assert "CREATE ROUTINE LOAD" in notes
     # Broker Load was deliberately dropped in favour of TVF-based file import.
-    assert "LOAD LABEL" not in notes
-    assert "WITH S3|HDFS|BROKER" not in notes
+    # One marker per assertion: a single "WITH S3|HDFS|BROKER" literal is not an
+    # alternation, so it matches nothing and passes whatever the file says.
+    upper = notes.upper()
+    for marker in ("LOAD LABEL", "BROKER LOAD", "WITH BROKER", "WITH HDFS"):
+        assert marker not in upper, f"Broker Load marker {marker!r} is back in the skill"
     # Both materialized view kinds, plus the state check that gates rewrite.
     assert "CREATE MATERIALIZED VIEW" in notes
     assert "SHOW CREATE MATERIALIZED VIEW sync_agg_mv ON app_log" in notes
