@@ -18,9 +18,18 @@ def test_doris_sql_skill_is_packaged_and_notes_strip_frontmatter():
     notes = get_doris_sql_generation_notes()
     assert notes.startswith("# Apache Doris SQL")
     assert "DUPLICATE KEY" in notes
-    assert "LOAD LABEL" in notes
-    assert "Stream Load through the HTTP API" in notes
-    assert "without imposing a polling workflow" in notes
+    # The three loading paths the skill documents, each with a runnable example.
+    assert "_stream_load" in notes
+    assert "INSERT INTO SELECT" in notes
+    assert "CREATE ROUTINE LOAD" in notes
+    # Broker Load was deliberately dropped in favour of TVF-based file import.
+    assert "LOAD LABEL" not in notes
+    assert "WITH S3|HDFS|BROKER" not in notes
+    # Both materialized view kinds, plus the state check that gates rewrite.
+    assert "CREATE MATERIALIZED VIEW" in notes
+    assert "SHOW CREATE MATERIALIZED VIEW sync_agg_mv ON app_log" in notes
+    assert "mv_infos(" in notes
+    assert "MaterializedViewRewriteSuccessAndChose" in notes
     assert "TODO" not in notes
     assert not notes.startswith("---")
 
