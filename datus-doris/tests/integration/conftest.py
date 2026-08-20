@@ -211,6 +211,89 @@ def unique_key_table(
         connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
 
 
+@pytest.fixture
+def dangling_catalog(connector: DorisConnector) -> Generator[str, None, None]:
+    """Create a catalog whose backend is unreachable.
+
+    Doris registers an external catalog lazily, so ``CREATE CATALOG`` succeeds
+    without contacting the metastore. That is enough to exercise catalog-level
+    context handling — ``SWITCH``, divergence between the requested and the
+    stored catalog — without depending on a live Hive service.
+    """
+    catalog_name = f"datus_ctx_{uuid.uuid4().hex[:8]}"
+    _require_success(
+        connector.execute_ddl(
+            f"""
+            CREATE CATALOG `{catalog_name}` PROPERTIES (
+                "type" = "hms",
+                "hive.metastore.uris" = "thrift://127.0.0.1:1"
+            )
+            """
+        ),
+        "create dangling catalog",
+    )
+    try:
+        yield catalog_name
+    finally:
+        connector.execute_ddl(f"DROP CATALOG IF EXISTS `{catalog_name}`")
+
+
+@pytest.fixture
+def sync_materialized_view(
+    connector: DorisConnector,
+    config: DorisConfig,
+) -> Generator[tuple[str, str], None, None]:
+    """Create a base table carrying a synchronous materialized view (a rollup).
+
+    Doris routes ``CREATE MATERIALIZED VIEW ... AS <query>`` to the synchronous
+    path when the statement carries no build, refresh, column, key, or
+    distribution clause. The rollup's columns must not collide with the base
+    table's own column names, hence the aliases.
+    """
+    table_name = f"datus_sync_{uuid.uuid4().hex[:8]}"
+    view_name = f"datus_rollup_{uuid.uuid4().hex[:8]}"
+    connector.switch_context(database_name=config.database)
+    _require_success(
+        connector.execute_ddl(
+            f"""
+            CREATE TABLE `{table_name}` (
+                `id` BIGINT NOT NULL,
+                `k` INT NOT NULL,
+                `v` INT
+            ) ENGINE=OLAP
+            DUPLICATE KEY (`id`, `k`)
+            DISTRIBUTED BY HASH(`id`) BUCKETS 1
+            PROPERTIES ("replication_num" = "1")
+            """
+        ),
+        "create rollup base table",
+    )
+    try:
+        _require_success(
+            connector.execute_ddl(
+                f"CREATE MATERIALIZED VIEW {view_name} AS SELECT k AS mv_k, id AS mv_id FROM `{table_name}`"
+            ),
+            "create synchronous materialized view",
+        )
+
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            result = connector.execute(
+                {"sql_query": f"SHOW ALTER TABLE ROLLUP FROM `{config.database}` WHERE TableName='{table_name}'"},
+                result_format="list",
+            )
+            rows = result.sql_return if result.success else []
+            if rows and all(row.get("State") == "FINISHED" for row in rows):
+                break
+            time.sleep(2)
+        else:
+            raise AssertionError("Doris rollup did not finish building within 120 seconds")
+
+        yield table_name, view_name
+    finally:
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
+
+
 @pytest.fixture(scope="session")
 def tpch_setup(
     database_setup: DorisConfig,

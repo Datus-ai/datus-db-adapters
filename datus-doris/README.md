@@ -88,9 +88,10 @@ Unit tests do not require a database:
 ci/run-unit-tests.sh datus-doris
 ```
 
-The repository integration runner starts Apache Doris FE/BE 4.0.7 and Hive
-Metastore 4.0.1, waits for an alive backend and a successful OLAP DDL probe,
-runs the complete integration suite, and removes the test services afterward:
+The repository integration runner starts Apache Doris 4.1.3 (FE and BE in one
+`apache/doris:all-in-one-4.1.3` container) and Hive Metastore 4.0.1, waits for
+an alive backend and a successful OLAP DDL probe, runs the complete integration
+suite, and removes the test services afterward:
 
 ```bash
 ci/run-integration-tests.sh doris
@@ -119,9 +120,14 @@ queries, and list/CSV/Pandas/Arrow output.
 | `DORIS_PASSWORD` | empty | Password |
 | `DORIS_CATALOG` | `internal` | Initial catalog |
 | `DORIS_DATABASE` | `test` | Test database |
-| `DORIS_FE_JAVA_XMS` | `1024m` | Initial FE JVM heap for the Docker test environment |
-| `DORIS_FE_JAVA_XMX` | `2048m` | Maximum FE JVM heap for the Docker test environment |
 | `HIVE_METASTORE_URI` | `thrift://hive-metastore:9083` | Hive catalog metastore URI |
+| `DORIS_QUERY_HOST_PORT` | `9030` | Host port mapped to the container query port |
+| `DORIS_HTTP_HOST_PORT` | `8030` | Host port mapped to the container FE HTTP port |
+
+The `apache/doris:all-in-one-4.1.3` image carries its own integration-test FE
+and BE configuration, so there are no heap or replication knobs to set here.
+`FE_CONFIG_EXTRA` and `BE_CONFIG_EXTRA` are appended to `fe.conf` / `be.conf` at
+startup if a single setting ever needs overriding.
 
 ## License
 
