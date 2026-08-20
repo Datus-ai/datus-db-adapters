@@ -802,7 +802,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
                 "HUGEINT": "LARGEINT",
                 "INET / CIDR": "IPV4 or IPV6",
                 "semi-structured JSON": "VARIANT for schema-on-read, JSON for opaque documents",
-                "BYTEA / BLOB": "VARBINARY",
+                "BYTEA / BLOB": "STRING (VARBINARY exists from Doris 4.0 but cannot be used in CREATE TABLE)",
             },
             "key_column_rules": [
                 "Key columns come first, in declaration order",
@@ -1015,6 +1015,11 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         ``TIMESTAMPTZ`` maps to ``DATETIME`` rather than Doris' own
         ``TIMESTAMPTZ``: the latter only exists from Doris 4.x, and this
         mapping has to hold for every version the adapter can connect to.
+
+        Binary source types map to ``STRING`` rather than ``VARBINARY``.
+        ``VARBINARY`` exists from Doris 4.0, but only as a type an external
+        catalog can expose — ``CREATE TABLE`` rejects it, so a migration that
+        took it as a hint would emit DDL no Doris version accepts.
         """
         base_noparam = re.sub(r"\(.*\)", "", source_type.strip().upper()).strip()
         overrides = {
@@ -1026,8 +1031,8 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
             "CLOB": "STRING",
             "TIME": "VARCHAR(20)",
             "UUID": "VARCHAR(36)",
-            "BYTEA": "VARBINARY",
-            "BLOB": "VARBINARY",
+            "BYTEA": "STRING",
+            "BLOB": "STRING",
             "INET": "IPV4",
             "CIDR": "IPV4",
             "JSONB": "JSON",

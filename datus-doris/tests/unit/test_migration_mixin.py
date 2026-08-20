@@ -39,6 +39,21 @@ def test_requires_matches_what_validate_ddl_enforces(connector):
     assert any("DISTRIBUTED BY" in error for error in errors)
 
 
+def test_no_migration_hint_ever_targets_varbinary(connector):
+    """``VARBINARY`` is reachable only through an external catalog.
+
+    Doris 4.0 added the type, but ``CREATE TABLE`` rejects it — it exists so a
+    catalog can expose a binary column from another engine. A migration hint
+    naming it would produce DDL no Doris version accepts, so neither the
+    capability report nor ``map_source_type`` may hand it back as a target.
+    """
+    hints = connector.describe_migration_capabilities()["type_hints"]
+
+    assert hints["BYTEA / BLOB"].startswith("STRING")
+    for source in ("BYTEA", "BLOB", "BINARY", "VARBINARY", "RAW"):
+        assert connector.map_source_type("postgres", source) != "VARBINARY"
+
+
 def test_describe_migration_capabilities_forbids_unsupported_clauses(connector):
     forbids = connector.describe_migration_capabilities()["forbids"]
 
@@ -319,7 +334,8 @@ def test_suggest_table_layout_returns_no_keys_when_every_column_is_ineligible(co
         ("TEXT", "STRING"),
         ("TIME", "VARCHAR(20)"),
         ("UUID", "VARCHAR(36)"),
-        ("BYTEA", "VARBINARY"),
+        ("BYTEA", "STRING"),
+        ("BLOB", "STRING"),
         ("INET", "IPV4"),
         ("JSONB", "JSON"),
         ("DECIMAL(18,2)", None),
