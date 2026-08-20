@@ -4,6 +4,8 @@
 from importlib.metadata import entry_points
 from pathlib import Path
 
+import pytest
+
 from datus_db_core import connector_registry
 from datus_doris import register
 from datus_doris.skills import get_doris_sql_generation_notes, get_skills_dir
@@ -42,3 +44,25 @@ def test_doris_registration_and_skill_entry_point():
             target = getattr(connector_registry, f"_{name}")
             target.clear()
             target.update(values)
+
+
+def test_notes_return_content_without_frontmatter_unchanged(tmp_path, monkeypatch):
+    """A skill file that carries no frontmatter is returned as-is."""
+    import datus_doris.skills as skills
+
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text("# Apache Doris SQL\n\nbody\n", encoding="utf-8")
+    monkeypatch.setattr(skills, "_DORIS_SQL_SKILL", skill_file)
+
+    assert skills.get_doris_sql_generation_notes() == "# Apache Doris SQL\n\nbody"
+
+
+def test_notes_reject_unterminated_frontmatter(tmp_path, monkeypatch):
+    import datus_doris.skills as skills
+
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text("---\nname: db-doris-sql\n", encoding="utf-8")
+    monkeypatch.setattr(skills, "_DORIS_SQL_SKILL", skill_file)
+
+    with pytest.raises(ValueError, match="Invalid skill frontmatter"):
+        skills.get_doris_sql_generation_notes()

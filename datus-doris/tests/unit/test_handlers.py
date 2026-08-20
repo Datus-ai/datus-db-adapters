@@ -96,3 +96,83 @@ def test_parse_identifier(identifier, expected):
 def test_parse_identifier_rejects_malformed_input(identifier):
     with pytest.raises(ValueError, match="Invalid Doris table identifier"):
         parse_doris_identifier(identifier)
+
+
+def test_parse_identifier_unescapes_doubled_quotes():
+    """A doubled quote inside a quoted region is one literal quote, not a terminator."""
+    assert parse_doris_identifier("`we``ird`")["table_name"] == "we`ird"
+    assert parse_doris_identifier('"we""ird"')["table_name"] == 'we"ird'
+    assert parse_doris_identifier("`db`.`a``b`") == {
+        "catalog_name": "",
+        "database_name": "db",
+        "schema_name": "",
+        "table_name": "a`b",
+    }
+
+
+# ==================== Config reading edge cases ====================
+
+
+class _LooseConfig:
+    """Stands in for a config object that is not a DorisConfig."""
+
+    def __init__(self, **values):
+        self.__dict__.update(values)
+
+
+class _Secret:
+    """Mimics pydantic's SecretStr accessor."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def get_secret_value(self):
+        return self._value
+
+
+def test_build_uri_reads_through_a_secret_wrapper():
+    config = _LooseConfig(host=_Secret("doris.internal"), port=9030, database="analytics", catalog="internal")
+
+    assert build_doris_uri(config).startswith("doris://doris.internal:9030/analytics?")
+
+
+def test_build_uri_falls_back_to_an_extra_mapping():
+    """Config objects that stash unknown keys in ``extra`` still resolve."""
+    config = _LooseConfig(host="127.0.0.1", extra={"database": "analytics", "catalog": "hive_catalog"})
+
+    uri = build_doris_uri(config)
+
+    assert "/analytics?" in uri
+    assert "catalog=hive_catalog" in uri
+
+
+def test_build_uri_defaults_the_port_when_absent():
+    config = _LooseConfig(host="127.0.0.1", database="analytics")
+
+    assert build_doris_uri(config).startswith("doris://127.0.0.1:9030/")
+
+
+@pytest.mark.parametrize(
+    ("port", "message"),
+    [
+        ("not-a-port", "Invalid Doris port"),
+        (0, "must be between 1 and 65535"),
+        (70000, "must be between 1 and 65535"),
+    ],
+)
+def test_build_uri_rejects_invalid_ports(port, message):
+    config = _LooseConfig(host="127.0.0.1", port=port, database="analytics")
+
+    with pytest.raises(ValueError, match=message):
+        build_doris_uri(config)
+
+
+def test_build_uri_rejects_a_missing_host():
+    with pytest.raises(ValueError, match="Doris host is required"):
+        build_doris_uri(_LooseConfig(host="", database="analytics"))
+
+
+def test_resolve_context_handles_a_config_without_catalog_or_database():
+    config = _LooseConfig(host="127.0.0.1")
+
+    assert resolve_doris_context(config, "") == ("doris", "internal", "", "")

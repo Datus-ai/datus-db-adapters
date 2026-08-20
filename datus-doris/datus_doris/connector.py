@@ -50,8 +50,15 @@ def _parse_doris_context_switch(sql: str) -> Optional[Dict[str, Any]]:
     switch_match = _SWITCH_RE.match(sql)
     if switch_match:
         target = switch_match.group(1).rstrip(";").strip()
-        # Reuse the USE parser to unwrap quoting on the catalog identifier.
-        parsed_target = parse_context_switch(f"USE {target}", dialect="doris")
+        # Reuse the USE parser to unwrap quoting on the catalog identifier. A
+        # target the parser cannot tokenize is reported as "not a context
+        # command" rather than raised: this only tracks connector state, and
+        # the statement's real outcome already came back from the server.
+        try:
+            parsed_target = parse_context_switch(f"USE {target}", dialect="doris")
+        except Exception as e:  # noqa: BLE001 - malformed target, not a context switch
+            logger.debug(f"Could not parse SWITCH target {target!r}: {e}")
+            return None
         if not parsed_target:
             return None
         catalog_name = parsed_target.get("database_name") or parsed_target.get("catalog_name")
