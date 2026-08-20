@@ -88,7 +88,7 @@ Unit tests do not require a database:
 ci/run-unit-tests.sh datus-doris
 ```
 
-The repository integration runner starts Apache Doris FE/BE 4.0.7 and Hive
+The repository integration runner starts Apache Doris FE/BE 4.1.3 and Hive
 Metastore 4.0.1, waits for an alive backend and a successful OLAP DDL probe,
 runs the complete integration suite, and removes the test services afterward:
 
