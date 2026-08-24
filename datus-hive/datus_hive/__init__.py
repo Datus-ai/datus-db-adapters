@@ -13,4 +13,4 @@ def register():
     """Register Hive connector with Datus registry."""
     from datus_db_core import connector_registry
 
-    connector_registry.register("hive", HiveConnector, config_class=HiveConfig, capabilities=set())
+    connector_registry.register("hive", HiveConnector, config_class=HiveConfig, capabilities={"database"})
