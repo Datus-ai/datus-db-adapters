@@ -1,6 +1,6 @@
 [project]
 name = "datus-doris"
-version = "0.1.0"
+version = "0.1.1"
 description = "Doris database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
