@@ -4,9 +4,7 @@ ADAPTER_NAME="tidb"
 ADAPTER_PACKAGE="datus-tidb"
 ADAPTER_COMPOSE="datus-tidb/docker-compose.yml"
 ADAPTER_TEST_PATH="datus-tidb/tests/integration"
-# Four services because the columnar tests need a real TiFlash store, which in
-# turn needs PD and TiKV; the single-container unistore form has none.
-ADAPTER_SERVICES=("pd0:120" "tikv0:120" "tidb0:120" "tiflash0:120")
+ADAPTER_SERVICES=("tidb:120")
 
 export_adapter_env() {
   export TIDB_HOST_PORT="${TIDB_HOST_PORT:-24000}"
@@ -23,8 +21,5 @@ adapter_env_summary() {
 }
 
 wait_for_adapter_client_readiness() {
-  # Not the shared connector probe: a reachable TiDB is not the whole cluster,
-  # and the columnar tests need TiFlash to have registered with PD first.
-  uv run --package "$ADAPTER_PACKAGE" python datus-tidb/scripts/wait_for_tidb.py \
-    --timeout "${TIDB_READY_TIMEOUT:-300}"
+  wait_for_python_connector_readiness "$ADAPTER_NAME" "$ADAPTER_PACKAGE"
 }

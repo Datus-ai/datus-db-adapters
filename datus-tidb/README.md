@@ -53,22 +53,16 @@ result = connector.execute({"sql_query": "SELECT 1"}, result_format="list")
 
 ## TiFlash
 
-TiFlash is TiDB's columnar replica engine. A table reaches it only after
-`ALTER TABLE t SET TIFLASH REPLICA 1` finishes syncing; from then on the
-optimizer picks between row store (TiKV) and columnar (TiFlash) on its own, and
-analytical queries run in parallel MPP mode without any query change.
+TiFlash is TiDB's columnar replica engine, granted per table with
+`ALTER TABLE t SET TIFLASH REPLICA 1`. It needs nothing from this adapter:
+replicas are transparent to SQL — the optimizer chooses between row store and
+columnar on its own — and their state is a plain
+`SELECT * FROM information_schema.TIFLASH_REPLICA`, which the packaged SQL skill
+points the model at.
 
-Replica state is one query — `SELECT * FROM information_schema.TIFLASH_REPLICA`
-— which is what the packaged SQL skill points the model at; the adapter adds no
-wrapper around it.
-
-Note that **window functions largely do not run in MPP**: only `ROW_NUMBER`,
-`RANK`, `DENSE_RANK`, `LEAD`, `LAG`, `FIRST_VALUE` and `LAST_VALUE` push down.
-Aggregate window functions (`SUM`/`AVG`/`COUNT` over a window), `STDDEV_*`,
-`VAR_*`, `NTILE`, `PERCENT_RANK`, `CUME_DIST` and `NTH_VALUE` fall back to
-single-node computation on the TiDB layer — results stay correct, parallelism is
-lost. The packaged SQL skill tells the model to prefer `GROUP BY` aggregation
-where an equivalent exists.
+The skill also tells the model to prefer `GROUP BY` aggregation over an
+equivalent aggregate window function: the latter does not run in parallel on
+TiFlash.
 
 ## Known TiDB behaviors
 

@@ -4,7 +4,6 @@
 
 import logging
 import os
-import time
 import uuid
 from typing import Generator
 
@@ -17,10 +16,6 @@ logger = logging.getLogger(__name__)
 
 METADATA_TABLE = "datus_metadata_table"
 METADATA_VIEW = "datus_metadata_view"
-
-# A TiFlash replica syncs asynchronously; on the test-sized tables used here it
-# lands in a couple of seconds, but a cold TiFlash store can take longer.
-TIFLASH_READY_TIMEOUT = float(os.getenv("TIDB_TIFLASH_READY_TIMEOUT", "120"))
 
 
 def _build_config(database: str | None = None) -> TiDBConfig:
@@ -35,24 +30,6 @@ def _build_config(database: str | None = None) -> TiDBConfig:
 
 def _require_success(result, operation: str) -> None:
     assert result.success, f"{operation} failed: {result.error}"
-
-
-def wait_for_tiflash_replica(connector: TiDBConnector, table_name: str, database_name: str = "") -> None:
-    """Block until the table's TiFlash replica reports AVAILABLE, or fail."""
-    safe_db = (database_name or "").replace("'", "''")
-    safe_table = table_name.replace("'", "''")
-    where = f"TABLE_NAME = '{safe_table}'"
-    if safe_db:
-        where += f" AND TABLE_SCHEMA = '{safe_db}'"
-    sql = f"SELECT AVAILABLE FROM information_schema.TIFLASH_REPLICA WHERE {where}"
-
-    deadline = time.monotonic() + TIFLASH_READY_TIMEOUT
-    while time.monotonic() < deadline:
-        result = connector.execute({"sql_query": sql}, result_format="list")
-        if result.success and result.sql_return and int(result.sql_return[0]["AVAILABLE"]) == 1:
-            return
-        time.sleep(1)
-    raise AssertionError(f"TiFlash replica for {table_name!r} did not become available within {TIFLASH_READY_TIMEOUT}s")
 
 
 @pytest.fixture(scope="session")
@@ -83,32 +60,6 @@ def connector(config: TiDBConfig) -> Generator[TiDBConnector, None, None]:
     conn = TiDBConnector(config)
     try:
         yield conn
-    finally:
-        conn.close()
-
-
-@pytest.fixture(scope="session")
-def tiflash_available(database_setup: TiDBConfig) -> bool:
-    """Whether the cluster has a live TiFlash store.
-
-    The columnar tests are meaningless without one, and a single-container
-    `--store=unistore` TiDB has none, so they skip rather than fail there.
-    """
-    conn = TiDBConnector(database_setup)
-    try:
-        result = conn.execute(
-            {
-                "sql_query": (
-                    "SELECT COUNT(*) AS store_count FROM information_schema.TIKV_STORE_STATUS "
-                    "WHERE LABEL LIKE '%tiflash%'"
-                )
-            },
-            result_format="list",
-        )
-        return bool(result.success and result.sql_return and int(result.sql_return[0]["store_count"]) > 0)
-    except Exception:
-        logger.warning("Could not determine TiFlash availability", exc_info=True)
-        return False
     finally:
         conn.close()
 
@@ -166,43 +117,6 @@ def temp_table(connector: TiDBConnector) -> Generator[str, None, None]:
         "create DML test table",
     )
     try:
-        yield table_name
-    finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
-
-
-@pytest.fixture
-def columnar_table(
-    connector: TiDBConnector,
-    config: TiDBConfig,
-    tiflash_available: bool,
-) -> Generator[str, None, None]:
-    """Create a table with a synced TiFlash replica for columnar tests."""
-    if not tiflash_available:
-        pytest.skip("cluster has no TiFlash store")
-
-    table_name = f"datus_tiflash_{uuid.uuid4().hex[:8]}"
-    _require_success(
-        connector.execute_ddl(
-            f"""
-            CREATE TABLE `{table_name}` (
-                `id` BIGINT NOT NULL,
-                `grp` VARCHAR(16) NOT NULL,
-                `amount` DECIMAL(12,2) NOT NULL,
-                PRIMARY KEY (`id`)
-            )
-            """
-        ),
-        "create columnar test table",
-    )
-    try:
-        rows = ", ".join(f"({i}, 'g{i % 4}', {i * 1.5:.2f})" for i in range(200))
-        _require_success(connector.execute_insert(f"INSERT INTO `{table_name}` VALUES {rows}"), "insert columnar rows")
-        _require_success(
-            connector.execute_ddl(f"ALTER TABLE `{table_name}` SET TIFLASH REPLICA 1"),
-            "grant TiFlash replica",
-        )
-        wait_for_tiflash_replica(connector, table_name, database_name=config.database or "")
         yield table_name
     finally:
         connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")

@@ -1,8 +1,0 @@
-# Keep the CI footprint predictable: TiKV otherwise sizes its block cache and
-# raft-engine memory from the host's total RAM, which on a large runner reserves
-# gigabytes it never needs for a test-sized dataset.
-[storage.block-cache]
-capacity = "256MB"
-
-[raftstore]
-capacity = "10GB"

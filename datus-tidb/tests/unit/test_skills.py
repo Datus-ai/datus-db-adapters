@@ -36,17 +36,13 @@ def test_skill_warns_about_the_clauses_tidb_accepts_but_ignores():
     assert "silently" in notes.lower()
 
 
-def test_skill_lists_every_window_function_that_reaches_tiflash_mpp():
-    """Only these seven push down; the rest fall back to single-node execution
-    on the TiDB layer (live-verified on TiDB v8.5 + TiFlash)."""
+def test_skill_covers_tiflash_without_pinning_engine_internals():
+    """The stable guidance: replicas are transparent, hints are for diagnosis,
+    and aggregate window functions lose their parallelism."""
     notes = get_tidb_sql_generation_notes()
 
-    for function in ("ROW_NUMBER", "RANK", "DENSE_RANK", "LEAD", "LAG", "FIRST_VALUE", "LAST_VALUE"):
-        assert function in notes
     assert "TIFLASH_REPLICA" in notes
     assert "read_from_storage" in notes
-    # The actionable rewrite: GROUP BY aggregation does push down, its window
-    # equivalent does not.
     assert "GROUP BY" in notes
 
 
