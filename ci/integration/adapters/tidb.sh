@@ -23,5 +23,8 @@ adapter_env_summary() {
 }
 
 wait_for_adapter_client_readiness() {
-  wait_for_python_connector_readiness "$ADAPTER_NAME" "$ADAPTER_PACKAGE"
+  # Not the shared connector probe: a reachable TiDB is not the whole cluster,
+  # and the columnar tests need TiFlash to have registered with PD first.
+  uv run --package "$ADAPTER_PACKAGE" python datus-tidb/scripts/wait_for_tidb.py \
+    --timeout "${TIDB_READY_TIMEOUT:-300}"
 }
