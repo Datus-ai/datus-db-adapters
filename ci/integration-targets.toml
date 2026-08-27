@@ -18,6 +18,10 @@ kind = "compose"
 package = "datus-doris"
 kind = "compose"
 
+[targets.tidb]
+package = "datus-tidb"
+kind = "compose"
+
 [targets.trino]
 package = "datus-trino"
 kind = "compose"

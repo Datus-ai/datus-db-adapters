@@ -23,6 +23,7 @@ COMPOSE_TARGETS = {
     "clickhouse",
     "starrocks",
     "doris",
+    "tidb",
     "trino",
     "greenplum",
     "hive",
@@ -46,8 +47,8 @@ def test_sqlalchemy_runtime_change_selects_transitive_starrocks_dependency() -> 
 def test_mysql_runtime_change_selects_mysql_family_reverse_dependencies() -> None:
     selection = select("datus-mysql/datus_mysql/connector.py")
 
-    assert selection.compose_targets == {"mysql", "starrocks", "doris"}
-    assert {"datus-mysql", "datus-starrocks", "datus-doris"} <= selection.unit_packages
+    assert selection.compose_targets == {"mysql", "starrocks", "doris", "tidb"}
+    assert {"datus-mysql", "datus-starrocks", "datus-doris", "datus-tidb"} <= selection.unit_packages
 
 
 def test_adapter_runtime_change_selects_only_that_adapter_without_dependents() -> None:
@@ -311,7 +312,7 @@ def test_external_dependency_pyproject_change_selects_runtime_dependents() -> No
 
     selection = select_impacts(REPO_ROOT, [path], before_text=lambda _: before)
 
-    assert selection.compose_targets == {"mysql", "starrocks", "doris"}
+    assert selection.compose_targets == {"mysql", "starrocks", "doris", "tidb"}
     assert selection.smoke_packages == {"datus-mysql"}
 
 

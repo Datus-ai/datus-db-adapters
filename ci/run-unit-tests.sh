@@ -12,6 +12,7 @@ PACKAGE_SPECS=(
   "datus-clickhouse:datus-clickhouse/tests/unit"
   "datus-starrocks:datus-starrocks/tests/unit"
   "datus-doris:datus-doris/tests/unit"
+  "datus-tidb:datus-tidb/tests/unit"
   "datus-trino:datus-trino/tests/unit"
   "datus-greenplum:datus-greenplum/tests/unit"
   "datus-hive:datus-hive/tests/unit"
