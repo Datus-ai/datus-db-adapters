@@ -1,6 +1,6 @@
 services:
   starrocks:
-    image: starrocks/allin1-ubuntu:3.3.0
+    image: starrocks/allin1-ubuntu:3.3-latest
     environment:
       - TZ=Asia/Shanghai
     ports:

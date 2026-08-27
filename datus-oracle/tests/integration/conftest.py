@@ -10,7 +10,7 @@ import pytest
 from datus_oracle import OracleConfig, OracleConnector
 
 # ---------------------------------------------------------------------------
-# TPC-H DDL & Data (Oracle 19c syntax)
+# TPC-H DDL & Data (Oracle 19c-compatible syntax)
 # ---------------------------------------------------------------------------
 
 TPCH_TABLES = ["tpch_region", "tpch_nation", "tpch_supplier", "tpch_customer", "tpch_orders"]
@@ -311,13 +311,13 @@ def _make_config() -> OracleConfig:
         port=int(os.getenv("ORACLE_PORT", "1521")),
         username=os.getenv("ORACLE_USER", "datus_test"),
         password=os.getenv("ORACLE_PASSWORD", "test_password"),
-        service_name=os.getenv("ORACLE_SERVICE_NAME", "ORCLPDB1"),
+        service_name=os.getenv("ORACLE_SERVICE_NAME", "FREEPDB1"),
         schema_name=os.getenv("ORACLE_SCHEMA", "DATUS_TEST"),
     )
 
 
 def drop_table_sql(table_ref: str) -> str:
-    """Oracle 19c has no DROP TABLE IF EXISTS; swallow ORA-00942 only."""
+    """Keep the cleanup compatible with Oracle 19c; swallow ORA-00942 only."""
     return (
         "BEGIN "
         f"EXECUTE IMMEDIATE 'DROP TABLE {table_ref} CASCADE CONSTRAINTS'; "
@@ -385,7 +385,7 @@ def tpch_setup():
             conn.execute_ddl(drop_table_sql(f'{schema_ref}."{table_name.upper()}"'))
             conn.execute_ddl(ddl.format(schema=schema_ref))
 
-        # Oracle 19c has no multi-row INSERT ... VALUES; insert row by row
+        # Insert row by row to keep this fixture compatible with Oracle 19c.
         for table_name, rows in TPCH_DATA.items():
             for row in rows:
                 values = ", ".join(_escape_value(table_name, i, v) for i, v in enumerate(row))

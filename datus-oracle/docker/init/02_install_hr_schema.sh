@@ -6,7 +6,7 @@ set -euo pipefail
 # against foreign keys, a self-referencing hierarchy, a view and PL/SQL
 # objects — structures the TPC-H fixtures do not cover.
 #
-# Runs after every database start (mounted at /opt/oracle/scripts/startup), so
+# Runs after every database start (mounted at /container-entrypoint-startdb.d), so
 # it exits early once HR is present. Set ORACLE_SKIP_SAMPLE_SCHEMAS=1 to skip
 # the installation entirely.
 
@@ -30,7 +30,7 @@ if [[ ! "$HR_PASSWORD" =~ ^[A-Za-z][A-Za-z0-9_]{7,127}$ ]]; then
   exit 1
 fi
 
-ORACLE_PDB="${ORACLE_PDB:-ORCLPDB1}"
+ORACLE_PDB="${ORACLE_PDB:-FREEPDB1}"
 if [[ ! "$ORACLE_PDB" =~ ^[A-Za-z][A-Za-z0-9_]{0,127}$ ]]; then
   echo "ORACLE_PDB must be an unquoted Oracle identifier." >&2
   exit 1
