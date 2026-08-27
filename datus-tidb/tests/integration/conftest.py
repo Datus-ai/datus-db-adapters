@@ -39,11 +39,18 @@ def _require_success(result, operation: str) -> None:
 
 def wait_for_tiflash_replica(connector: TiDBConnector, table_name: str, database_name: str = "") -> None:
     """Block until the table's TiFlash replica reports AVAILABLE, or fail."""
+    safe_db = (database_name or "").replace("'", "''")
+    safe_table = table_name.replace("'", "''")
+    where = f"TABLE_NAME = '{safe_table}'"
+    if safe_db:
+        where += f" AND TABLE_SCHEMA = '{safe_db}'"
+    sql = f"SELECT AVAILABLE FROM information_schema.TIFLASH_REPLICA WHERE {where}"
+
     deadline = time.monotonic() + TIFLASH_READY_TIMEOUT
     while time.monotonic() < deadline:
-        for replica in connector.get_tiflash_replicas(database_name=database_name):
-            if replica["table_name"] == table_name and replica["available"]:
-                return
+        result = connector.execute({"sql_query": sql}, result_format="list")
+        if result.success and result.sql_return and int(result.sql_return[0]["AVAILABLE"]) == 1:
+            return
         time.sleep(1)
     raise AssertionError(f"TiFlash replica for {table_name!r} did not become available within {TIFLASH_READY_TIMEOUT}s")
 

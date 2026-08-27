@@ -4,7 +4,6 @@
 
 from unittest.mock import patch
 
-import pandas as pd
 import pytest
 
 from datus_db_core import DatusDbException, connector_registry
@@ -80,62 +79,6 @@ def test_supported_table_types_reach_the_inherited_lookup(connector, table_type)
         assert connector._get_metadata(table_type=table_type, database_name="analytics") == []
 
     inherited.assert_called_once_with(table_type, "", "analytics")
-
-
-def test_get_tiflash_replicas_reports_replica_state(connector):
-    frame = pd.DataFrame(
-        {
-            "TABLE_SCHEMA": ["analytics", "analytics"],
-            "TABLE_NAME": ["orders", "lineitem"],
-            "REPLICA_COUNT": [1, 2],
-            "AVAILABLE": [1, 0],
-            "PROGRESS": [1.0, 0.35],
-        }
-    )
-    with patch.object(TiDBConnector, "connect"), patch.object(TiDBConnector, "_execute_pandas", return_value=frame):
-        replicas = connector.get_tiflash_replicas()
-
-    assert replicas == [
-        {
-            "database_name": "analytics",
-            "table_name": "orders",
-            "replica_count": 1,
-            "available": True,
-            "progress": 1.0,
-        },
-        {
-            "database_name": "analytics",
-            "table_name": "lineitem",
-            "replica_count": 2,
-            "available": False,
-            "progress": 0.35,
-        },
-    ]
-
-
-def test_get_tiflash_replicas_scopes_and_escapes_the_database(connector):
-    frame = pd.DataFrame({"TABLE_SCHEMA": [], "TABLE_NAME": [], "REPLICA_COUNT": [], "AVAILABLE": [], "PROGRESS": []})
-    with (
-        patch.object(TiDBConnector, "connect"),
-        patch.object(TiDBConnector, "_execute_pandas", return_value=frame) as execute,
-    ):
-        assert connector.get_tiflash_replicas(database_name="it's") == []
-
-    sql = execute.call_args.args[0]
-    assert "information_schema.TIFLASH_REPLICA" in sql
-    assert "WHERE TABLE_SCHEMA = 'it''s'" in sql
-
-
-def test_get_tiflash_replicas_without_a_database_queries_every_database(connector):
-    frame = pd.DataFrame({"TABLE_SCHEMA": [], "TABLE_NAME": [], "REPLICA_COUNT": [], "AVAILABLE": [], "PROGRESS": []})
-    connector.database_name = ""
-    with (
-        patch.object(TiDBConnector, "connect"),
-        patch.object(TiDBConnector, "_execute_pandas", return_value=frame) as execute,
-    ):
-        connector.get_tiflash_replicas()
-
-    assert "WHERE" not in execute.call_args.args[0]
 
 
 def test_identifiers_use_backticks(connector):

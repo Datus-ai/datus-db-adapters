@@ -49,10 +49,6 @@ from datus_tidb import TiDBConfig, TiDBConnector
 
 connector = TiDBConnector(TiDBConfig(username="root", database="analytics"))
 result = connector.execute({"sql_query": "SELECT 1"}, result_format="list")
-
-# Which tables have a usable columnar replica?
-for replica in connector.get_tiflash_replicas(database_name="analytics"):
-    print(replica["table_name"], replica["available"], replica["progress"])
 ```
 
 ## TiFlash
@@ -62,9 +58,9 @@ TiFlash is TiDB's columnar replica engine. A table reaches it only after
 optimizer picks between row store (TiKV) and columnar (TiFlash) on its own, and
 analytical queries run in parallel MPP mode without any query change.
 
-`get_tiflash_replicas()` reports the per-table state so a caller can tell
-whether a heavy aggregation will hit the columnar path or fall back to a full
-row-store scan competing with online traffic.
+Replica state is one query — `SELECT * FROM information_schema.TIFLASH_REPLICA`
+— which is what the packaged SQL skill points the model at; the adapter adds no
+wrapper around it.
 
 Note that **window functions largely do not run in MPP**: only `ROW_NUMBER`,
 `RANK`, `DENSE_RANK`, `LEAD`, `LAG`, `FIRST_VALUE` and `LAST_VALUE` push down.

@@ -32,10 +32,13 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
     * Materialized views — TiDB has none, and ``information_schema`` has no
       ``MATERIALIZED_VIEWS`` table, so the inherited lookup fails with a bare
       ``1146`` instead of saying the feature is absent.
-    * TiFlash — the columnar replica engine, exposed through
-      ``information_schema.TIFLASH_REPLICA``; it has no MySQL counterpart.
     * DDL validation — TiDB parses ``CHECK`` and ``FULLTEXT`` without honouring
       them, which a MySQL-shaped validator has no reason to flag.
+
+    TiFlash, TiDB's columnar replica engine, needs nothing here: replicas are
+    transparent to SQL (the optimizer picks the store), and their state is one
+    query against ``information_schema.TIFLASH_REPLICA`` — which the packaged
+    SQL skill points at directly.
     """
 
     def __init__(self, config: Union[TiDBConfig, dict]):
@@ -101,48 +104,6 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
                 "TiDB has no materialized views; use a view or a TiFlash replica instead",
             )
         return super()._get_metadata(table_type, catalog_name, database_name)
-
-    # ==================== TiFlash (Columnar Replicas) ====================
-
-    def get_tiflash_replicas(self, database_name: str = "") -> List[Dict[str, Any]]:
-        """Return the TiFlash columnar replica state of each replicated table.
-
-        TiFlash is TiDB's columnar engine: a table only reaches it once a
-        replica is granted (``ALTER TABLE ... SET TIFLASH REPLICA n``) and
-        finishes syncing. Analytical scans and MPP push-down are available only
-        for tables listed here with ``available`` true, so callers planning a
-        heavy aggregation can check first rather than fall back to a full row
-        scan on TiKV.
-
-        Args:
-            database_name: Restrict to one database; empty means every database
-
-        Returns:
-            One dict per replicated table: database_name, table_name,
-            replica_count, available, progress
-        """
-        self.connect()
-        database_name = database_name or self.database_name
-
-        sql = (
-            "SELECT TABLE_SCHEMA, TABLE_NAME, REPLICA_COUNT, AVAILABLE, PROGRESS "
-            "FROM information_schema.TIFLASH_REPLICA"
-        )
-        if database_name:
-            safe_db = database_name.replace("'", "''")
-            sql += f" WHERE TABLE_SCHEMA = '{safe_db}'"
-
-        rows = self._execute_pandas(sql)
-        return [
-            {
-                "database_name": rows["TABLE_SCHEMA"][i],
-                "table_name": rows["TABLE_NAME"][i],
-                "replica_count": int(rows["REPLICA_COUNT"][i]),
-                "available": bool(rows["AVAILABLE"][i]),
-                "progress": float(rows["PROGRESS"][i]),
-            }
-            for i in range(len(rows))
-        ]
 
     # ==================== Utility Methods ====================
 

@@ -21,27 +21,34 @@ def _rows(connector: TiDBConnector, sql: str) -> list[dict]:
     return result.sql_return
 
 
+def _replicas(connector: TiDBConnector, database: str) -> dict:
+    """Replica inventory, read the way the SQL skill tells the model to read it."""
+    rows = _rows(
+        connector,
+        "SELECT TABLE_NAME, REPLICA_COUNT, AVAILABLE, PROGRESS "
+        "FROM information_schema.TIFLASH_REPLICA "
+        f"WHERE TABLE_SCHEMA = '{database}'",
+    )
+    return {row["TABLE_NAME"]: row for row in rows}
+
+
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_get_tiflash_replicas_reports_a_synced_replica(connector: TiDBConnector, columnar_table: str, config):
-    replicas = connector.get_tiflash_replicas(database_name=config.database)
-    by_table = {replica["table_name"]: replica for replica in replicas}
+def test_replica_inventory_reports_a_synced_replica(connector: TiDBConnector, columnar_table: str, config):
+    by_table = _replicas(connector, config.database)
 
     assert columnar_table in by_table
     replica = by_table[columnar_table]
-    assert replica["replica_count"] == 1
-    assert replica["available"] is True
-    assert replica["progress"] == pytest.approx(1.0)
-    assert replica["database_name"] == config.database
+    assert int(replica["REPLICA_COUNT"]) == 1
+    assert int(replica["AVAILABLE"]) == 1
+    assert float(replica["PROGRESS"]) == pytest.approx(1.0)
 
 
 @pytest.mark.integration
 def test_tables_without_a_replica_are_absent(connector: TiDBConnector, temp_table: str, config):
     """`temp_table` never gets a replica, so it must not appear — otherwise the
-    caller cannot tell columnar-ready tables from row-store-only ones."""
-    replicated = {r["table_name"] for r in connector.get_tiflash_replicas(database_name=config.database)}
-
-    assert temp_table not in replicated
+    inventory cannot tell columnar-ready tables from row-store-only ones."""
+    assert temp_table not in _replicas(connector, config.database)
 
 
 @pytest.mark.integration
