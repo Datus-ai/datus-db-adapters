@@ -2,7 +2,7 @@
 
 Oracle database adapter for [Datus](https://github.com/Datus-ai/datus-agent).
 
-Targets Oracle Database 19c; connects via [python-oracledb](https://python-oracledb.readthedocs.io/) Thin mode (no Oracle Client required, supports Oracle Database 12.1+).
+Generates Oracle Database 19c-compatible SQL and connects via [python-oracledb](https://python-oracledb.readthedocs.io/) Thin mode (no Oracle Client required, supports Oracle Database 12.1+). Integration CI runs against Oracle Database Free 23ai.
 
 ## Installation
 
@@ -21,7 +21,7 @@ services:
       port: 1521
       username: datus_test
       password: ${ORACLE_PASSWORD}
-      service_name: ORCLPDB1
+      service_name: FREEPDB1
       schema: DATUS_TEST
       default: true
 ```
@@ -47,9 +47,6 @@ cd datus-oracle && python -m pytest tests/unit/ -v
 
 # Start the local integration database. Both passwords are required; choose
 # values that are not reused outside this disposable development environment.
-# The default Oracle 19c Enterprise Edition image requires accepting its license
-# in Oracle Container Registry and logging Docker in to that registry first.
-docker login container-registry.oracle.com
 export ORACLE_SYS_PASSWORD='<strong-sys-password>'
 export ORACLE_PASSWORD='<app-password-starting-with-a-letter>'
 docker compose up -d
@@ -58,10 +55,10 @@ docker compose up -d
 cd datus-oracle && python -m pytest tests/integration/ -v
 ```
 
-The compose environment pins Oracle Database 19c `19.3.0.0`, uses
-`ORCLCDB`/`ORCLPDB1`, and stores its data in a dedicated 19c volume. The first
-database creation is substantially slower than restarting an initialized
-volume; the CI readiness probe allows up to 20 minutes by default.
+The compose environment uses `gvenzl/oracle-free:23-slim`, connects through
+`FREEPDB1`, and stores its data in a dedicated 23ai Free volume. The first
+database creation is slower than restarting an initialized volume; the CI
+readiness probe allows up to 20 minutes by default.
 
 ### Sample schemas
 

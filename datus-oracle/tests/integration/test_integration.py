@@ -38,7 +38,7 @@ def test_connection_with_dict():
                 "port": int(os.getenv("ORACLE_PORT", "1521")),
                 "username": os.getenv("ORACLE_USER", "datus_test"),
                 "password": os.getenv("ORACLE_PASSWORD", "test_password"),
-                "database": os.getenv("ORACLE_SERVICE_NAME", "ORCLPDB1"),
+                "database": os.getenv("ORACLE_SERVICE_NAME", "FREEPDB1"),
             }
         )
         assert conn.test_connection()
