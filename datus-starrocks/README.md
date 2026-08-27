@@ -239,7 +239,7 @@ datus-starrocks/
 ├── scripts/
 │   ├── test.sh              # Test runner script
 │   └── init_tpch_data.py    # Manual TPC-H data initialization
-├── docker-compose.yml       # StarRocks 3.3.0 test container
+├── docker-compose.yml       # StarRocks 3.3-latest test container
 ├── pyproject.toml
 └── README.md
 ```
