@@ -18,6 +18,7 @@ Plugin Adapters (Independent packages, install as needed)
 │   ├── datus-postgresql
 │   ├── datus-hologres
 │   ├── datus-doris
+│   ├── datus-tidb
 │   ├── datus-oracle
 │   └── datus-gaussdb
 │
@@ -197,6 +198,23 @@ pip install datus-gaussdb
 
 ---
 
+### 11. datus-tidb
+TiDB adapter (MySQL wire protocol).
+
+**Installation**:
+```bash
+pip install datus-tidb
+```
+
+**Features**:
+- Inherits MySQL connection, execution, and metadata handling
+- TiFlash columnar replica state through `get_tiflash_replicas()`
+- Flags the two DDL clauses TiDB accepts without honouring (`CHECK`, `FULLTEXT`)
+- Adapter-packaged TiDB SQL skill covering unsupported constructs and TiFlash MPP push-down
+- Four-container Docker integration coverage (PD, TiKV, TiDB, TiFlash) including columnar and MPP assertions
+
+---
+
 ## Development Guide
 
 ### Development Environment Setup
@@ -216,6 +234,7 @@ pip install -e datus-sqlalchemy
 pip install -e datus-mysql
 pip install -e datus-starrocks
 pip install -e datus-doris
+pip install -e datus-tidb
 pip install -e datus-snowflake
 pip install -e datus-maxcompute
 pip install -e datus-hologres

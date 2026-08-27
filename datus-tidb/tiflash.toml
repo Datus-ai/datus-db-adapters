@@ -1,0 +1,27 @@
+# TiFlash node configuration for the integration-test cluster.
+# `flash.proxy` addresses must be container-reachable: TiFlash registers itself
+# with PD under `advertise-addr`, and TiKV replicates to whatever it finds there.
+listen_host = "0.0.0.0"
+path = "/data"
+tmp_path = "/data/tmp"
+mark_cache_size = 268435456
+minmax_index_cache_size = 268435456
+
+[flash]
+service_addr = "tiflash0:3930"
+tidb_status_addr = "tidb0:10080"
+
+[flash.proxy]
+addr = "0.0.0.0:20170"
+advertise-addr = "tiflash0:20170"
+status-addr = "0.0.0.0:20292"
+advertise-status-addr = "tiflash0:20292"
+data-dir = "/data/proxy"
+
+[logger]
+level = "information"
+log = "/data/logs/server.log"
+errorlog = "/data/logs/error.log"
+
+[raft]
+pd_addr = "pd0:2379"

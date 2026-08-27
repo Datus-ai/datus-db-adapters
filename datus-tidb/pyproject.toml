@@ -1,0 +1,81 @@
+[project]
+name = "datus-tidb"
+version = "0.1.0"
+description = "TiDB database adapter for Datus"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "DatusAI", email = "support@datus.ai"}
+]
+keywords = ["datus", "database", "tidb", "adapter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "datus-db-core>=0.1.5",
+    "datus-mysql>=0.1.8",
+    "datus-sqlalchemy>=0.1.8",
+    "pymysql>=1.1.1",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Datus-ai/datus-db-adapters"
+Repository = "https://github.com/Datus-ai/datus-db-adapters"
+Issues = "https://github.com/Datus-ai/datus-db-adapters/issues"
+
+[project.entry-points."datus.adapters"]
+tidb = "datus_tidb:register"
+
+[project.entry-points."datus.skills"]
+tidb = "datus_tidb.skills:get_skills_dir"
+
+[tool.uv.sources]
+datus-db-core = { workspace = true }
+datus-mysql = { workspace = true }
+datus-sqlalchemy = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["datus_tidb"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "acceptance: marks tests as acceptance tests for CI/CD (core functionality validation)",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["datus_tidb"]
+omit = ["tests/*", "**/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

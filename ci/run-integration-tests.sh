@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER_DEFINITION_DIR="$ROOT_DIR/ci/integration/adapters"
 cd "$ROOT_DIR"
 
-ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris trino greenplum hive spark oracle gaussdb)
+ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris tidb trino greenplum hive spark oracle gaussdb)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 CURRENT_ADAPTER=""

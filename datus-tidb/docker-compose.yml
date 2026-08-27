@@ -1,0 +1,62 @@
+# TiDB integration-test cluster.
+#
+# Four services rather than a single container: TiFlash — TiDB's columnar
+# replica engine — requires the real storage stack (PD for placement, TiKV for
+# the row store it replicates from). The single-container `--store=unistore`
+# form starts in ~1s but has no TiFlash, so it cannot cover the columnar and
+# MPP paths this adapter exposes.
+services:
+  pd0:
+    image: pingcap/pd:v8.5.0
+    command:
+      - --name=pd0
+      - --data-dir=/data/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd0:2379
+      - --advertise-peer-urls=http://pd0:2380
+      - --initial-cluster=pd0=http://pd0:2380
+
+  tikv0:
+    image: pingcap/tikv:v8.5.0
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv0:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/data/tikv
+      - --pd=pd0:2379
+      - --config=/tikv.toml
+    volumes:
+      - ./tikv.toml:/tikv.toml:ro
+    depends_on:
+      - pd0
+
+  tidb0:
+    image: pingcap/tidb:v8.5.0
+    command:
+      - --store=tikv
+      - --path=pd0:2379
+      - --host=0.0.0.0
+      - --status-host=0.0.0.0
+      - --initialize-sql-file=/init/init.sql
+    ports:
+      - "${TIDB_HOST_PORT:-24000}:4000"
+      - "${TIDB_STATUS_HOST_PORT:-20080}:10080"
+    volumes:
+      - ./scripts/init.sql:/init/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:10080/status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      - tikv0
+
+  tiflash0:
+    image: pingcap/tiflash:v8.5.0
+    command:
+      - --config-file=/tiflash.toml
+    volumes:
+      - ./tiflash.toml:/tiflash.toml:ro
+    depends_on:
+      - tidb0
