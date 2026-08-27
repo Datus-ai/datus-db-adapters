@@ -1,6 +1,6 @@
 ---
 name: db-tidb-sql
-description: Generate, review, and understand TiDB SQL. Use for TiDB queries, DDL, DML, TiFlash columnar replicas, and rewrites where MySQL compatibility, unsupported constructs, silently-ignored clauses, or write-hotspot avoidance can affect correctness or performance.
+description: Generate, review, and understand TiDB SQL. Use for TiDB queries and DDL where MySQL compatibility, unsupported constructs, silently-ignored clauses, or write-hotspot avoidance can affect correctness or performance.
 ---
 
 # TiDB SQL
@@ -18,12 +18,10 @@ Generate TiDB-compatible SQL from metadata-provided object and column names. TiD
 Reject or rewrite these rather than emitting them:
 
 - **`FULL OUTER JOIN`** — express as a `UNION` of keys plus `LEFT JOIN`s.
-- **`JSON_TABLE`**, **`LATERAL` derived tables**, **`GROUPING SETS`**, **`QUALIFY`**.
+- **`JSON_TABLE`** and **`LATERAL` derived tables**.
 - **`CREATE TABLE ... AS SELECT`** — issue `CREATE TABLE` then `INSERT INTO ... SELECT`.
 - **`CORR`, `COVAR_POP`, `COVAR_SAMP`** — absent entirely, as aggregates and as window functions.
 - **3-argument `DATEDIFF('day', a, b)`** — TiDB's `DATEDIFF(a, b)` takes two arguments and returns days; use `TIMESTAMPDIFF(unit, a, b)` for other units.
-- **Stored procedures, triggers, events, `XA`, spatial/`GEOMETRY` types**.
-- **Updatable views** — a view is read-only; `UPDATE`/`DELETE` through it is rejected.
 - **Materialized views** — none exist; use a view, or a TiFlash replica for analytical speed.
 
 Available and safe to use: window functions, CTEs, recursive CTEs, `EXCEPT`, `INTERSECT`, `WITH ROLLUP`.
@@ -39,12 +37,10 @@ Do not rely on either for data integrity or search.
 
 ## TiFlash: columnar replicas
 
-TiFlash is TiDB's columnar engine — a second copy of the same data, kept consistent through Raft. It is transparent to SQL: once a table has a replica the optimizer reads it automatically, and no query change is needed.
+TiFlash is TiDB's columnar engine — a second copy of the same data, transparent to SQL. Once a table has a replica (`information_schema.TIFLASH_REPLICA` lists them) the optimizer reads it automatically.
 
-- Grant a replica with `ALTER TABLE t SET TIFLASH REPLICA 1`. It is asynchronous: check `information_schema.TIFLASH_REPLICA` for `AVAILABLE = 1` before expecting columnar reads.
-- Do not add `/*+ read_from_storage(tiflash[t]) */` as a matter of course — the optimizer already chooses. Reserve the hint for diagnosing a plan, and note that on a table with no replica it is ignored with a warning.
-- Tables *without* a replica run analytical scans on TiKV, competing with online transactions. Say so when a query needs a heavy scan over a table that has none.
-- **Aggregate window functions do not run in parallel on TiFlash.** `SUM`/`AVG`/`COUNT` over a window, `STDDEV_*` and `VAR_*` fall back to single-node computation on the TiDB layer — correct results, no parallelism. Where a query can be expressed either way, prefer `GROUP BY` aggregation, which does push down.
+- Do not add `/*+ read_from_storage(tiflash[t]) */` routinely — the optimizer already chooses, and on a table with no replica the hint is ignored with a warning. Reserve it for diagnosing a plan.
+- Aggregate window functions (`SUM`/`AVG`/`COUNT` over a window, `STDDEV_*`, `VAR_*`) do not run in parallel on TiFlash; where a query can be written either way, prefer `GROUP BY` aggregation.
 
 ## Table design
 
@@ -52,10 +48,6 @@ TiFlash is TiDB's columnar engine — a second copy of the same data, kept consi
 - Prefer `BIGINT AUTO_RANDOM PRIMARY KEY` over `AUTO_INCREMENT` for high write rates: a monotonically increasing key concentrates writes on one region. `AUTO_INCREMENT` values are unique but not gap-free or globally monotonic — never treat them as an ordering.
 - An integer `PRIMARY KEY` is `CLUSTERED` by default (the row is stored in the primary-key index); `SHOW CREATE TABLE` renders this as a `/*T![clustered_index] CLUSTERED */` comment alongside `/*T![auto_rand] AUTO_RANDOM(n) */`. Preserve both when round-tripping DDL.
 - `FOREIGN KEY` is supported (TiDB 6.6+), unlike in StarRocks and Doris.
-
-## Reading EXPLAIN
-
-TiDB's `EXPLAIN` columns are `id`, `estRows`, `task`, `access object`, `operator info` — the estimate column is `estRows`, not MySQL's `rows`. The `task` column shows where each operator runs: `root` (TiDB node), `cop[tikv]` (row store), or `mpp[tiflash]` (columnar, parallel).
 
 ## Avoid common dialect leaks
 

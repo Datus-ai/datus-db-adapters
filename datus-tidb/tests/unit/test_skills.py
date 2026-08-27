@@ -46,11 +46,6 @@ def test_skill_covers_tiflash_without_pinning_engine_internals():
     assert "GROUP BY" in notes
 
 
-def test_skill_documents_the_tidb_explain_shape():
-    """TiDB's estimate column is estRows, not MySQL's rows."""
-    assert "estRows" in get_tidb_sql_generation_notes()
-
-
 def test_tidb_registration_and_skill_entry_point():
     saved = {
         name: getattr(connector_registry, f"_{name}").copy()
