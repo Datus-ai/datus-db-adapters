@@ -53,11 +53,18 @@ def main() -> int:
         for data in TPCH_DATA:
             connector.execute_insert(data)
 
+        mismatched = []
         for table, expected in zip(TPCH_TABLES, ROW_COUNTS):
             result = connector.execute({"sql_query": f"SELECT COUNT(*) AS c FROM `{table}`"}, result_format="list")
             actual = int(result.sql_return[0]["c"]) if result.success else -1
+            if actual != expected:
+                mismatched.append(table)
             status = "ok" if actual == expected else f"expected {expected}"
             print(f"  {table}: {actual} rows ({status})")
+
+        if mismatched:
+            print(f"TPC-H seed is incomplete: {', '.join(mismatched)}", file=sys.stderr)
+            return 1
 
         if args.tiflash:
             for table in TPCH_TABLES:
