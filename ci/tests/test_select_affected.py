@@ -171,7 +171,7 @@ def test_shared_impact_or_dependency_change_selects_all_integration_targets(path
     selection = select(path)
 
     assert selection.compose_targets == COMPOSE_TARGETS
-    assert selection.cloud_targets == {"hologres"}
+    assert selection.cloud_targets == {"bigquery", "hologres"}
 
 
 @pytest.mark.parametrize(
@@ -195,6 +195,7 @@ def test_release_and_format_tooling_does_not_select_integration(path: str) -> No
     [
         (".github/workflows/hologres-cloud-tests.yml", {"hologres"}),
         (".github/workflows/maxcompute-cloud-tests.yml", set()),
+        (".github/workflows/bigquery-cloud-tests.yml", {"bigquery"}),
     ],
 )
 def test_cloud_workflow_change_selects_only_enabled_cloud_target(path: str, expected_targets: set[str]) -> None:
@@ -212,6 +213,14 @@ def test_disabled_cloud_target_runs_package_checks_without_live_test() -> None:
     assert selection.cloud_targets == set()
 
 
+def test_bigquery_runtime_change_selects_configured_live_test() -> None:
+    selection = select("datus-bigquery/datus_bigquery/connector.py")
+
+    assert selection.unit_packages == {"datus-bigquery"}
+    assert selection.smoke_packages == {"datus-bigquery"}
+    assert selection.cloud_targets == {"bigquery"}
+
+
 def test_workspace_dependency_graph_contains_transitive_starrocks_edge() -> None:
     packages = load_workspace_packages(REPO_ROOT)
 
@@ -225,8 +234,15 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
     targets = load_integration_targets()
 
     assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS
-    assert {name for name, target in targets.items() if target.kind == "cloud"} == {"hologres", "maxcompute"}
-    assert {name for name, target in targets.items() if target.enabled} == COMPOSE_TARGETS | {"hologres"}
+    assert {name for name, target in targets.items() if target.kind == "cloud"} == {
+        "bigquery",
+        "hologres",
+        "maxcompute",
+    }
+    assert {name for name, target in targets.items() if target.enabled} == COMPOSE_TARGETS | {
+        "bigquery",
+        "hologres",
+    }
     assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute"}
 
 
@@ -241,7 +257,7 @@ def test_manual_full_selection_includes_every_target() -> None:
     selection = select_all(REPO_ROOT)
 
     assert selection.compose_targets == COMPOSE_TARGETS
-    assert selection.cloud_targets == {"hologres"}
+    assert selection.cloud_targets == {"bigquery", "hologres"}
     assert selection.unit_packages == set(load_workspace_packages(REPO_ROOT))
 
 

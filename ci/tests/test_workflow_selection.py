@@ -12,6 +12,7 @@ def test_aggregate_gate_requires_selected_jobs_to_succeed() -> None:
     assert 'require_result "oracle-integration-tests" "$ORACLE_RESULT" "success"' in source
     assert 'require_result "hologres-cloud-tests" "$HOLOGRES_RESULT" "success"' in source
     assert 'require_result "maxcompute-cloud-tests" "$MAXCOMPUTE_RESULT" "success"' in source
+    assert 'require_result "bigquery-cloud-tests" "$BIGQUERY_RESULT" "success"' in source
 
 
 def test_oracle_runs_after_the_parallel_compose_matrix() -> None:

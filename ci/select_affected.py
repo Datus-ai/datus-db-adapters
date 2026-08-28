@@ -48,6 +48,7 @@ _GLOBAL_COMPOSE_INTEGRATION_PATHS = frozenset(
     }
 )
 _CLOUD_WORKFLOW_TARGETS = {
+    ".github/workflows/bigquery-cloud-tests.yml": "bigquery",
     ".github/workflows/hologres-cloud-tests.yml": "hologres",
     ".github/workflows/maxcompute-cloud-tests.yml": "maxcompute",
 }

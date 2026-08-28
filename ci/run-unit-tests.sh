@@ -24,6 +24,7 @@ PACKAGE_SPECS=(
   "datus-hologres:datus-hologres/tests/unit"
   "datus-oracle:datus-oracle/tests/unit"
   "datus-gaussdb:datus-gaussdb/tests/unit"
+  "datus-bigquery:datus-bigquery/tests/unit"
 )
 
 usage() {

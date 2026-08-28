@@ -56,6 +56,10 @@ kind = "cloud"
 # No repository credentials or live CI instance are currently available.
 enabled = false
 
+[targets.bigquery]
+package = "datus-bigquery"
+kind = "cloud"
+
 [selection]
 packages_without_live_targets = [
     "datus-clickzetta",
