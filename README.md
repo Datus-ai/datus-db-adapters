@@ -143,7 +143,7 @@ pip install datus-maxcompute
 - SQL execution through MaxCompute jobs with explicit per-project namespace hints
 - Instance Tunnel reads in Arrow, pandas, list, and CSV formats, with bounded CSV iteration
 - Tables, views, materialized views, DDL, columns, partitions, and sample-row metadata
-- Dedicated cloud integration coverage for both namespace models
+- Manually triggered cloud integration coverage for both namespace models
 
 ---
 

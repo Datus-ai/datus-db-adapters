@@ -27,12 +27,12 @@ from .handlers import parse_maxcompute_identifier
 
 try:
     from odps import ODPS
-    from odps.errors import InternalServerError, WaitTimeoutError
+    from odps.errors import ODPSError, WaitTimeoutError
     from odps.rest import RestClient
 except ImportError as exc:  # pragma: no cover - protected by package dependency
     ODPS = None  # type: ignore[assignment]
     RestClient = object  # type: ignore[assignment,misc]
-    InternalServerError = WaitTimeoutError = Exception  # type: ignore[misc,assignment]
+    ODPSError = WaitTimeoutError = Exception  # type: ignore[misc,assignment]
     _PYODPS_IMPORT_ERROR: Optional[Exception] = exc
 else:
     _PYODPS_IMPORT_ERROR = None
@@ -41,6 +41,8 @@ logger = get_logger(__name__)
 
 _SQL_PREVIEW_CHARS = 50
 _NOT_THREE_LEVEL_MARKER = "is not 3-tier model project"
+_TWO_LEVEL_MODEL_ERROR_CODE = "ODPS-0110061"
+_TWO_LEVEL_MODEL_MARKER = "invalid database operations on two-tier model"
 _UNSUPPORTED_SQL_RE = re.compile(
     r"^\s*(?:begin(?:\s+transaction)?|start\s+transaction|commit|rollback|grant|revoke)\b",
     flags=re.IGNORECASE,
@@ -162,7 +164,10 @@ class MaxComputeConnector(BaseSqlConnector):
 
     @staticmethod
     def _is_two_level_project_error(exc: Exception) -> bool:
-        return _NOT_THREE_LEVEL_MARKER in str(exc).lower()
+        message = str(exc).lower()
+        if _NOT_THREE_LEVEL_MARKER in message:
+            return True
+        return getattr(exc, "code", None) == _TWO_LEVEL_MODEL_ERROR_CODE and _TWO_LEVEL_MODEL_MARKER in message
 
     def _ensure_namespace_mode(self) -> Literal["two_level", "three_level"]:
         if self._namespace_mode:
@@ -173,7 +178,7 @@ class MaxComputeConnector(BaseSqlConnector):
             try:
                 list(self._odps.list_schemas(project=self.project))
                 self._namespace_mode = "three_level"
-            except InternalServerError as exc:
+            except ODPSError as exc:
                 if not self._is_two_level_project_error(exc):
                     raise
                 self._namespace_mode = "two_level"
@@ -486,6 +491,15 @@ class MaxComputeConnector(BaseSqlConnector):
         value = getattr(table, "type", "")
         return str(getattr(value, "value", value)).upper()
 
+    @classmethod
+    def _metadata_table_type(cls, table: Any) -> Literal["table", "view", "mv"]:
+        object_type = cls._table_type(table)
+        if object_type == "VIRTUAL_VIEW":
+            return "view"
+        if object_type == "MATERIALIZED_VIEW":
+            return "mv"
+        return "table"
+
     def _list_objects(
         self,
         catalog_name: str = "",
@@ -624,7 +638,26 @@ class MaxComputeConnector(BaseSqlConnector):
         tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         project, schema, objects = self._list_objects(catalog_name, database_name, schema_name)
-        requested = {self._resolve_table(name, database_name=project, schema_name=schema)[2] for name in tables or []}
+        requested = set()
+        for table_name in tables or []:
+            requested_project, requested_schema, requested_name = self._resolve_table(
+                table_name,
+                database_name=project,
+                schema_name=schema,
+            )
+            if (requested_project, requested_schema) != (project, schema):
+                requested_scope = ".".join(part for part in (project, schema) if part)
+                resolved_scope = ".".join(part for part in (requested_project, requested_schema) if part)
+                raise DatusDbException(
+                    ErrorCode.COMMON_INVALID_PARAMETER,
+                    message_args={
+                        "error_message": (
+                            f"table '{table_name}' resolves to scope '{resolved_scope}', "
+                            f"outside requested scope '{requested_scope}'"
+                        )
+                    },
+                )
+            requested.add(requested_name)
         return [
             self._metadata_entry(project, schema, table, "table")
             for table in objects
@@ -664,14 +697,33 @@ class MaxComputeConnector(BaseSqlConnector):
         table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, Any]]:
         project, schema = self._validate_context(catalog_name, database_name, schema_name)
-        table_names = tables or self.get_tables(database_name=project, schema_name=schema)
+        targets: List[Tuple[str, str, str, Literal["table", "view", "mv"]]] = []
+        if tables:
+            for table_name in tables:
+                resolved_project, resolved_schema, name = self._resolve_table(
+                    table_name,
+                    database_name=project,
+                    schema_name=schema,
+                )
+                if table_type == "full":
+                    table = self._odps.get_table(
+                        name,
+                        project=resolved_project,
+                        schema=resolved_schema or None,
+                    )
+                    object_type = self._metadata_table_type(table)
+                else:
+                    object_type = table_type
+                targets.append((resolved_project, resolved_schema, name, object_type))
+        else:
+            objects = list(self._odps.list_tables(project=project, schema=schema or None))
+            for table in objects:
+                object_type = self._metadata_table_type(table)
+                if table_type == "full" or table_type == object_type:
+                    targets.append((project, schema, table.name, object_type))
+
         result: List[Dict[str, Any]] = []
-        for table_name in table_names:
-            resolved_project, resolved_schema, name = self._resolve_table(
-                table_name,
-                database_name=project,
-                schema_name=schema,
-            )
+        for resolved_project, resolved_schema, name, object_type in targets:
             query = (
                 f"SELECT * FROM "
                 f"{self.full_name(database_name=resolved_project, schema_name=resolved_schema, table_name=name)} "
@@ -698,7 +750,7 @@ class MaxComputeConnector(BaseSqlConnector):
                     "database_name": resolved_project,
                     "schema_name": resolved_schema,
                     "table_name": name,
-                    "table_type": table_type,
+                    "table_type": object_type,
                     "sample_rows": frame.to_csv(index=False),
                 }
             )

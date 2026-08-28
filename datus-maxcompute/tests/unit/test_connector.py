@@ -4,9 +4,10 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pyarrow as pa
 import pytest
-from odps.errors import InternalServerError, WaitTimeoutError
+from odps.errors import InternalServerError, ODPSError, WaitTimeoutError
 from odps.rest import RestClient
 from pydantic import BaseModel
 
@@ -78,6 +79,27 @@ def test_auto_detects_two_level_only_for_exact_service_error(config):
     assert connector.namespace_mode == "two_level"
     assert connector.get_effective_capabilities() == {"database"}
     assert connector.schema_name == ""
+
+
+def test_auto_detects_two_level_for_current_odps_error(config):
+    error = ODPSError(
+        "Invalid database operations on two-tier model",
+        code="ODPS-0110061",
+    )
+    connector, odps = make_connector(config)
+    odps.list_schemas.side_effect = error
+
+    assert connector.namespace_mode == "two_level"
+    assert connector.get_effective_capabilities() == {"database"}
+
+
+def test_auto_detection_propagates_same_code_with_unrelated_message(config):
+    error = ODPSError("unrelated project failure", code="ODPS-0110061")
+    connector, odps = make_connector(config)
+    odps.list_schemas.side_effect = error
+
+    with pytest.raises(ODPSError, match="unrelated project failure"):
+        _ = connector.namespace_mode
 
 
 def test_auto_detection_propagates_other_internal_errors(config):
@@ -318,6 +340,115 @@ def test_listed_names_round_trip_across_context_shapes(config):
     assert (
         connector.full_name(database_name="project_a", schema_name="analytics", table_name="orders")
         == "`project_a`.`analytics`.`orders`"
+    )
+
+
+def test_get_tables_with_ddl_matches_the_complete_requested_scope(config):
+    connector, odps = make_connector(config)
+    orders = MagicMock()
+    orders.name = "orders"
+    orders.type = SimpleNamespace(value="MANAGED_TABLE")
+    orders.get_ddl.return_value = "CREATE TABLE orders (id BIGINT)"
+    customers = MagicMock()
+    customers.name = "customers"
+    customers.type = SimpleNamespace(value="MANAGED_TABLE")
+    customers.get_ddl.return_value = "CREATE TABLE customers (id BIGINT)"
+    odps.list_tables.return_value = [orders, customers]
+
+    result = connector.get_tables_with_ddl(
+        database_name="project_a",
+        schema_name="analytics",
+        tables=["project_a.analytics.orders"],
+    )
+
+    assert [entry["table_name"] for entry in result] == ["orders"]
+    orders.get_ddl.assert_called_once_with()
+    customers.get_ddl.assert_not_called()
+
+
+def test_get_tables_with_ddl_rejects_table_from_another_schema(config):
+    connector, odps = make_connector(config)
+    odps.list_tables.return_value = []
+
+    with pytest.raises(DatusDbException, match="outside requested scope"):
+        connector.get_tables_with_ddl(
+            database_name="project_a",
+            schema_name="analytics",
+            tables=["project_a.default.orders"],
+        )
+
+
+def test_get_sample_rows_routes_implicit_view_requests(config):
+    connector, odps = make_connector(config)
+    odps.list_tables.return_value = [
+        SimpleNamespace(name="orders", type=SimpleNamespace(value="MANAGED_TABLE")),
+        SimpleNamespace(name="orders_view", type=SimpleNamespace(value="VIRTUAL_VIEW")),
+    ]
+    query_result = SimpleNamespace(
+        success=True,
+        sql_return=pd.DataFrame({"id": [1]}),
+        error=None,
+    )
+
+    with patch.object(connector, "execute_query", return_value=query_result) as execute_query:
+        result = connector.get_sample_rows(top_n=2, table_type="view")
+
+    assert [entry["table_name"] for entry in result] == ["orders_view"]
+    assert result[0]["table_type"] == "view"
+    execute_query.assert_called_once_with(
+        "SELECT * FROM `project_a`.`default`.`orders_view` LIMIT 2",
+        result_format="pandas",
+        database_name="project_a",
+        schema_name="default",
+    )
+
+
+def test_get_sample_rows_full_preserves_actual_object_types(config):
+    connector, odps = make_connector(config)
+    odps.list_tables.return_value = [
+        SimpleNamespace(name="orders", type=SimpleNamespace(value="MANAGED_TABLE")),
+        SimpleNamespace(name="orders_view", type=SimpleNamespace(value="VIRTUAL_VIEW")),
+        SimpleNamespace(name="orders_mv", type=SimpleNamespace(value="MATERIALIZED_VIEW")),
+    ]
+    query_result = SimpleNamespace(
+        success=True,
+        sql_return=pd.DataFrame({"id": [1]}),
+        error=None,
+    )
+
+    with patch.object(connector, "execute_query", return_value=query_result):
+        result = connector.get_sample_rows(table_type="full")
+
+    assert [(entry["table_name"], entry["table_type"]) for entry in result] == [
+        ("orders", "table"),
+        ("orders_view", "view"),
+        ("orders_mv", "mv"),
+    ]
+
+
+def test_get_sample_rows_full_resolves_explicit_object_type(config):
+    connector, odps = make_connector(config)
+    odps.get_table.return_value = SimpleNamespace(
+        name="orders_view",
+        type=SimpleNamespace(value="VIRTUAL_VIEW"),
+    )
+    query_result = SimpleNamespace(
+        success=True,
+        sql_return=pd.DataFrame({"id": [1]}),
+        error=None,
+    )
+
+    with patch.object(connector, "execute_query", return_value=query_result):
+        result = connector.get_sample_rows(
+            tables=["project_a.default.orders_view"],
+            table_type="full",
+        )
+
+    assert result[0]["table_type"] == "view"
+    odps.get_table.assert_called_once_with(
+        "orders_view",
+        project="project_a",
+        schema="default",
     )
 
 
