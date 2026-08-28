@@ -23,7 +23,7 @@ class BigQueryConfig(BaseModel):
     credentials_info: Optional[Secret[dict[str, Any]]] = Field(
         default=None,
         description="Service-account JSON object",
-        json_schema_extra={"input_type": "password"},
+        json_schema_extra={"input_type": "password", "value_type": "json_object"},
     )
     credentials_base64: Optional[SecretStr] = Field(
         default=None,

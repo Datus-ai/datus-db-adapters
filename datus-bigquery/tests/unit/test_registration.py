@@ -22,6 +22,14 @@ def test_registration_exposes_current_adapter_contract():
         assert metadata.config_class is BigQueryConfig
         assert metadata.display_name == "Google BigQuery"
         assert metadata.parser_dialect == "bigquery"
+        assert metadata.get_config_fields()["credentials_info"] == {
+            "required": False,
+            "default": None,
+            "description": "Service-account JSON object",
+            "type": "Optional",
+            "input_type": "password",
+            "value_type": "json_object",
+        }
         assert connector_registry.get_capabilities("bigquery") == {"catalog", "database"}
         assert connector_registry.get_uri_builder("bigquery") is build_bigquery_uri
         assert connector_registry.get_context_resolver("bigquery") is resolve_bigquery_context

@@ -16,6 +16,7 @@ on:
           - datus-doris
           - datus-tidb
           - datus-snowflake
+          - datus-bigquery
           - datus-clickzetta
           - datus-clickhouse
           - datus-hive

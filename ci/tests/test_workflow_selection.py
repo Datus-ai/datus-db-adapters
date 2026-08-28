@@ -1,6 +1,21 @@
+import tomllib
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "test.yml"
+PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-package-release.yml"
+
+
+def test_publish_workflow_offers_every_workspace_package() -> None:
+    source = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    options = source.partition("        options:\n")[2].partition("      version:\n")[0]
+    published_packages = {
+        line.removeprefix("          - ").strip() for line in options.splitlines() if line.startswith("          - ")
+    }
+    workspace = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    workspace_packages = set(workspace["tool"]["uv"]["workspace"]["members"])
+
+    assert published_packages == workspace_packages
 
 
 def test_aggregate_gate_requires_selected_jobs_to_succeed() -> None:
