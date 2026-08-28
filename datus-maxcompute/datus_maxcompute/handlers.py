@@ -117,13 +117,3 @@ def _split_identifier(identifier: str) -> list[str]:
         raise ValueError(f"Invalid MaxCompute table identifier: {identifier}")
     parts.append(value)
     return parts
-
-
-MAXCOMPUTE_SQL_GENERATION_NOTES = """
-MaxCompute namespace rules:
-- Use project.table for a two-level project.
-- Use project.schema.table for a schema-enabled three-level project.
-- Do not infer schema.table from a two-part identifier; Datus treats it as project.table.
-- Do not generate transaction control statements. UPDATE and DELETE require a compatible
-  transactional table and may be rejected by MaxCompute for ordinary tables.
-""".strip()
