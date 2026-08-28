@@ -3,6 +3,7 @@
 
 from datus_db_core.registry import ConnectorRegistry
 from datus_maxcompute import register
+from datus_maxcompute.skills import get_maxcompute_sql_generation_notes
 
 
 def test_registration_exposes_generic_hooks():
@@ -16,7 +17,9 @@ def test_registration_exposes_generic_hooks():
         assert ConnectorRegistry.get_capabilities("maxcompute") == {"database", "schema"}
         assert ConnectorRegistry.get_parser_dialect("maxcompute") == "hive"
         assert ConnectorRegistry.get_identifier_parser("maxcompute") is not None
-        assert "project.schema.table" in ConnectorRegistry.get_sql_generation_notes("maxcompute")
+        notes = ConnectorRegistry.get_sql_generation_notes("maxcompute")
+        assert callable(notes)
+        assert notes() == get_maxcompute_sql_generation_notes()
         assert ConnectorRegistry.get_uri_builder("maxcompute") is not None
         assert ConnectorRegistry.get_context_resolver("maxcompute") is not None
     finally:

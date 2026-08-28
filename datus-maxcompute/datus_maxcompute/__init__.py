@@ -5,11 +5,11 @@
 from .config import MaxComputeConfig
 from .connector import MaxComputeConnector
 from .handlers import (
-    MAXCOMPUTE_SQL_GENERATION_NOTES,
     build_maxcompute_uri,
     parse_maxcompute_identifier,
     resolve_maxcompute_context,
 )
+from .skills import get_maxcompute_sql_generation_notes
 
 __version__ = "0.1.0"
 __all__ = ["MaxComputeConnector", "MaxComputeConfig", "register"]
@@ -28,5 +28,5 @@ def register():
         context_resolver=resolve_maxcompute_context,
         parser_dialect="hive",
         identifier_parser=parse_maxcompute_identifier,
-        sql_generation_notes=MAXCOMPUTE_SQL_GENERATION_NOTES,
+        sql_generation_notes=get_maxcompute_sql_generation_notes,
     )
