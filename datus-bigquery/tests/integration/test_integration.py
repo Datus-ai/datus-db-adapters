@@ -5,7 +5,9 @@
 import uuid
 
 import pytest
+
 from datus_bigquery import BigQueryConfig, BigQueryConnector
+from datus_db_core.testing.contract import assert_success
 
 # ==================== Connection Tests ====================
 
@@ -68,7 +70,7 @@ def test_get_tables_with_ddl(connector: BigQueryConnector, config: BigQueryConfi
     table_name = f"test_table_{suffix}"
 
     full = f"`{config.project}`.`{config.dataset}`.`{table_name}`"
-    connector.execute_ddl(f"CREATE TABLE {full} (id INT64, name STRING)")
+    assert_success(connector.execute_ddl(f"CREATE TABLE {full} (id INT64, name STRING)"), "create DDL table")
 
     try:
         tables = connector.get_tables_with_ddl(
@@ -103,10 +105,16 @@ def test_get_views_with_ddl(connector: BigQueryConnector, config: BigQueryConfig
     full_view = f"`{config.project}`.`{config.dataset}`.`{view_name}`"
 
     # Create base table
-    connector.execute_ddl(f"CREATE TABLE {full_table} (id INT64, name STRING)")
+    assert_success(
+        connector.execute_ddl(f"CREATE TABLE {full_table} (id INT64, name STRING)"),
+        "create view base table",
+    )
 
     # Create view
-    connector.execute_ddl(f"CREATE VIEW {full_view} AS SELECT * FROM {full_table}")
+    assert_success(
+        connector.execute_ddl(f"CREATE VIEW {full_view} AS SELECT * FROM {full_table}"),
+        "create view",
+    )
 
     try:
         views = connector.get_views_with_ddl(
@@ -119,8 +127,45 @@ def test_get_views_with_ddl(connector: BigQueryConnector, config: BigQueryConfig
         assert view, f"Expected view {view_name} in results"
         assert "definition" in view[0]
         assert view[0]["table_type"] == "view"
+        assert view_name in connector.get_views(config.project, config.dataset)
+        assert view_name not in connector.get_tables(config.project, config.dataset)
     finally:
         connector.execute_ddl(f"DROP VIEW IF EXISTS {full_view}")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS {full_table}")
+
+
+@pytest.mark.integration
+def test_get_materialized_views_with_ddl(connector: BigQueryConnector, config: BigQueryConfig):
+    suffix = uuid.uuid4().hex[:8]
+    table_name = f"test_mv_table_{suffix}"
+    view_name = f"test_mv_{suffix}"
+    full_table = connector.full_name(config.project, config.dataset, table_name=table_name)
+    full_view = connector.full_name(config.project, config.dataset, table_name=view_name)
+
+    assert_success(
+        connector.execute_ddl(f"CREATE TABLE {full_table} (id INT64 NOT NULL)"),
+        "create materialized view base table",
+    )
+    assert_success(
+        connector.execute_ddl(
+            f"CREATE MATERIALIZED VIEW {full_view} AS SELECT id, COUNT(*) AS row_count FROM {full_table} GROUP BY id"
+        ),
+        "create materialized view",
+    )
+
+    try:
+        names = connector.get_materialized_views(config.project, config.dataset)
+        definitions = connector.get_materialized_views_with_ddl(config.project, config.dataset)
+        selected = [item for item in definitions if item["table_name"] == view_name]
+
+        assert view_name in names
+        assert selected
+        assert selected[0]["table_type"] == "mv"
+        assert "CREATE MATERIALIZED VIEW" in selected[0]["definition"].upper()
+        assert view_name not in connector.get_tables(config.project, config.dataset)
+        assert view_name not in connector.get_views(config.project, config.dataset)
+    finally:
+        connector.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS {full_view}")
         connector.execute_ddl(f"DROP TABLE IF EXISTS {full_table}")
 
 
@@ -134,8 +179,9 @@ def test_get_schema(connector: BigQueryConnector, config: BigQueryConfig):
     table_name = f"test_schema_{suffix}"
 
     full = f"`{config.project}`.`{config.dataset}`.`{table_name}`"
-    connector.execute_ddl(
-        f"""
+    assert_success(
+        connector.execute_ddl(
+            f"""
         CREATE TABLE {full} (
             id INT64 NOT NULL,
             name STRING,
@@ -145,6 +191,8 @@ def test_get_schema(connector: BigQueryConnector, config: BigQueryConfig):
             tags ARRAY<STRING>
         )
     """
+        ),
+        "create schema test table",
     )
 
     try:
@@ -179,16 +227,22 @@ def test_get_sample_rows(connector: BigQueryConnector, config: BigQueryConfig):
     table_name = f"test_sample_{suffix}"
 
     full = f"`{config.project}`.`{config.dataset}`.`{table_name}`"
-    connector.execute_ddl(f"CREATE TABLE {full} (id INT64, name STRING)")
+    assert_success(
+        connector.execute_ddl(f"CREATE TABLE {full} (id INT64, name STRING)"),
+        "create sample table",
+    )
 
     # Insert test data
-    connector.execute_insert(
-        f"""
+    assert_success(
+        connector.execute_insert(
+            f"""
         INSERT INTO {full} (id, name) VALUES
         (1, 'Alice'),
         (2, 'Bob'),
         (3, 'Charlie')
     """
+        ),
+        "insert sample rows",
     )
 
     try:

@@ -62,7 +62,7 @@ ignore = [
 max-complexity = 10
 
 [tool.ruff.lint.isort]
-known-first-party = ["datus_db_core", "datus_sqlalchemy", "datus_mysql", "datus_postgresql", "datus_redshift", "datus_snowflake", "datus_clickhouse", "datus_clickzetta", "datus_starrocks", "datus_doris", "datus_trino", "datus_spark", "datus_hive", "datus_greenplum", "datus_maxcompute", "datus_hologres", "datus_oracle", "datus_gaussdb", "datus_tidb"]
+known-first-party = ["datus_db_core", "datus_sqlalchemy", "datus_mysql", "datus_postgresql", "datus_redshift", "datus_snowflake", "datus_clickhouse", "datus_clickzetta", "datus_starrocks", "datus_doris", "datus_trino", "datus_spark", "datus_hive", "datus_greenplum", "datus_maxcompute", "datus_hologres", "datus_oracle", "datus_gaussdb", "datus_tidb", "datus_bigquery"]
 
 [tool.pytest.ini_options]
 markers = [

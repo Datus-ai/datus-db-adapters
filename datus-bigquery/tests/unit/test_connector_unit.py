@@ -1,455 +1,251 @@
-# Copyright 2025-present DatusAI, Inc.
-# Licensed under the Apache License, Version 2.0.
-# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+from unittest.mock import MagicMock, call, patch
 
-from unittest.mock import MagicMock, patch
-
+import pandas as pd
 import pytest
+from sqlalchemy.pool import NullPool
+
 from datus_bigquery import BigQueryConfig, BigQueryConnector
+from datus_db_core import DatusDbException
 
 
-@pytest.mark.acceptance
-def test_connector_initialization_with_config_object():
-    """Test connector initialization with BigQueryConfig object."""
-    config = BigQueryConfig(
-        project="my-project",
-        dataset="my_dataset",
-        credentials_path="/path/to/creds.json",
-        location="US",
+@pytest.fixture
+def connector() -> BigQueryConnector:
+    return BigQueryConnector(
+        BigQueryConfig(
+            project="my-project",
+            dataset="analytics",
+            credentials_info={"type": "service_account", "private_key": "secret"},
+            billing_project_id="billing-project",
+            location="US",
+        )
     )
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
 
-        assert connector.config == config
-        assert connector.project == "my-project"
-        assert connector.credentials_path == "/path/to/creds.json"
-        assert connector.location == "US"
-        assert connector.catalog_name == "my-project"
-        assert connector.database_name == "my_dataset"
+def test_connector_uses_current_core_context_defaults(connector):
+    assert connector.catalog_name == "my-project"
+    assert connector.database_name == "analytics"
+    assert connector.schema_name == ""
+    assert connector.connection_string == "bigquery://my-project/analytics"
 
 
-@pytest.mark.acceptance
-def test_connector_initialization_with_dict():
-    """Test connector initialization with dict config."""
-    config_dict = {
+def test_to_dict_reports_only_non_secret_connection_identity(connector):
+    assert connector.to_dict() == {
+        "db_type": "bigquery",
         "project": "my-project",
         "dataset": "analytics",
-        "location": "EU",
+        "location": "US",
+        "billing_project_id": "billing-project",
     }
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config_dict)
 
-        assert connector.project == "my-project"
-        assert connector.catalog_name == "my-project"
-        assert connector.database_name == "analytics"
-        assert connector.location == "EU"
+def test_engine_creation_uses_null_pool_and_unwraps_credentials_only_for_driver(connector):
+    engine = MagicMock()
+    with patch("datus_bigquery.connector.create_engine", return_value=engine) as create:
+        assert connector._ensure_engine() is engine
 
-
-def test_connector_initialization_invalid_type():
-    """Test that connector raises TypeError for invalid config type."""
-    with pytest.raises(TypeError, match="config must be BigQueryConfig or dict"):
-        BigQueryConnector("invalid_config")
-
-
-@pytest.mark.acceptance
-def test_connector_connection_string_basic():
-    """Test connection string generation with project and dataset."""
-    config = BigQueryConfig(
-        project="my-project",
-        dataset="my_dataset",
-    )
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__") as mock_init:
-        BigQueryConnector(config)
-
-        call_args = mock_init.call_args
-        connection_string = call_args[0][0]
-
-        assert "bigquery://my-project/my_dataset" in connection_string
-
-
-@pytest.mark.acceptance
-def test_connector_connection_string_with_credentials():
-    """Test connection string includes credentials_path."""
-    config = BigQueryConfig(
-        project="my-project",
-        dataset="my_dataset",
-        credentials_path="/path/to/creds.json",
-    )
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__") as mock_init:
-        BigQueryConnector(config)
-
-        call_args = mock_init.call_args
-        connection_string = call_args[0][0]
-
-        assert "bigquery://my-project/my_dataset" in connection_string
-        assert "credentials_path=/path/to/creds.json" in connection_string
-
-
-def test_connector_connection_string_with_location():
-    """Test connection string includes location."""
-    config = BigQueryConfig(
-        project="my-project",
-        dataset="my_dataset",
+    create.assert_called_once_with(
+        "bigquery://my-project/analytics",
+        poolclass=NullPool,
+        credentials_info={"type": "service_account", "private_key": "secret"},
+        billing_project_id="billing-project",
         location="US",
     )
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__") as mock_init:
-        BigQueryConnector(config)
-
-        call_args = mock_init.call_args
-        connection_string = call_args[0][0]
-
-        assert "location=US" in connection_string
+    assert "secret" not in connector.connection_string
+    assert "credentials" not in str(connector.to_dict()).lower()
 
 
-def test_connector_connection_string_with_all_params():
-    """Test connection string with both credentials_path and location."""
-    config = BigQueryConfig(
-        project="my-project",
-        dataset="my_dataset",
-        credentials_path="/path/to/creds.json",
-        location="EU",
-    )
+def test_per_call_context_uses_matching_engine_without_old_signature_type_error(connector):
+    connection = MagicMock()
+    engine = MagicMock()
+    engine.connect.return_value = connection
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__") as mock_init:
-        BigQueryConnector(config)
+    with patch.object(connector, "_get_engine", return_value=engine) as get_engine:
+        with connector._conn(catalog_name="other-project", database_name="other_dataset") as actual:
+            assert actual is connection
 
-        call_args = mock_init.call_args
-        connection_string = call_args[0][0]
-
-        assert "bigquery://my-project/my_dataset?" in connection_string
-        assert "credentials_path=/path/to/creds.json" in connection_string
-        assert "location=EU" in connection_string
+    get_engine.assert_called_once_with("other-project", "other_dataset")
+    connection.close.assert_called_once_with()
 
 
-def test_connector_connection_string_no_dataset():
-    """Test connection string generation without dataset."""
-    config = BigQueryConfig(
-        project="my-project",
-        dataset=None,
-    )
+def test_engine_cache_is_keyed_by_project_and_dataset(connector):
+    first = MagicMock()
+    second = MagicMock()
+    with patch("datus_bigquery.connector.create_engine", side_effect=[first, second]) as create:
+        assert connector._get_engine("p1", "d1") is first
+        assert connector._get_engine("p1", "d1") is first
+        assert connector._get_engine("p1", "d2") is second
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__") as mock_init:
-        BigQueryConnector(config)
-
-        call_args = mock_init.call_args
-        connection_string = call_args[0][0]
-
-        assert connection_string == "bigquery://my-project"
+    assert create.call_count == 2
 
 
-def test_connector_dialect_passed_to_super():
-    """Test that dialect='bigquery' is passed to SQLAlchemyConnector."""
-    config = BigQueryConfig(project="my-project")
+def test_close_disposes_every_cached_engine_once(connector):
+    first = MagicMock()
+    second = MagicMock()
+    connector._engines[("p1", "d1")] = first
+    connector._engines[("p2", "d2")] = second
+    connector.engine = first
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__") as mock_init:
-        BigQueryConnector(config)
+    connector.close()
 
-        call_args = mock_init.call_args
-        assert call_args[1]["dialect"] == "bigquery"
+    first.dispose.assert_called_once_with()
+    second.dispose.assert_called_once_with()
+    assert connector._engines == {}
+    assert connector.engine is None
 
 
 @pytest.mark.acceptance
-def test_sys_databases():
-    """Test _sys_databases returns correct system databases."""
-    config = BigQueryConfig(project="my-project")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        sys_dbs = connector._sys_databases()
-
-        assert sys_dbs == {"INFORMATION_SCHEMA", "information_schema"}
-        assert isinstance(sys_dbs, set)
+def test_namespace_and_identifier_format(connector):
+    assert connector.quote_identifier("a`b") == "`a\\`b`"
+    assert connector.full_name(table_name="events") == "`my-project`.`analytics`.`events`"
+    assert connector.identifier(table_name="events") == "my-project.analytics.events"
+    assert connector.get_schemas() == []
 
 
-def test_sys_schemas():
-    """Test _sys_schemas returns same as _sys_databases."""
-    config = BigQueryConfig(project="my-project")
+def test_get_tables_excludes_views_and_passes_context(connector):
+    frame = pd.DataFrame({"table_name": ["external_events", "orders"]})
+    with patch.object(connector, "_execute_pandas", return_value=frame) as execute:
+        assert connector.get_tables() == ["external_events", "orders"]
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        sys_schemas = connector._sys_schemas()
-        sys_dbs = connector._sys_databases()
-
-        assert sys_schemas == sys_dbs
-
-
-@pytest.mark.acceptance
-def test_quote_identifier_basic():
-    """Test _quote_identifier with basic identifier."""
-    assert BigQueryConnector._quote_identifier("table_name") == "`table_name`"
+    sql = execute.call_args.args[0]
+    assert "BASE TABLE" in sql
+    assert "EXTERNAL" in sql
+    assert "'VIEW'" not in sql
+    assert execute.call_args.kwargs == {"catalog_name": "my-project", "database_name": "analytics"}
 
 
-@pytest.mark.acceptance
-def test_quote_identifier_with_backticks():
-    """Test _quote_identifier escapes backticks."""
-    assert BigQueryConnector._quote_identifier("table`name") == "`table\\`name`"
+@pytest.mark.parametrize(
+    ("method", "bigquery_type"),
+    [("get_views", "VIEW"), ("get_materialized_views", "MATERIALIZED VIEW")],
+)
+def test_view_lists_are_separate(connector, method, bigquery_type):
+    with patch.object(connector, "_execute_pandas", return_value=pd.DataFrame({"table_name": ["v"]})) as execute:
+        assert getattr(connector, method)() == ["v"]
+
+    sql = execute.call_args.args[0]
+    assert f"'{bigquery_type}'" in sql
+    if bigquery_type == "VIEW":
+        assert "MATERIALIZED VIEW" not in sql
 
 
-def test_quote_identifier_empty_string():
-    """Test _quote_identifier with empty string."""
-    assert BigQueryConnector._quote_identifier("") == "``"
-
-
-def test_quote_identifier_special_characters():
-    """Test _quote_identifier with special characters."""
-    assert BigQueryConnector._quote_identifier("table-name_123") == "`table-name_123`"
-
-
-@pytest.mark.acceptance
-def test_full_name_with_project_and_dataset():
-    """Test full_name with project, dataset and table."""
-    config = BigQueryConfig(project="my-project", dataset="my_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        full_name = connector.full_name(
-            catalog_name="my-project",
-            database_name="my_dataset",
-            table_name="my_table",
-        )
-
-        assert full_name == "`my-project`.`my_dataset`.`my_table`"
-
-
-def test_full_name_uses_defaults():
-    """Test full_name uses connector defaults for project and dataset."""
-    config = BigQueryConfig(project="default-project", dataset="default_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        full_name = connector.full_name(table_name="my_table")
-
-        assert full_name == "`default-project`.`default_dataset`.`my_table`"
-
-
-def test_full_name_dataset_only():
-    """Test full_name with dataset and table only (no project)."""
-    config = BigQueryConfig(project="my-project")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        # Override catalog_name to empty
-        connector.catalog_name = ""
-        full_name = connector.full_name(database_name="my_dataset", table_name="my_table")
-
-        assert full_name == "`my_dataset`.`my_table`"
-
-
-def test_full_name_table_only():
-    """Test full_name with table only."""
-    config = BigQueryConfig(project="my-project")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        connector.catalog_name = ""
-        connector.database_name = ""
-        full_name = connector.full_name(table_name="my_table")
-
-        assert full_name == "`my_table`"
-
-
-@pytest.mark.acceptance
-def test_identifier_with_project_and_dataset():
-    """Test identifier method with project and dataset."""
-    config = BigQueryConfig(project="my-project", dataset="my_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        identifier = connector.identifier(
-            catalog_name="my-project",
-            database_name="my_dataset",
-            table_name="my_table",
-        )
-
-        assert identifier == "my-project.my_dataset.my_table"
-
-
-def test_identifier_uses_defaults():
-    """Test identifier uses connector defaults."""
-    config = BigQueryConfig(project="default-project", dataset="default_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        identifier = connector.identifier(table_name="my_table")
-
-        assert identifier == "default-project.default_dataset.my_table"
-
-
-def test_identifier_dataset_only():
-    """Test identifier with dataset and table only."""
-    config = BigQueryConfig(project="my-project")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        connector.catalog_name = ""
-        identifier = connector.identifier(database_name="my_dataset", table_name="my_table")
-
-        assert identifier == "my_dataset.my_table"
-
-
-def test_identifier_table_only():
-    """Test identifier with table only."""
-    config = BigQueryConfig(project="my-project")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        connector.catalog_name = ""
-        connector.database_name = ""
-        identifier = connector.identifier(table_name="my_table")
-
-        assert identifier == "my_table"
-
-
-@pytest.mark.acceptance
-def test_get_type():
-    """Test get_type returns 'bigquery'."""
-    config = BigQueryConfig(project="my-project")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-
-        assert connector.get_type() == "bigquery"
-
-
-@pytest.mark.acceptance
-def test_to_dict():
-    """Test to_dict method."""
-    config = BigQueryConfig(project="my-project", dataset="my_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        result = connector.to_dict()
-
-        assert result == {
-            "db_type": "bigquery",
-            "project": "my-project",
-            "dataset": "my_dataset",
+@pytest.mark.parametrize(
+    "requested",
+    ["orders", "my-project.analytics.orders", "`my-project`.`analytics`.`orders`"],
+)
+def test_ddl_methods_preserve_table_type_and_filter_tables(connector, requested):
+    frame = pd.DataFrame(
+        {
+            "table_name": ["orders", "customers"],
+            "ddl": ["CREATE TABLE orders (id INT64)", None],
         }
+    )
+    with patch.object(connector, "_execute_pandas", return_value=frame):
+        tables = connector.get_tables_with_ddl(tables=[requested])
+
+    assert tables == [
+        {
+            "identifier": "my-project.analytics.orders",
+            "catalog_name": "my-project",
+            "database_name": "analytics",
+            "schema_name": "",
+            "table_name": "orders",
+            "table_type": "table",
+            "definition": "CREATE TABLE orders (id INT64)",
+        }
+    ]
 
 
-def test_get_schemas_returns_empty():
-    """Test that get_schemas returns empty list (BigQuery has no schema layer)."""
-    config = BigQueryConfig(project="my-project")
+def test_view_and_materialized_view_ddl_are_not_returned_as_tables(connector):
+    frame = pd.DataFrame({"table_name": ["summary"], "ddl": ["CREATE VIEW summary AS SELECT 1"]})
+    with patch.object(connector, "_execute_pandas", return_value=frame) as execute:
+        assert connector.get_views_with_ddl()[0]["table_type"] == "view"
+        assert connector.get_materialized_views_with_ddl()[0]["table_type"] == "mv"
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        schemas = connector.get_schemas()
-
-        assert schemas == []
-
-
-@pytest.mark.acceptance
-def test_do_switch_context():
-    """Test do_switch_context updates project and dataset."""
-    config = BigQueryConfig(project="original-project", dataset="original_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-
-        connector.do_switch_context(catalog_name="new-project", database_name="new_dataset")
-
-        assert connector.catalog_name == "new-project"
-        assert connector.database_name == "new_dataset"
+    assert execute.call_args_list[0].args[0].count("'VIEW'") == 1
+    assert "MATERIALIZED VIEW" in execute.call_args_list[1].args[0]
 
 
-def test_do_switch_context_partial_update():
-    """Test do_switch_context with partial update (only dataset)."""
-    config = BigQueryConfig(project="my-project", dataset="original_dataset")
+def test_get_schema_escapes_table_literal_and_handles_null_default(connector):
+    frame = pd.DataFrame(
+        {
+            "column_name": ["id"],
+            "data_type": ["INT64"],
+            "is_nullable": ["NO"],
+            "column_default": [None],
+            "ordinal_position": [1],
+        }
+    )
+    with patch.object(connector, "_execute_pandas", return_value=frame) as execute:
+        schema = connector.get_schema(table_name="owner's_table")
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-
-        connector.do_switch_context(database_name="new_dataset")
-
-        assert connector.catalog_name == "my-project"
-        assert connector.database_name == "new_dataset"
-
-
-def test_do_switch_context_no_change():
-    """Test do_switch_context with empty params preserves state."""
-    config = BigQueryConfig(project="my-project", dataset="my_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-
-        connector.do_switch_context()
-
-        assert connector.catalog_name == "my-project"
-        assert connector.database_name == "my_dataset"
-
-
-def test_connector_stores_config():
-    """Test that connector stores the config object."""
-    config = BigQueryConfig(project="my-project", dataset="my_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-
-        assert connector.config == config
-        assert isinstance(connector.config, BigQueryConfig)
+    assert "owner''s_table" in execute.call_args.args[0]
+    assert schema == [
+        {
+            "cid": 1,
+            "name": "id",
+            "type": "INT64",
+            "nullable": False,
+            "default_value": "",
+            "pk": False,
+        }
+    ]
 
 
-def test_connector_database_name_empty_when_none():
-    """Test that database_name is empty string when config.dataset is None."""
-    config = BigQueryConfig(project="my-project", dataset=None)
+def test_get_databases_uses_dialect_inspector_for_cross_region_listing(connector):
+    inspector = MagicMock()
+    inspector.get_schema_names.return_value = ["analytics", "INFORMATION_SCHEMA"]
+    with (
+        patch.object(connector, "_get_engine", return_value=MagicMock()) as get_engine,
+        patch("datus_bigquery.connector.inspect", return_value=inspector),
+    ):
+        assert connector.get_databases() == ["analytics"]
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-
-        assert connector.database_name == ""
-
-
-def test_sqlalchemy_schema_returns_dataset():
-    """Test _sqlalchemy_schema returns dataset name."""
-    config = BigQueryConfig(project="my-project", dataset="my_dataset")
-
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-
-        assert connector._sqlalchemy_schema() == "my_dataset"
-        assert connector._sqlalchemy_schema(database_name="other") == "other"
+    get_engine.assert_called_once_with("my-project")
 
 
-def test_connect_uses_null_pool():
-    """Test connect() creates engine with NullPool."""
-    config = BigQueryConfig(project="my-project", dataset="my_dataset")
+@pytest.mark.parametrize(
+    ("table_type", "expected_calls", "expected_types"),
+    [
+        ("table", ["get_tables"], ["table"]),
+        ("view", ["get_views"], ["view"]),
+        ("mv", ["get_materialized_views"], ["mv"]),
+        ("full", ["get_tables", "get_views", "get_materialized_views"], ["table", "view", "mv"]),
+    ],
+)
+def test_sample_rows_honors_table_type(connector, table_type, expected_calls, expected_types):
+    methods = {
+        "get_tables": patch.object(connector, "get_tables", return_value=["t"]),
+        "get_views": patch.object(connector, "get_views", return_value=["v"]),
+        "get_materialized_views": patch.object(connector, "get_materialized_views", return_value=["mv"]),
+    }
+    mocks = {name: context.start() for name, context in methods.items()}
+    try:
+        with patch.object(connector, "_execute_pandas", return_value=pd.DataFrame({"id": [1]})) as execute:
+            samples = connector.get_sample_rows(table_type=table_type, top_n=1)
+    finally:
+        for context in methods.values():
+            context.stop()
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        connector.engine = None
-        connector.connection_string = "bigquery://my-project/my_dataset"
-
-        with patch("datus_bigquery.connector.create_engine") as mock_create_engine:
-            mock_engine = MagicMock()
-            mock_create_engine.return_value = mock_engine
-
-            connector.connect()
-
-            mock_create_engine.assert_called_once()
-            call_kwargs = mock_create_engine.call_args[1]
-            from sqlalchemy.pool import NullPool
-
-            assert call_kwargs["poolclass"] is NullPool
-            assert connector.engine is mock_engine
-            assert connector._owns_engine is True
+    assert [name for name, mock in mocks.items() if mock.called] == expected_calls
+    assert [sample["table_type"] for sample in samples] == expected_types
+    assert execute.call_args_list == [
+        call(
+            f"SELECT * FROM `my-project`.`analytics`.`{name}` LIMIT 1",
+            catalog_name="my-project",
+            database_name="analytics",
+        )
+        for name in ("t", "v", "mv")
+        if name in {sample["table_name"] for sample in samples}
+    ]
 
 
-def test_connect_skips_if_engine_exists():
-    """Test connect() is a no-op when engine already exists."""
-    config = BigQueryConfig(project="my-project")
+@pytest.mark.parametrize("top_n", [0, -1, "bad"])
+def test_sample_rows_rejects_invalid_limit(connector, top_n):
+    with pytest.raises(DatusDbException, match="positive integer"):
+        connector.get_sample_rows(tables=["orders"], top_n=top_n)
 
-    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
-        connector = BigQueryConnector(config)
-        mock_engine = MagicMock()
-        connector.engine = mock_engine
 
-        with patch("datus_bigquery.connector.create_engine") as mock_create_engine:
-            connector.connect()
+def test_metadata_operations_require_a_dataset():
+    connector = BigQueryConnector({"project": "my-project"})
 
-            mock_create_engine.assert_not_called()
-            assert connector.engine is mock_engine
+    with pytest.raises(DatusDbException, match="requires a dataset"):
+        connector.get_tables()

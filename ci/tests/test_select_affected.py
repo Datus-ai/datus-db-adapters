@@ -195,6 +195,7 @@ def test_release_and_format_tooling_does_not_select_integration(path: str) -> No
     [
         (".github/workflows/hologres-cloud-tests.yml", {"hologres"}),
         (".github/workflows/maxcompute-cloud-tests.yml", set()),
+        (".github/workflows/bigquery-cloud-tests.yml", set()),
     ],
 )
 def test_cloud_workflow_change_selects_only_enabled_cloud_target(path: str, expected_targets: set[str]) -> None:
@@ -212,6 +213,14 @@ def test_disabled_cloud_target_runs_package_checks_without_live_test() -> None:
     assert selection.cloud_targets == set()
 
 
+def test_bigquery_runtime_change_runs_package_checks_without_unconfigured_live_test() -> None:
+    selection = select("datus-bigquery/datus_bigquery/connector.py")
+
+    assert selection.unit_packages == {"datus-bigquery"}
+    assert selection.smoke_packages == {"datus-bigquery"}
+    assert selection.cloud_targets == set()
+
+
 def test_workspace_dependency_graph_contains_transitive_starrocks_edge() -> None:
     packages = load_workspace_packages(REPO_ROOT)
 
@@ -225,9 +234,13 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
     targets = load_integration_targets()
 
     assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS
-    assert {name for name, target in targets.items() if target.kind == "cloud"} == {"hologres", "maxcompute"}
+    assert {name for name, target in targets.items() if target.kind == "cloud"} == {
+        "bigquery",
+        "hologres",
+        "maxcompute",
+    }
     assert {name for name, target in targets.items() if target.enabled} == COMPOSE_TARGETS | {"hologres"}
-    assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute"}
+    assert {name for name, target in targets.items() if not target.enabled} == {"bigquery", "maxcompute"}
 
 
 def test_packages_without_live_targets_are_explicitly_registered() -> None:

@@ -18,10 +18,16 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-agent>0.2.1",
-    "datus-sqlalchemy>=0.1.0",
-    "sqlalchemy-bigquery>=1.9.0",
-    "google-cloud-bigquery>=3.0.0",
+    "datus-db-core>=0.1.6",
+    "datus-sqlalchemy>=0.1.8",
+    "pydantic>=2.0.0",
+    "sqlalchemy-bigquery>=1.17.2,<2",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
 ]
 
 [project.urls]
@@ -32,7 +38,11 @@ Issues = "https://github.com/Datus-ai/datus-db-adapters/issues"
 [project.entry-points."datus.adapters"]
 bigquery = "datus_bigquery:register"
 
+[project.entry-points."datus.skills"]
+bigquery = "datus_bigquery.skills:get_skills_dir"
+
 [tool.uv.sources]
+datus-db-core = { workspace = true }
 datus-sqlalchemy = { workspace = true }
 
 [build-system]

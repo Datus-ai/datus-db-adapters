@@ -1,160 +1,90 @@
-# Copyright 2025-present DatusAI, Inc.
-# Licensed under the Apache License, Version 2.0.
-# See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 import pytest
-from datus_bigquery import BigQueryConfig
 from pydantic import ValidationError
 
-
-@pytest.mark.acceptance
-def test_config_with_all_required_fields():
-    """Test config initialization with only the required project field."""
-    config = BigQueryConfig(project="my-gcp-project")
-
-    assert config.project == "my-gcp-project"
-    assert config.dataset is None
-    assert config.credentials_path is None
-    assert config.location is None
-    assert config.timeout_seconds == 60
+from datus_bigquery import BigQueryConfig
 
 
-@pytest.mark.acceptance
-def test_config_with_custom_values():
-    """Test config with all custom values."""
-    config = BigQueryConfig(
-        project="my-project-123",
-        dataset="analytics",
-        credentials_path="/path/to/credentials.json",
-        location="US",
-        timeout_seconds=120,
-    )
-
-    assert config.project == "my-project-123"
-    assert config.dataset == "analytics"
-    assert config.credentials_path == "/path/to/credentials.json"
-    assert config.location == "US"
-    assert config.timeout_seconds == 120
-
-
-@pytest.mark.acceptance
-def test_config_missing_required_field():
-    """Test that validation fails when required project field is missing."""
-    with pytest.raises(ValidationError) as exc_info:
-        BigQueryConfig()
-
-    errors = exc_info.value.errors()
-    assert len(errors) == 1
-    assert errors[0]["loc"] == ("project",)
-    assert errors[0]["type"] == "missing"
-
-
-def test_config_invalid_timeout_type():
-    """Test that validation fails for invalid timeout type."""
-    with pytest.raises(ValidationError) as exc_info:
-        BigQueryConfig(project="my-project", timeout_seconds="invalid")
-
-    errors = exc_info.value.errors()
-    assert any(error["loc"] == ("timeout_seconds",) for error in errors)
-
-
-@pytest.mark.acceptance
-def test_config_forbids_extra_fields():
-    """Test that extra fields are not allowed."""
-    with pytest.raises(ValidationError) as exc_info:
-        BigQueryConfig(project="my-project", extra_field="not_allowed")
-
-    errors = exc_info.value.errors()
-    assert any(error["type"] == "extra_forbidden" for error in errors)
-
-
-def test_config_with_none_dataset():
-    """Test config with None as dataset."""
-    config = BigQueryConfig(project="my-project", dataset=None)
-
-    assert config.dataset is None
-
-
-def test_config_default_timeout():
-    """Test default timeout value."""
+def test_minimal_config_and_defaults():
     config = BigQueryConfig(project="my-project")
 
-    assert config.timeout_seconds == 60
-
-
-def test_config_from_dict():
-    """Test creating config from dictionary."""
-    config_dict = {
-        "project": "my-project",
-        "dataset": "my_dataset",
-        "credentials_path": "/tmp/creds.json",
-        "location": "EU",
-    }
-
-    config = BigQueryConfig(**config_dict)
-
     assert config.project == "my-project"
-    assert config.dataset == "my_dataset"
-    assert config.credentials_path == "/tmp/creds.json"
-    assert config.location == "EU"
+    assert config.dataset is None
+    assert config.timeout_seconds == 60
+    assert config.credentials_path is None
+    assert config.credentials_info is None
+    assert config.credentials_base64 is None
 
 
-def test_config_to_dict():
-    """Test converting config to dictionary."""
+@pytest.mark.acceptance
+def test_datus_namespace_aliases_override_adapter_names():
     config = BigQueryConfig(
-        project="my-project",
-        dataset="analytics",
-        location="US",
+        project="original-project",
+        dataset="original_dataset",
+        catalog="request-project",
+        database="request_dataset",
     )
 
-    config_dict = config.model_dump()
-
-    assert config_dict["project"] == "my-project"
-    assert config_dict["dataset"] == "analytics"
-    assert config_dict["credentials_path"] is None
-    assert config_dict["location"] == "US"
-    assert config_dict["timeout_seconds"] == 60
+    assert config.project == "request-project"
+    assert config.dataset == "request_dataset"
 
 
-def test_config_with_none_credentials():
-    """Test config with None credentials_path."""
-    config = BigQueryConfig(project="my-project", credentials_path=None)
+def test_optional_strings_are_trimmed_and_blanks_become_none():
+    config = BigQueryConfig(
+        project="  my-project  ",
+        dataset="  analytics  ",
+        credentials_path=" ",
+        billing_project_id=" quota-project ",
+        location=" US ",
+    )
 
+    assert config.project == "my-project"
+    assert config.dataset == "analytics"
     assert config.credentials_path is None
+    assert config.billing_project_id == "quota-project"
+    assert config.location == "US"
 
 
-def test_config_with_none_location():
-    """Test config with None location."""
-    config = BigQueryConfig(project="my-project", location=None)
-
-    assert config.location is None
-
-
-def test_config_zero_timeout():
-    """Test that zero timeout is allowed."""
-    config = BigQueryConfig(project="my-project", timeout_seconds=0)
-
-    assert config.timeout_seconds == 0
+@pytest.mark.parametrize("project", ["", "   "])
+def test_project_must_not_be_empty(project):
+    with pytest.raises(ValidationError, match="project must not be empty"):
+        BigQueryConfig(project=project)
 
 
-def test_config_special_characters_in_project():
-    """Test config with special characters in project name."""
-    special_project = "my-project-123"
-    config = BigQueryConfig(project=special_project)
-
-    assert config.project == special_project
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_timeout_must_be_positive(timeout):
+    with pytest.raises(ValidationError):
+        BigQueryConfig(project="my-project", timeout_seconds=timeout)
 
 
-def test_config_special_characters_in_dataset():
-    """Test config with special characters in dataset name."""
-    special_dataset = "test_dataset_123"
-    config = BigQueryConfig(project="my-project", dataset=special_dataset)
+def test_only_one_credentials_mechanism_is_allowed():
+    with pytest.raises(ValidationError, match="Configure only one"):
+        BigQueryConfig(
+            project="my-project",
+            credentials_path="/tmp/credentials.json",
+            credentials_info={"type": "service_account"},
+        )
 
-    assert config.dataset == special_dataset
+
+def test_inline_credentials_are_secret_in_repr_and_dump():
+    config = BigQueryConfig(
+        project="my-project",
+        credentials_info={"type": "service_account", "private_key": "super-secret"},
+    )
+
+    assert "super-secret" not in repr(config)
+    assert "super-secret" not in str(config.model_dump())
+    assert config.credentials_info.get_secret_value()["private_key"] == "super-secret"
 
 
-def test_config_various_locations():
-    """Test config with various location values."""
-    for location in ["US", "EU", "asia-east1", "us-central1"]:
-        config = BigQueryConfig(project="my-project", location=location)
-        assert config.location == location
+def test_base64_credentials_are_secret():
+    config = BigQueryConfig(project="my-project", credentials_base64="encoded-secret")
+
+    assert "encoded-secret" not in repr(config)
+    assert config.credentials_base64.get_secret_value() == "encoded-secret"
+
+
+def test_unknown_fields_are_rejected():
+    with pytest.raises(ValidationError) as exc_info:
+        BigQueryConfig(project="my-project", typo="value")
+
+    assert any(error["type"] == "extra_forbidden" for error in exc_info.value.errors())

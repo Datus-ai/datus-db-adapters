@@ -2,10 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import json
 import os
 from typing import Generator
 
 import pytest
+
 from datus_bigquery import BigQueryConfig, BigQueryConnector
 
 
@@ -13,32 +15,30 @@ from datus_bigquery import BigQueryConfig, BigQueryConnector
 def config() -> BigQueryConfig:
     """Create BigQuery configuration from environment or defaults."""
     project = os.getenv("BIGQUERY_PROJECT")
-    if not project:
-        pytest.skip("BIGQUERY_PROJECT environment variable not set")
+    dataset = os.getenv("BIGQUERY_DATASET")
+    if not project or not dataset:
+        pytest.skip("BIGQUERY_PROJECT and BIGQUERY_DATASET environment variables are required")
+
+    credentials_info = os.getenv("BIGQUERY_CREDENTIALS_INFO")
+    parsed_credentials = json.loads(credentials_info) if credentials_info else None
 
     return BigQueryConfig(
         project=project,
-        dataset=os.getenv("BIGQUERY_DATASET", "datus_test"),
+        dataset=dataset,
         credentials_path=os.getenv("BIGQUERY_CREDENTIALS_PATH"),
-        location=os.getenv("BIGQUERY_LOCATION", "US"),
+        credentials_info=parsed_credentials,
+        credentials_base64=os.getenv("BIGQUERY_CREDENTIALS_BASE64"),
+        billing_project_id=os.getenv("BIGQUERY_BILLING_PROJECT_ID"),
+        location=os.getenv("BIGQUERY_LOCATION") or None,
     )
 
 
 @pytest.fixture
 def connector(config: BigQueryConfig) -> Generator[BigQueryConnector, None, None]:
     """Create and cleanup BigQuery connector for integration tests."""
-    conn = None
+    conn = BigQueryConnector(config)
     try:
-        conn = BigQueryConnector(config)
-        if not conn.test_connection():
-            pytest.skip("BigQuery connection test failed")
-    except Exception as e:
-        pytest.skip(f"BigQuery not available: {e}")
-    else:
+        assert conn.test_connection(), "BigQuery connection test returned false"
         yield conn
     finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        conn.close()
