@@ -106,19 +106,16 @@ def test_get_views_with_ddl(connector: BigQueryConnector, config: BigQueryConfig
     full_table = f"`{config.project}`.`{config.dataset}`.`{table_name}`"
     full_view = f"`{config.project}`.`{config.dataset}`.`{view_name}`"
 
-    # Create base table
-    assert_success(
-        connector.execute_ddl(f"CREATE TABLE {full_table} (id INT64, name STRING)"),
-        "create view base table",
-    )
-
-    # Create view
-    assert_success(
-        connector.execute_ddl(f"CREATE VIEW {full_view} AS SELECT * FROM {full_table}"),
-        "create view",
-    )
-
     try:
+        assert_success(
+            connector.execute_ddl(f"CREATE TABLE {full_table} (id INT64, name STRING)"),
+            "create view base table",
+        )
+        assert_success(
+            connector.execute_ddl(f"CREATE VIEW {full_view} AS SELECT * FROM {full_table}"),
+            "create view",
+        )
+
         views = connector.get_views_with_ddl(
             catalog_name=config.project,
             database_name=config.dataset,
@@ -144,18 +141,19 @@ def test_get_materialized_views_with_ddl(connector: BigQueryConnector, config: B
     full_table = connector.full_name(config.project, config.dataset, table_name=table_name)
     full_view = connector.full_name(config.project, config.dataset, table_name=view_name)
 
-    assert_success(
-        connector.execute_ddl(f"CREATE TABLE {full_table} (id INT64 NOT NULL)"),
-        "create materialized view base table",
-    )
-    assert_success(
-        connector.execute_ddl(
-            f"CREATE MATERIALIZED VIEW {full_view} AS SELECT id, COUNT(*) AS row_count FROM {full_table} GROUP BY id"
-        ),
-        "create materialized view",
-    )
-
     try:
+        assert_success(
+            connector.execute_ddl(f"CREATE TABLE {full_table} (id INT64 NOT NULL)"),
+            "create materialized view base table",
+        )
+        assert_success(
+            connector.execute_ddl(
+                f"CREATE MATERIALIZED VIEW {full_view} AS "
+                f"SELECT id, COUNT(*) AS row_count FROM {full_table} GROUP BY id"
+            ),
+            "create materialized view",
+        )
+
         names = connector.get_materialized_views(config.project, config.dataset)
         definitions = connector.get_materialized_views_with_ddl(config.project, config.dataset)
         selected = [item for item in definitions if item["table_name"] == view_name]
@@ -229,25 +227,23 @@ def test_get_sample_rows(connector: BigQueryConnector, config: BigQueryConfig):
     table_name = f"test_sample_{suffix}"
 
     full = f"`{config.project}`.`{config.dataset}`.`{table_name}`"
-    assert_success(
-        connector.execute_ddl(f"CREATE TABLE {full} (id INT64, name STRING)"),
-        "create sample table",
-    )
-
-    # Insert test data
-    assert_success(
-        connector.execute_insert(
-            f"""
-        INSERT INTO {full} (id, name) VALUES
-        (1, 'Alice'),
-        (2, 'Bob'),
-        (3, 'Charlie')
-    """
-        ),
-        "insert sample rows",
-    )
-
     try:
+        assert_success(
+            connector.execute_ddl(f"CREATE TABLE {full} (id INT64, name STRING)"),
+            "create sample table",
+        )
+        assert_success(
+            connector.execute_insert(
+                f"""
+            INSERT INTO {full} (id, name) VALUES
+            (1, 'Alice'),
+            (2, 'Bob'),
+            (3, 'Charlie')
+        """
+            ),
+            "insert sample rows",
+        )
+
         sample_rows = connector.get_sample_rows(
             catalog_name=config.project,
             database_name=config.dataset,

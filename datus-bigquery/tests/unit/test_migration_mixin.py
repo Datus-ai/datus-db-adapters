@@ -61,6 +61,34 @@ def test_validate_ddl_accepts_idiomatic_bigquery_ddl(connector):
     assert connector.validate_ddl(ddl) == []
 
 
+def test_validate_ddl_checks_not_enforced_per_key_constraint(connector):
+    ddl = """
+    CREATE TABLE child (
+      id INT64,
+      parent_id INT64,
+      PRIMARY KEY (id) NOT ENFORCED,
+      FOREIGN KEY (parent_id) REFERENCES parent(id)
+    )
+    """
+
+    assert connector.validate_ddl(ddl) == [
+        "BigQuery PRIMARY KEY and FOREIGN KEY constraints must be declared NOT ENFORCED"
+    ]
+
+
+def test_validate_ddl_accepts_multiple_not_enforced_key_constraints(connector):
+    ddl = """
+    CREATE TABLE child (
+      id INT64,
+      parent_id INT64,
+      PRIMARY KEY (id) NOT ENFORCED,
+      FOREIGN KEY (parent_id) REFERENCES `p.d.parent`(id) NOT ENFORCED
+    )
+    """
+
+    assert connector.validate_ddl(ddl) == []
+
+
 def test_validate_ddl_ignores_comments_literals_and_longer_identifiers(connector):
     ddl = """
     -- AUTO_INCREMENT is intentionally not used

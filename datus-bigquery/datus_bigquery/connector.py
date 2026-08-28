@@ -14,6 +14,7 @@ from datus_db_core import TABLE_TYPE, DatusDbException, ErrorCode, get_logger
 from datus_sqlalchemy import SQLAlchemyConnector
 
 from .config import BigQueryConfig
+from .handlers import parse_bigquery_identifier
 
 logger = get_logger(__name__)
 
@@ -167,6 +168,29 @@ class BigQueryConnector(SQLAlchemyConnector):
 
     _quote_identifier = quote_identifier
 
+    def _resolve_table(
+        self,
+        table_name: str,
+        catalog_name: str = "",
+        database_name: str = "",
+    ) -> Tuple[str, str, str]:
+        parsed = parse_bigquery_identifier(table_name)
+        parsed_project = parsed["catalog_name"]
+        parsed_dataset = parsed["database_name"]
+
+        if parsed_project:
+            project = parsed_project
+            dataset = parsed_dataset
+        elif parsed_dataset and database_name and not catalog_name:
+            # A two-part listing is project.table when the caller already
+            # supplied the dataset but omitted the project.
+            project = parsed_dataset
+            dataset = database_name
+        else:
+            project = catalog_name or self.catalog_name
+            dataset = parsed_dataset or database_name or self.database_name
+        return project, dataset, parsed["table_name"]
+
     @override
     def full_name(
         self,
@@ -175,9 +199,8 @@ class BigQueryConnector(SQLAlchemyConnector):
         schema_name: str = "",
         table_name: str = "",
     ) -> str:
-        project = catalog_name or self.catalog_name
-        dataset = database_name or self.database_name
-        parts = [part for part in (project, dataset, table_name) if part]
+        project, dataset, name = self._resolve_table(table_name, catalog_name, database_name)
+        parts = [part for part in (project, dataset, name) if part]
         return ".".join(self.quote_identifier(part) for part in parts)
 
     @override
@@ -188,9 +211,8 @@ class BigQueryConnector(SQLAlchemyConnector):
         schema_name: str = "",
         table_name: str = "",
     ) -> str:
-        project = catalog_name or self.catalog_name
-        dataset = database_name or self.database_name
-        return ".".join(part for part in (project, dataset, table_name) if part)
+        project, dataset, name = self._resolve_table(table_name, catalog_name, database_name)
+        return ".".join(part for part in (project, dataset, name) if part)
 
     @override
     def _reset_filter_tables(
@@ -234,26 +256,54 @@ class BigQueryConnector(SQLAlchemyConnector):
     def _sql_literal(value: str) -> str:
         return "'" + value.replace("'", "''") + "'"
 
-    def _list_objects(self, table_types: Tuple[str, ...], project: str, dataset: str) -> List[str]:
+    @staticmethod
+    def _qualify_listed_name(
+        name: str,
+        project: str,
+        dataset: str,
+        requested_project: str,
+        requested_dataset: str,
+    ) -> str:
+        parts = []
+        if not requested_project:
+            parts.append(project)
+        if not requested_dataset:
+            parts.append(dataset)
+        parts.append(name)
+        return ".".join(parts)
+
+    def _list_objects(
+        self,
+        table_types: Tuple[str, ...],
+        project: str,
+        dataset: str,
+        requested_project: str,
+        requested_dataset: str,
+    ) -> List[str]:
         types = ", ".join(self._sql_literal(table_type) for table_type in table_types)
         sql = (
             f"SELECT table_name FROM {self._information_schema(project, dataset, 'TABLES')} "
             f"WHERE table_type IN ({types}) ORDER BY table_name"
         )
         df = self._execute_pandas(sql, catalog_name=project, database_name=dataset)
-        return [] if df.empty else df["table_name"].tolist()
+        if df.empty:
+            return []
+        return [
+            self._qualify_listed_name(name, project, dataset, requested_project, requested_dataset)
+            for name in df["table_name"].tolist()
+        ]
 
     @override
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         project = catalog_name or self.catalog_name
         dataset = self._require_dataset(database_name, "list tables")
-        return self._list_objects(_PHYSICAL_TABLE_TYPES, project, dataset)
+        return self._list_objects(_PHYSICAL_TABLE_TYPES, project, dataset, catalog_name, database_name)
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         project = catalog_name or self.catalog_name
         dataset = self._require_dataset(database_name, "list views")
-        return self._list_objects(("VIEW",), project, dataset)
+        return self._list_objects(("VIEW",), project, dataset, catalog_name, database_name)
 
     @override
     def get_materialized_views(
@@ -264,7 +314,7 @@ class BigQueryConnector(SQLAlchemyConnector):
     ) -> List[str]:
         project = catalog_name or self.catalog_name
         dataset = self._require_dataset(database_name, "list materialized views")
-        return self._list_objects(("MATERIALIZED VIEW",), project, dataset)
+        return self._list_objects(("MATERIALIZED VIEW",), project, dataset, catalog_name, database_name)
 
     def _get_objects_with_ddl(
         self,
@@ -519,8 +569,14 @@ class BigQueryConnector(SQLAlchemyConnector):
             errors.append("Doris/StarRocks table models are not supported by BigQuery")
         if re.search(r"\bDISTRIBUTED\s+BY\b|\bBUCKETS\b", upper):
             errors.append("DISTRIBUTED BY ... BUCKETS is not supported by BigQuery; use CLUSTER BY")
-        if re.search(r"\b(?:PRIMARY|FOREIGN)\s+KEY\b", upper) and not re.search(r"\bNOT\s+ENFORCED\b", upper):
-            errors.append("BigQuery PRIMARY KEY and FOREIGN KEY constraints must be declared NOT ENFORCED")
+        key_constraint_patterns = (
+            r"\bPRIMARY\s+KEY(?:\s*\([^)]*\))?(?:\s+NOT\s+ENFORCED)?",
+            r"\bFOREIGN\s+KEY\s*\([^)]*\)\s+REFERENCES\s+(?:[^\s(]+\s*)?\([^)]*\)(?:\s+NOT\s+ENFORCED)?",
+        )
+        for pattern in key_constraint_patterns:
+            for constraint in re.finditer(pattern, upper):
+                if not re.search(r"\bNOT\s+ENFORCED\b", constraint.group(0)):
+                    errors.append("BigQuery PRIMARY KEY and FOREIGN KEY constraints must be declared NOT ENFORCED")
         return errors
 
     @override

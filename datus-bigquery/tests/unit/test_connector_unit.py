@@ -104,7 +104,10 @@ def test_namespace_and_identifier_format(connector):
 def test_get_tables_excludes_views_and_passes_context(connector):
     frame = pd.DataFrame({"table_name": ["external_events", "orders"]})
     with patch.object(connector, "_execute_pandas", return_value=frame) as execute:
-        assert connector.get_tables() == ["external_events", "orders"]
+        assert connector.get_tables(catalog_name="my-project", database_name="analytics") == [
+            "external_events",
+            "orders",
+        ]
 
     sql = execute.call_args.args[0]
     assert "BASE TABLE" in sql
@@ -114,12 +117,28 @@ def test_get_tables_excludes_views_and_passes_context(connector):
 
 
 @pytest.mark.parametrize(
+    ("context", "expected"),
+    [
+        ({}, "my-project.analytics.orders"),
+        ({"catalog_name": "my-project"}, "analytics.orders"),
+        ({"database_name": "analytics"}, "my-project.orders"),
+        ({"catalog_name": "my-project", "database_name": "analytics"}, "orders"),
+    ],
+)
+def test_listed_names_include_only_omitted_context(connector, context, expected):
+    frame = pd.DataFrame({"table_name": ["orders"]})
+    with patch.object(connector, "_execute_pandas", return_value=frame):
+        assert connector.get_tables(**context) == [expected]
+        assert connector.full_name(table_name=expected, **context) == "`my-project`.`analytics`.`orders`"
+
+
+@pytest.mark.parametrize(
     ("method", "bigquery_type"),
     [("get_views", "VIEW"), ("get_materialized_views", "MATERIALIZED VIEW")],
 )
 def test_view_lists_are_separate(connector, method, bigquery_type):
     with patch.object(connector, "_execute_pandas", return_value=pd.DataFrame({"table_name": ["v"]})) as execute:
-        assert getattr(connector, method)() == ["v"]
+        assert getattr(connector, method)(catalog_name="my-project", database_name="analytics") == ["v"]
 
     sql = execute.call_args.args[0]
     assert f"'{bigquery_type}'" in sql
