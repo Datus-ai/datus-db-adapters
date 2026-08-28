@@ -17,8 +17,10 @@ from datus_db_core.testing.contract import assert_success
 def test_connection_with_config_object(config: BigQueryConfig):
     """Test connection using config object."""
     conn = BigQueryConnector(config)
-    assert conn.test_connection()
-    conn.close()
+    try:
+        assert conn.test_connection()
+    finally:
+        conn.close()
 
 
 # ==================== Database (Dataset) Tests ====================
