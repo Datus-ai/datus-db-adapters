@@ -444,6 +444,13 @@ class MaxComputeConnector(BaseSqlConnector):
 
     @override
     def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
+        if _UNSUPPORTED_SQL_RE.match(sql_query):
+            return ExecuteSQLResult(
+                success=False,
+                error="MaxCompute adapter does not support transactions or GRANT/REVOKE statements",
+                sql_query=sql_query,
+                result_format="",
+            )
         return ExecuteSQLResult(
             success=False,
             error="MaxCompute context switching SQL is not supported; pass project/schema as execution context",

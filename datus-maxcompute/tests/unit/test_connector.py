@@ -477,3 +477,14 @@ def test_rejects_transactions_before_submission(config):
     assert not result.success
     assert "does not support transactions" in result.error
     odps.run_sql.assert_not_called()
+
+
+@pytest.mark.parametrize("sql", ["BEGIN", "START TRANSACTION", "COMMIT", "ROLLBACK"])
+def test_execute_routes_transaction_control_to_specific_rejection(config, sql):
+    connector, odps = make_connector(config)
+
+    result = connector.execute({"sql_query": sql})
+
+    assert not result.success
+    assert "does not support transactions" in result.error
+    odps.run_sql.assert_not_called()
