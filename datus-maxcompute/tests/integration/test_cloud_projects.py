@@ -291,6 +291,17 @@ def test_three_level_custom_schema_object_metadata_and_samples():
             assert len(samples) == 1
             assert samples[0]["table_type"] == object_type
             assert "alpha" in samples[0]["sample_rows"]
+
+        assert (
+            connector.get_sample_rows(
+                tables=[table_name],
+                top_n=2,
+                database_name=connector.project,
+                schema_name=schema_name,
+                table_type="view",
+            )
+            == []
+        )
     finally:
         _drop(connector, f"DROP MATERIALIZED VIEW IF EXISTS {full(mv_name)}", schema_name)
         _drop(connector, f"DROP VIEW IF EXISTS {full(view_name)}", schema_name)

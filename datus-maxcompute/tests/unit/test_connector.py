@@ -426,7 +426,8 @@ def test_get_sample_rows_full_preserves_actual_object_types(config):
     ]
 
 
-def test_get_sample_rows_full_resolves_explicit_object_type(config):
+@pytest.mark.parametrize("table_type", ["full", "view"])
+def test_get_sample_rows_resolves_explicit_object_type(config, table_type):
     connector, odps = make_connector(config)
     odps.get_table.return_value = SimpleNamespace(
         name="orders_view",
@@ -441,7 +442,7 @@ def test_get_sample_rows_full_resolves_explicit_object_type(config):
     with patch.object(connector, "execute_query", return_value=query_result):
         result = connector.get_sample_rows(
             tables=["project_a.default.orders_view"],
-            table_type="full",
+            table_type=table_type,
         )
 
     assert result[0]["table_type"] == "view"
@@ -450,6 +451,23 @@ def test_get_sample_rows_full_resolves_explicit_object_type(config):
         project="project_a",
         schema="default",
     )
+
+
+def test_get_sample_rows_skips_explicit_target_with_mismatched_type(config):
+    connector, odps = make_connector(config)
+    odps.get_table.return_value = SimpleNamespace(
+        name="orders",
+        type=SimpleNamespace(value="MANAGED_TABLE"),
+    )
+
+    with patch.object(connector, "execute_query") as execute_query:
+        result = connector.get_sample_rows(
+            tables=["project_a.default.orders"],
+            table_type="view",
+        )
+
+    assert result == []
+    execute_query.assert_not_called()
 
 
 def test_get_schema_includes_partition_columns(config):

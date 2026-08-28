@@ -712,15 +712,14 @@ class MaxComputeConnector(BaseSqlConnector):
                     database_name=project,
                     schema_name=schema,
                 )
-                if table_type == "full":
-                    table = self._odps.get_table(
-                        name,
-                        project=resolved_project,
-                        schema=resolved_schema or None,
-                    )
-                    object_type = self._metadata_table_type(table)
-                else:
-                    object_type = table_type
+                table = self._odps.get_table(
+                    name,
+                    project=resolved_project,
+                    schema=resolved_schema or None,
+                )
+                object_type = self._metadata_table_type(table)
+                if table_type != "full" and table_type != object_type:
+                    continue
                 targets.append((resolved_project, resolved_schema, name, object_type))
         else:
             objects = list(self._odps.list_tables(project=project, schema=schema or None))
