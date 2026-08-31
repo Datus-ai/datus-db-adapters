@@ -2,6 +2,20 @@ name: MaxCompute Cloud Tests
 
 on:
   workflow_call:
+    # Declared explicitly rather than relying on `secrets: inherit`, which would
+    # hand this workflow every secret the caller can reach — including the
+    # BigQuery and Hologres credentials it has no business seeing.
+    secrets:
+      MAXCOMPUTE_ENDPOINT:
+        required: true
+      MAXCOMPUTE_ACCESS_KEY_ID:
+        required: true
+      MAXCOMPUTE_ACCESS_KEY_SECRET:
+        required: true
+      MAXCOMPUTE_TWO_LEVEL_PROJECT:
+        required: true
+      MAXCOMPUTE_THREE_LEVEL_PROJECT:
+        required: true
   workflow_dispatch:
 
 permissions:
@@ -16,12 +30,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: maxcompute-integration
-    env:
-      MAXCOMPUTE_ENDPOINT: ${{ secrets.MAXCOMPUTE_ENDPOINT }}
-      MAXCOMPUTE_ACCESS_KEY_ID: ${{ secrets.MAXCOMPUTE_ACCESS_KEY_ID }}
-      MAXCOMPUTE_ACCESS_KEY_SECRET: ${{ secrets.MAXCOMPUTE_ACCESS_KEY_SECRET }}
-      MAXCOMPUTE_TWO_LEVEL_PROJECT: ${{ secrets.MAXCOMPUTE_TWO_LEVEL_PROJECT }}
-      MAXCOMPUTE_THREE_LEVEL_PROJECT: ${{ secrets.MAXCOMPUTE_THREE_LEVEL_PROJECT }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -38,8 +46,17 @@ jobs:
         with:
           enable-cache: true
 
+      # Credentials start here rather than at job level: the three steps above
+      # are third-party actions, and a job-level env would put the connection
+      # secrets in their process environment for no reason.
       - name: Verify cloud test configuration
         shell: bash
+        env:
+          MAXCOMPUTE_ENDPOINT: ${{ secrets.MAXCOMPUTE_ENDPOINT }}
+          MAXCOMPUTE_ACCESS_KEY_ID: ${{ secrets.MAXCOMPUTE_ACCESS_KEY_ID }}
+          MAXCOMPUTE_ACCESS_KEY_SECRET: ${{ secrets.MAXCOMPUTE_ACCESS_KEY_SECRET }}
+          MAXCOMPUTE_TWO_LEVEL_PROJECT: ${{ secrets.MAXCOMPUTE_TWO_LEVEL_PROJECT }}
+          MAXCOMPUTE_THREE_LEVEL_PROJECT: ${{ secrets.MAXCOMPUTE_THREE_LEVEL_PROJECT }}
         run: |
           required=(
             MAXCOMPUTE_ENDPOINT
@@ -56,6 +73,12 @@ jobs:
           done
 
       - name: Run two-level and three-level tests
+        env:
+          MAXCOMPUTE_ENDPOINT: ${{ secrets.MAXCOMPUTE_ENDPOINT }}
+          MAXCOMPUTE_ACCESS_KEY_ID: ${{ secrets.MAXCOMPUTE_ACCESS_KEY_ID }}
+          MAXCOMPUTE_ACCESS_KEY_SECRET: ${{ secrets.MAXCOMPUTE_ACCESS_KEY_SECRET }}
+          MAXCOMPUTE_TWO_LEVEL_PROJECT: ${{ secrets.MAXCOMPUTE_TWO_LEVEL_PROJECT }}
+          MAXCOMPUTE_THREE_LEVEL_PROJECT: ${{ secrets.MAXCOMPUTE_THREE_LEVEL_PROJECT }}
         run: |
           uv run --all-packages --with pytest \
             pytest datus-maxcompute/tests/integration -m integration --verbose

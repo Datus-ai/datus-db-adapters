@@ -2,6 +2,32 @@ name: Hologres Cloud Tests
 
 on:
   workflow_call:
+    # Declared explicitly rather than relying on `secrets: inherit`, which would
+    # hand this workflow every secret the caller can reach — including the
+    # BigQuery and MaxCompute credentials it has no business seeing.
+    secrets:
+      HOLOGRES_HOST:
+        required: true
+      HOLOGRES_DATABASE:
+        required: true
+      HOLOGRES_ACCESS_KEY_ID:
+        required: true
+      HOLOGRES_ACCESS_KEY_SECRET:
+        required: true
+      HOLOGRES_PORT:
+        required: false
+      HOLOGRES_SCHEMA:
+        required: false
+      HOLOGRES_SSLMODE:
+        required: false
+      HOLOGRES_TEST_MATERIALIZED_VIEW:
+        required: false
+      HOLOGRES_SECONDARY_DATABASE:
+        required: false
+      HOLOGRES_SECONDARY_SCHEMA:
+        required: false
+      HOLOGRES_TEST_FOREIGN_TABLE:
+        required: false
   workflow_dispatch:
 
 permissions:
@@ -15,18 +41,6 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      HOLOGRES_HOST: ${{ secrets.HOLOGRES_HOST }}
-      HOLOGRES_PORT: ${{ secrets.HOLOGRES_PORT }}
-      HOLOGRES_DATABASE: ${{ secrets.HOLOGRES_DATABASE }}
-      HOLOGRES_SCHEMA: ${{ secrets.HOLOGRES_SCHEMA }}
-      HOLOGRES_ACCESS_KEY_ID: ${{ secrets.HOLOGRES_ACCESS_KEY_ID }}
-      HOLOGRES_ACCESS_KEY_SECRET: ${{ secrets.HOLOGRES_ACCESS_KEY_SECRET }}
-      HOLOGRES_SSLMODE: ${{ secrets.HOLOGRES_SSLMODE }}
-      HOLOGRES_TEST_MATERIALIZED_VIEW: ${{ secrets.HOLOGRES_TEST_MATERIALIZED_VIEW }}
-      HOLOGRES_SECONDARY_DATABASE: ${{ secrets.HOLOGRES_SECONDARY_DATABASE }}
-      HOLOGRES_SECONDARY_SCHEMA: ${{ secrets.HOLOGRES_SECONDARY_SCHEMA }}
-      HOLOGRES_TEST_FOREIGN_TABLE: ${{ secrets.HOLOGRES_TEST_FOREIGN_TABLE }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -43,8 +57,16 @@ jobs:
         with:
           enable-cache: true
 
+      # Credentials start here rather than at job level: the three steps above
+      # are third-party actions, and a job-level env would put the connection
+      # secrets in their process environment for no reason.
       - name: Verify cloud test configuration
         shell: bash
+        env:
+          HOLOGRES_HOST: ${{ secrets.HOLOGRES_HOST }}
+          HOLOGRES_DATABASE: ${{ secrets.HOLOGRES_DATABASE }}
+          HOLOGRES_ACCESS_KEY_ID: ${{ secrets.HOLOGRES_ACCESS_KEY_ID }}
+          HOLOGRES_ACCESS_KEY_SECRET: ${{ secrets.HOLOGRES_ACCESS_KEY_SECRET }}
         run: |
           required=(
             HOLOGRES_HOST
@@ -60,6 +82,18 @@ jobs:
           done
 
       - name: Run Hologres contract and Tiny TPC-H tests
+        env:
+          HOLOGRES_HOST: ${{ secrets.HOLOGRES_HOST }}
+          HOLOGRES_PORT: ${{ secrets.HOLOGRES_PORT }}
+          HOLOGRES_DATABASE: ${{ secrets.HOLOGRES_DATABASE }}
+          HOLOGRES_SCHEMA: ${{ secrets.HOLOGRES_SCHEMA }}
+          HOLOGRES_ACCESS_KEY_ID: ${{ secrets.HOLOGRES_ACCESS_KEY_ID }}
+          HOLOGRES_ACCESS_KEY_SECRET: ${{ secrets.HOLOGRES_ACCESS_KEY_SECRET }}
+          HOLOGRES_SSLMODE: ${{ secrets.HOLOGRES_SSLMODE }}
+          HOLOGRES_TEST_MATERIALIZED_VIEW: ${{ secrets.HOLOGRES_TEST_MATERIALIZED_VIEW }}
+          HOLOGRES_SECONDARY_DATABASE: ${{ secrets.HOLOGRES_SECONDARY_DATABASE }}
+          HOLOGRES_SECONDARY_SCHEMA: ${{ secrets.HOLOGRES_SECONDARY_SCHEMA }}
+          HOLOGRES_TEST_FOREIGN_TABLE: ${{ secrets.HOLOGRES_TEST_FOREIGN_TABLE }}
         run: |
           uv run --all-packages --with pytest \
             pytest datus-hologres/tests/integration -m integration --verbose

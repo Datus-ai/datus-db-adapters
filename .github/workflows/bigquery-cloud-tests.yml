@@ -2,6 +2,18 @@ name: BigQuery Cloud Tests
 
 on:
   workflow_call:
+    # Declared explicitly rather than relying on `secrets: inherit`, which would
+    # hand this workflow every secret the caller can reach — including the
+    # Hologres and MaxCompute credentials it has no business seeing.
+    secrets:
+      BIGQUERY_PROJECT:
+        required: true
+      BIGQUERY_DATASET:
+        required: true
+      BIGQUERY_CREDENTIALS_INFO:
+        required: true
+      BIGQUERY_LOCATION:
+        required: false
   workflow_dispatch:
 
 permissions:
@@ -15,11 +27,6 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      BIGQUERY_PROJECT: ${{ secrets.BIGQUERY_PROJECT }}
-      BIGQUERY_DATASET: ${{ secrets.BIGQUERY_DATASET }}
-      BIGQUERY_LOCATION: ${{ secrets.BIGQUERY_LOCATION }}
-      BIGQUERY_CREDENTIALS_INFO: ${{ secrets.BIGQUERY_CREDENTIALS_INFO }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,8 +43,15 @@ jobs:
         with:
           enable-cache: true
 
+      # Credentials start here rather than at job level: the three steps above
+      # are third-party actions, and a job-level env would put the service
+      # account key in their process environment for no reason.
       - name: Verify cloud test configuration
         shell: bash
+        env:
+          BIGQUERY_PROJECT: ${{ secrets.BIGQUERY_PROJECT }}
+          BIGQUERY_DATASET: ${{ secrets.BIGQUERY_DATASET }}
+          BIGQUERY_CREDENTIALS_INFO: ${{ secrets.BIGQUERY_CREDENTIALS_INFO }}
         run: |
           required=(
             BIGQUERY_PROJECT
@@ -52,6 +66,11 @@ jobs:
           done
 
       - name: Run BigQuery contract and adapter tests
+        env:
+          BIGQUERY_PROJECT: ${{ secrets.BIGQUERY_PROJECT }}
+          BIGQUERY_DATASET: ${{ secrets.BIGQUERY_DATASET }}
+          BIGQUERY_LOCATION: ${{ secrets.BIGQUERY_LOCATION }}
+          BIGQUERY_CREDENTIALS_INFO: ${{ secrets.BIGQUERY_CREDENTIALS_INFO }}
         run: |
           uv run --all-packages --with pytest \
             pytest datus-bigquery/tests/integration -m integration --verbose
