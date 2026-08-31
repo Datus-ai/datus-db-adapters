@@ -8,7 +8,7 @@ its pure logic exercised without reaching a cluster.
 """
 
 import os
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pytest
 
@@ -134,6 +134,18 @@ def test_connection_string_targets_the_requested_database():
     url = _connector()._build_connection_string("reporting")
 
     assert urlparse(url).path == "/reporting"
+
+
+@pytest.mark.parametrize("database", ["sales?prod", "sales#eu", "sales/eu", "sales eu"])
+def test_connection_string_encodes_the_database_path_component(database):
+    """The database is a path component. An unescaped '?' or '#' would start the
+    query or fragment early and silently drop sslmode from the connect args."""
+    url = _connector(sslmode="verify-ca")._build_connection_string(database)
+    parsed = urlparse(url)
+
+    assert unquote(parsed.path.lstrip("/")) == database
+    assert parse_qs(parsed.query)["sslmode"] == ["verify-ca"]
+    assert parsed.fragment == ""
 
 
 # ==================== system schemas ====================

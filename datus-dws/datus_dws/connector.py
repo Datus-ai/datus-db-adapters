@@ -5,7 +5,7 @@
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Set, Tuple, Union, override
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 from datus_db_core import get_logger
 from datus_postgresql import PostgreSQLConnector
@@ -115,7 +115,13 @@ class DWSConnector(PostgreSQLConnector):
         sslrootcert = as_path(self.config.sslrootcert)
         if sslrootcert:
             query += f"&sslrootcert={quote_plus(sslrootcert)}"
-        return f"postgresql+psycopg2://{encoded_username}:{encoded_password}@{host}:{self.port}/{database_name}?{query}"
+        # The database is a path component: an unescaped '?' or '#' would start
+        # the query or fragment early and drop sslmode, and a '/' would add a
+        # path segment.
+        encoded_database = quote(database_name, safe="")
+        return (
+            f"postgresql+psycopg2://{encoded_username}:{encoded_password}@{host}:{self.port}/{encoded_database}?{query}"
+        )
 
     # ==================== System Resources ====================
 
