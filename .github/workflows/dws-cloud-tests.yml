@@ -2,6 +2,26 @@ name: DWS Cloud Tests
 
 on:
   workflow_call:
+    # Declared explicitly rather than relying on `secrets: inherit`, which would
+    # hand this workflow every secret the caller can reach — including the
+    # BigQuery, Hologres and MaxCompute credentials it has no business seeing.
+    secrets:
+      DWS_HOST:
+        required: true
+      DWS_DATABASE:
+        required: true
+      DWS_USERNAME:
+        required: true
+      DWS_PASSWORD:
+        required: true
+      DWS_PORT:
+        required: false
+      DWS_SCHEMA:
+        required: false
+      DWS_SSLMODE:
+        required: false
+      DWS_SSLROOTCERT_PEM:
+        required: false
   workflow_dispatch:
 
 permissions:
@@ -15,15 +35,6 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      DWS_HOST: ${{ secrets.DWS_HOST }}
-      DWS_PORT: ${{ secrets.DWS_PORT }}
-      DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
-      DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
-      DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
-      DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
-      DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
-      DWS_SSLROOTCERT_PEM: ${{ secrets.DWS_SSLROOTCERT_PEM }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,8 +51,16 @@ jobs:
         with:
           enable-cache: true
 
+      # Credentials start here rather than at job level: the three steps above
+      # are third-party actions, and a job-level env would put the connection
+      # secrets in their process environment for no reason.
       - name: Verify cloud test configuration
         shell: bash
+        env:
+          DWS_HOST: ${{ secrets.DWS_HOST }}
+          DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+          DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
+          DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
         run: |
           required=(
             DWS_HOST
@@ -58,6 +77,8 @@ jobs:
 
       - name: Materialize CA certificate
         shell: bash
+        env:
+          DWS_SSLROOTCERT_PEM: ${{ secrets.DWS_SSLROOTCERT_PEM }}
         run: |
           # The CA is held as PEM content rather than a path, so write it out
           # with restrictive permissions and never echo it.
@@ -70,6 +91,16 @@ jobs:
           fi
 
       - name: Run DWS integration tests
+        # DWS_SSLROOTCERT is not listed here: the step above exports it through
+        # GITHUB_ENV as a path, since the certificate arrives as PEM content.
+        env:
+          DWS_HOST: ${{ secrets.DWS_HOST }}
+          DWS_PORT: ${{ secrets.DWS_PORT }}
+          DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+          DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
+          DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
+          DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+          DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
         run: |
           uv run --all-packages --with pytest \
             pytest datus-dws/tests/integration -m integration --verbose

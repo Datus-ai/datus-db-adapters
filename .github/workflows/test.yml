@@ -242,7 +242,15 @@ jobs:
       - unit-tests
       - select-integration-tests
     uses: ./.github/workflows/dws-cloud-tests.yml
-    secrets: inherit
+    secrets:
+      DWS_HOST: ${{ secrets.DWS_HOST }}
+      DWS_PORT: ${{ secrets.DWS_PORT }}
+      DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+      DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
+      DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
+      DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+      DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
+      DWS_SSLROOTCERT_PEM: ${{ secrets.DWS_SSLROOTCERT_PEM }}
 
   integration-tests:
     if: always() && (github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
