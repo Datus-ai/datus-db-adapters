@@ -236,6 +236,14 @@ jobs:
       BIGQUERY_LOCATION: ${{ secrets.BIGQUERY_LOCATION }}
       BIGQUERY_CREDENTIALS_INFO: ${{ secrets.BIGQUERY_CREDENTIALS_INFO }}
 
+  dws-cloud-tests:
+    if: needs.select-integration-tests.result == 'success' && contains(fromJSON(needs.select-integration-tests.outputs.cloud || '[]'), 'dws')
+    needs:
+      - unit-tests
+      - select-integration-tests
+    uses: ./.github/workflows/dws-cloud-tests.yml
+    secrets: inherit
+
   integration-tests:
     if: always() && (github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     needs:
@@ -246,6 +254,7 @@ jobs:
       - hologres-cloud-tests
       - maxcompute-cloud-tests
       - bigquery-cloud-tests
+      - dws-cloud-tests
     runs-on: ubuntu-latest
     steps:
       - name: Verify selected integration results
@@ -257,6 +266,7 @@ jobs:
           HOLOGRES_RESULT: ${{ needs.hologres-cloud-tests.result }}
           MAXCOMPUTE_RESULT: ${{ needs.maxcompute-cloud-tests.result }}
           BIGQUERY_RESULT: ${{ needs.bigquery-cloud-tests.result }}
+          DWS_RESULT: ${{ needs.dws-cloud-tests.result }}
           COMPOSE_TARGETS: ${{ needs.select-integration-tests.outputs.compose }}
           ORACLE_SELECTED: ${{ needs.select-integration-tests.outputs.oracle }}
           CLOUD_TARGETS: ${{ needs.select-integration-tests.outputs.cloud }}
@@ -299,6 +309,10 @@ jobs:
           case "$CLOUD_TARGETS" in
             *'"bigquery"'*) require_result "bigquery-cloud-tests" "$BIGQUERY_RESULT" "success" ;;
             *) require_result "bigquery-cloud-tests" "$BIGQUERY_RESULT" "skipped" ;;
+          esac
+          case "$CLOUD_TARGETS" in
+            *'"dws"'*) require_result "dws-cloud-tests" "$DWS_RESULT" "success" ;;
+            *) require_result "dws-cloud-tests" "$DWS_RESULT" "skipped" ;;
           esac
 
           if [ "$failed" -ne 0 ]; then

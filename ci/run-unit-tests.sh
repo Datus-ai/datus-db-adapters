@@ -25,6 +25,7 @@ PACKAGE_SPECS=(
   "datus-oracle:datus-oracle/tests/unit"
   "datus-gaussdb:datus-gaussdb/tests/unit"
   "datus-bigquery:datus-bigquery/tests/unit"
+  "datus-dws:datus-dws/tests/unit"
 )
 
 usage() {

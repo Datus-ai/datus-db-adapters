@@ -20,7 +20,8 @@ Plugin Adapters (Independent packages, install as needed)
 │   ├── datus-doris
 │   ├── datus-tidb
 │   ├── datus-oracle
-│   └── datus-gaussdb
+│   ├── datus-gaussdb
+│   └── datus-dws
 │
 └── Native SDK Adapters
     ├── datus-snowflake
@@ -212,6 +213,25 @@ pip install datus-tidb
 - Flags the two DDL clauses TiDB accepts without honouring (`CHECK`, `FULLTEXT`)
 - Adapter-packaged TiDB SQL skill covering unsupported constructs and TiFlash MPP push-down
 - Four-container Docker integration coverage (PD, TiKV, TiDB, TiFlash) including columnar and MPP assertions
+
+---
+
+### 12. datus-dws
+Huawei Cloud GaussDB(DWS) adapter (PostgreSQL wire protocol, MPP warehouse).
+
+**Installation**:
+```bash
+pip install datus-dws
+```
+
+**Features**:
+- Inherits the psycopg2 transport from `datus-postgresql`; no dialect or driver of its own
+- Native `pg_get_tabledef()` DDL preserving orientation, compression, and all three distribution forms
+- Strips cluster-specific `TO GROUP` and `TABLESPACE` clauses for migration targets
+- ORA/TD/MySQL compatibility-mode probing, with ORA's empty-string and division semantics surfaced in migration notes
+- DWS system schema filtering (`cstore`, `sys`, `pg_recyclebin`, `dbms_*`, `utl_*`)
+- Adapter-packaged DWS SQL skill covering the silently-wrong ORA-mode constructs
+- Cloud integration coverage on a real DWS cluster
 
 ---
 

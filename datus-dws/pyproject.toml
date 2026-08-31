@@ -1,0 +1,53 @@
+[project]
+name = "datus-dws"
+version = "0.1.0"
+description = "Huawei Cloud GaussDB(DWS) database adapter for Datus"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "DatusAI", email = "support@datus.ai"}
+]
+keywords = ["datus", "database", "dws", "gaussdb", "huawei", "postgresql", "adapter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "datus-db-core>=0.1.6",
+    "datus-postgresql>=0.1.8",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Datus-ai/datus-db-adapters"
+Repository = "https://github.com/Datus-ai/datus-db-adapters"
+Issues = "https://github.com/Datus-ai/datus-db-adapters/issues"
+
+[project.entry-points."datus.adapters"]
+dws = "datus_dws:register"
+
+[project.entry-points."datus.skills"]
+dws = "datus_dws.skills:get_skills_dir"
+
+[tool.uv.sources]
+datus-db-core = { workspace = true }
+datus-postgresql = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["datus_dws"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests that require a live DWS cluster",
+    "acceptance: marks core adapter contract tests",
+]
+testpaths = ["tests"]
