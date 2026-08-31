@@ -238,12 +238,13 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
         "bigquery",
         "hologres",
         "maxcompute",
+        "dws",
     }
     assert {name for name, target in targets.items() if target.enabled} == COMPOSE_TARGETS | {
         "bigquery",
         "hologres",
     }
-    assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute"}
+    assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute", "dws"}
 
 
 def test_packages_without_live_targets_are_explicitly_registered() -> None:

@@ -60,6 +60,14 @@ enabled = false
 package = "datus-bigquery"
 kind = "cloud"
 
+[targets.dws]
+package = "datus-dws"
+kind = "cloud"
+# Verified against a live DWS 9.1.0 cluster during development. Enable once the
+# DWS_* repository secrets point at a long-lived cluster; a DWS cluster is
+# billed per hour, so keeping one online is a standing cost decision.
+enabled = false
+
 [selection]
 packages_without_live_targets = [
     "datus-clickzetta",

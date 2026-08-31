@@ -1,0 +1,106 @@
+name: DWS Cloud Tests
+
+on:
+  workflow_call:
+    # Declared explicitly rather than relying on `secrets: inherit`, which would
+    # hand this workflow every secret the caller can reach — including the
+    # BigQuery, Hologres and MaxCompute credentials it has no business seeing.
+    secrets:
+      DWS_HOST:
+        required: true
+      DWS_DATABASE:
+        required: true
+      DWS_USERNAME:
+        required: true
+      DWS_PASSWORD:
+        required: true
+      DWS_PORT:
+        required: false
+      DWS_SCHEMA:
+        required: false
+      DWS_SSLMODE:
+        required: false
+      DWS_SSLROOTCERT_PEM:
+        required: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dws-cloud-tests
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Credentials start here rather than at job level: the three steps above
+      # are third-party actions, and a job-level env would put the connection
+      # secrets in their process environment for no reason.
+      - name: Verify cloud test configuration
+        shell: bash
+        env:
+          DWS_HOST: ${{ secrets.DWS_HOST }}
+          DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+          DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
+          DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+        run: |
+          required=(
+            DWS_HOST
+            DWS_DATABASE
+            DWS_USERNAME
+            DWS_PASSWORD
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required repository secret: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Materialize CA certificate
+        shell: bash
+        env:
+          DWS_SSLROOTCERT_PEM: ${{ secrets.DWS_SSLROOTCERT_PEM }}
+        run: |
+          # The CA is held as PEM content rather than a path, so write it out
+          # with restrictive permissions and never echo it.
+          if [ -n "${DWS_SSLROOTCERT_PEM:-}" ]; then
+            umask 077
+            printf '%s' "${DWS_SSLROOTCERT_PEM}" > "${RUNNER_TEMP}/dws-ca.pem"
+            echo "DWS_SSLROOTCERT=${RUNNER_TEMP}/dws-ca.pem" >> "${GITHUB_ENV}"
+          else
+            echo "::notice::DWS_SSLROOTCERT_PEM is unset; verify-ca assertions will be skipped"
+          fi
+
+      - name: Run DWS integration tests
+        # DWS_SSLROOTCERT is not listed here: the step above exports it through
+        # GITHUB_ENV as a path, since the certificate arrives as PEM content.
+        env:
+          DWS_HOST: ${{ secrets.DWS_HOST }}
+          DWS_PORT: ${{ secrets.DWS_PORT }}
+          DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+          DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
+          DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
+          DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+          DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
+        run: |
+          uv run --all-packages --with pytest \
+            pytest datus-dws/tests/integration -m integration --verbose

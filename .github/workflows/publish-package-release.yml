@@ -28,6 +28,7 @@ on:
           - datus-hologres
           - datus-oracle
           - datus-gaussdb
+          - datus-dws
       version:
         description: "Optional version; leave empty or use auto to resolve from main and PyPI"
         required: false
