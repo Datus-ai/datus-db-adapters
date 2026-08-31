@@ -41,3 +41,55 @@ def test_oracle_runs_after_the_parallel_compose_matrix() -> None:
 
     assert oracle_job < oracle_run < aggregate_job
     assert "      - compose-integration-tests" in source[oracle_job:oracle_run]
+
+
+def _declared_secrets(workflow: Path) -> set[str]:
+    """Secret names a reusable workflow declares under `on.workflow_call.secrets`."""
+    block = workflow.read_text(encoding="utf-8").partition("    secrets:\n")[2]
+    names = set()
+    for line in block.splitlines():
+        if line.strip() and not line.startswith("      "):
+            break
+        if line.startswith("      ") and not line.startswith("        ") and line.strip().endswith(":"):
+            names.add(line.strip().removesuffix(":"))
+    return names
+
+
+def _passed_secrets(caller_source: str, job_name: str) -> set[str]:
+    """Secret names test.yml maps into a reusable workflow invocation.
+
+    Returns an empty set for `secrets: inherit`, which passes no names at all —
+    that is what makes the equality assertion below reject it.
+    """
+    job = caller_source.partition(f"  {job_name}:\n")[2]
+    block = job.partition("    secrets:\n")[2]
+    names = set()
+    for line in block.splitlines():
+        if not line.startswith("      "):
+            break
+        names.add(line.strip().partition(":")[0])
+    return names
+
+
+def test_cloud_workflows_receive_exactly_the_secrets_they_declare() -> None:
+    """Every reusable cloud workflow declares its secrets, and the caller maps
+    exactly those.
+
+    `secrets: inherit` would hand each workflow every credential in the
+    repository — the Hologres job would receive the BigQuery service account key
+    and vice versa. Declaring names on both sides keeps a workflow's blast radius
+    to its own provider, and equality catches the half-update where a new secret
+    is added to one side only.
+    """
+    caller_source = WORKFLOW.read_text(encoding="utf-8")
+    cloud_workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*-cloud-tests.yml"))
+
+    assert cloud_workflows, "no cloud workflows found"
+
+    for workflow in cloud_workflows:
+        job_name = workflow.stem
+        declared = _declared_secrets(workflow)
+        passed = _passed_secrets(caller_source, job_name)
+
+        assert declared, f"{workflow.name} declares no workflow_call secrets"
+        assert declared == passed, f"{workflow.name} declares {sorted(declared)} but test.yml passes {sorted(passed)}"
