@@ -210,6 +210,28 @@ def test_strip_handles_replication_tables_without_tablespace():
     assert stripped.rstrip().endswith("DISTRIBUTE BY REPLICATION;")
 
 
+def test_strip_removes_quoted_names_containing_spaces():
+    """A quoted identifier may contain spaces, so the clause cannot end at the
+    first whitespace — stopping there leaves a dangling fragment behind and the
+    emitted DDL no longer parses."""
+    ddl = 'CREATE TABLE t (id integer)\nTABLESPACE "obs tbs"\nDISTRIBUTE BY HASH(id)\nTO GROUP "node group";'
+
+    stripped = DWSConnector.strip_cluster_specific_clauses(ddl)
+
+    assert stripped == "CREATE TABLE t (id integer)\nDISTRIBUTE BY HASH(id);"
+    assert '"' not in stripped
+    assert "tbs" not in stripped
+    assert "group" not in stripped.lower()
+
+
+def test_strip_removes_quoted_names_with_doubled_quote_escape():
+    ddl = 'CREATE TABLE t (id integer)\nTO GROUP "we""ird";'
+
+    stripped = DWSConnector.strip_cluster_specific_clauses(ddl)
+
+    assert stripped == "CREATE TABLE t (id integer);"
+
+
 def test_strip_is_a_noop_for_portable_ddl():
     portable = "CREATE TABLE t (id integer)\nDISTRIBUTE BY HASH(id);"
 

@@ -41,10 +41,16 @@ _SYS_SCHEMA_PREFIXES = ("dbms_", "utl_", "dbe_", "pkg_", "prvt_")
 
 # ``TO GROUP`` names a node group and ``TABLESPACE`` an OBS tablespace; both are
 # properties of the cluster that produced the DDL, so neither survives being
-# replayed elsewhere. ``[^\s;]+`` rather than ``\S+`` so the statement's
+# replayed elsewhere.
+#
+# The name is either a quoted identifier — which may contain spaces, and escapes
+# an inner quote by doubling it — or a bare one. Matching the quoted form first
+# matters: an unquoted-only pattern truncates ``TABLESPACE "obs tbs"`` after
+# ``"obs`` and leaves ``tbs"`` behind, producing DDL that no longer parses.
+# ``[^\s;]+`` rather than ``\S+`` for the bare form so the statement's
 # terminating semicolon is left in place.
 _CLUSTER_SPECIFIC_CLAUSE_RE = re.compile(
-    r"\n?[ \t]*(?:TO\s+GROUP|TABLESPACE)\s+[^\s;]+",
+    r'\n?[ \t]*(?:TO\s+GROUP|TABLESPACE)\s+(?:"(?:[^"]|"")*"|[^\s;]+)',
     re.IGNORECASE,
 )
 
