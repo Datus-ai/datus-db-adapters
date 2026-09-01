@@ -33,7 +33,7 @@ def test_config_with_custom_values():
         username="admin",
         password="secret123",
         database="mydb",
-        auth_mechanism="PLAIN",
+        auth_mechanism="CUSTOM",
         timeout_seconds=60,
     )
 
@@ -42,7 +42,7 @@ def test_config_with_custom_values():
     assert config.username == "admin"
     assert config.password == "secret123"
     assert config.database == "mydb"
-    assert config.auth_mechanism == "PLAIN"
+    assert config.auth_mechanism == "CUSTOM"
     assert config.timeout_seconds == 60
 
 
@@ -129,25 +129,12 @@ def test_config_default_port_10000():
     assert config.port == 10000
 
 
-def test_config_auth_mechanism_none():
-    """Test default auth mechanism is NONE."""
-    config = SparkConfig(username="test_user")
+@pytest.mark.parametrize("auth_mechanism", ["NONE", "NOSASL", "LDAP", "KERBEROS", "CUSTOM"])
+def test_config_supported_auth_mechanisms(auth_mechanism):
+    """Test every authentication mechanism accepted by PyHive."""
+    config = SparkConfig(username="test_user", auth_mechanism=auth_mechanism)
 
-    assert config.auth_mechanism == "NONE"
-
-
-def test_config_auth_mechanism_plain():
-    """Test PLAIN auth mechanism."""
-    config = SparkConfig(username="test_user", auth_mechanism="PLAIN")
-
-    assert config.auth_mechanism == "PLAIN"
-
-
-def test_config_auth_mechanism_kerberos():
-    """Test KERBEROS auth mechanism."""
-    config = SparkConfig(username="test_user", auth_mechanism="KERBEROS")
-
-    assert config.auth_mechanism == "KERBEROS"
+    assert config.auth_mechanism == auth_mechanism
 
 
 # ==================== Default Value Tests ====================
@@ -236,10 +223,11 @@ def test_config_database_with_special_characters():
     assert config.database == special_db
 
 
-def test_config_invalid_auth_mechanism():
-    """Test that validation fails for invalid auth_mechanism."""
+@pytest.mark.parametrize("auth_mechanism", ["PLAIN", "INVALID"])
+def test_config_invalid_auth_mechanism(auth_mechanism):
+    """Test that validation rejects mechanisms unsupported by PyHive."""
     with pytest.raises(ValidationError) as exc_info:
-        SparkConfig(username="test_user", auth_mechanism="INVALID")
+        SparkConfig(username="test_user", auth_mechanism=auth_mechanism)
 
     errors = exc_info.value.errors()
     assert any(error["loc"] == ("auth_mechanism",) for error in errors)

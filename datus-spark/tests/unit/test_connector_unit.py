@@ -96,21 +96,21 @@ def test_connector_default_database():
         assert connector.database_name == "default"
 
 
-def test_connector_connection_string_with_auth_mechanism():
-    """Test connection string includes auth mechanism when not NONE."""
+def test_connector_connection_string_with_custom_auth():
+    """Test CUSTOM authentication is passed through to PyHive."""
     config = SparkConfig(
         host="localhost",
         port=10000,
         username="user",
         password="pass",
-        auth_mechanism="PLAIN",
+        auth_mechanism="CUSTOM",
     )
 
     with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__") as mock_init:
         SparkConnector(config)
 
         conn_string = mock_init.call_args[0][0]
-        assert "auth=PLAIN" in conn_string
+        assert conn_string == "hive://user:pass@localhost:10000/default?auth=CUSTOM"
 
 
 def test_connector_connection_string_without_auth():
