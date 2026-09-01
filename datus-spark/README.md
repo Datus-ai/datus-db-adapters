@@ -80,8 +80,11 @@ for column in schema:
 | username | str | (required) | Username |
 | password | str | "" | Password |
 | database | str | None | Default database (falls back to `default`) |
-| auth_mechanism | str | "NONE" | Authentication mechanism (NONE, PLAIN, KERBEROS) |
+| auth_mechanism | str | "NONE" | Authentication mechanism (NONE, NOSASL, LDAP, KERBEROS, CUSTOM) |
 | timeout_seconds | int | 30 | Connection timeout |
+
+`auth_mechanism` is passed directly to PyHive. Use `LDAP` or `CUSTOM` when providing a password. `PLAIN` is
+the underlying SASL mechanism used by those modes, not a valid PyHive authentication mode.
 
 ## Features
 
