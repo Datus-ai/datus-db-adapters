@@ -170,6 +170,19 @@ uv run --no-project --isolated --with huaweicloudsdkdws python ci/cloud/dws/clus
 ownership guard, polling, teardown-on-failure) against fake clients, so it runs
 without cloud credentials.
 
+## Verified end to end
+
+Run against a real cn-east-3 account: `up` created a 3-node
+`dwsk2.h.xlarge.4.kc1` cluster (about 17 minutes), tagged it with its owner and
+expiry, auto-assigned an EIP, and emitted the connection details; the adapter's
+integration suite then passed against it — **29 passed, 3 skipped in 9.9s** (the
+skips need the optional `DWS_SSLROOTCERT_PEM`).
+
+One thing that will bite anyone repeating this: the security group must actually
+admit the runner. Without the inbound rule every test waits out a TCP timeout,
+turning a 10-second suite into a 6-minute one that fails with
+`Operation timed out` rather than anything about permissions.
+
 ## Region-specific values, and a misleading error
 
 Three fields must match what the target region actually offers. Their defaults
