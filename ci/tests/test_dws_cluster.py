@@ -209,18 +209,29 @@ def test_wait_available_times_out():
 # ==================== connection details ====================
 
 
-def test_connection_host_prefers_the_private_endpoint():
+def test_connection_host_uses_the_eip_for_an_internet_runner():
+    """A GitHub-hosted runner cannot reach the VPC private address."""
     ready = detail(
         "AVAILABLE",
         endpoints=[SimpleNamespace(connect_info="10.0.0.5:8000", jdbc_url="jdbc:postgresql://10.0.0.5:8000/gaussdb")],
         public_ip=SimpleNamespace(eip_address="1.2.3.4"),
     )
-    assert cluster.connection_host(ready) == "10.0.0.5"
+    assert cluster.connection_host(ready, prefer_public=True) == "1.2.3.4"
 
 
-def test_connection_host_falls_back_to_the_elastic_ip():
+def test_connection_host_uses_the_private_endpoint_inside_the_vpc():
+    """A self-hosted runner in the VPC skips the EIP: faster and no egress fee."""
+    ready = detail(
+        "AVAILABLE",
+        endpoints=[SimpleNamespace(connect_info="10.0.0.5:8000", jdbc_url="jdbc:postgresql://10.0.0.5:8000/gaussdb")],
+        public_ip=SimpleNamespace(eip_address="1.2.3.4"),
+    )
+    assert cluster.connection_host(ready, prefer_public=False) == "10.0.0.5"
+
+
+def test_connection_host_falls_back_to_whichever_address_exists():
     ready = detail("AVAILABLE", endpoints=[], public_ip=SimpleNamespace(eip_address="1.2.3.4"))
-    assert cluster.connection_host(ready) == "1.2.3.4"
+    assert cluster.connection_host(ready, prefer_public=False) == "1.2.3.4"
 
 
 def test_connection_host_raises_when_the_cluster_is_unreachable():
@@ -389,3 +400,50 @@ def test_zones_lists_codes_for_the_availability_zone_setting(env, monkeypatch, c
     assert "cn-north-4a" in out
     assert "status=available" in out
     assert "2 zone(s)" in out
+
+
+def test_create_cluster_auto_assigns_an_eip_by_default(env):
+    """Without an EIP a GitHub-hosted runner has no route to the cluster."""
+    pytest.importorskip("huaweicloudsdkdws")
+
+    client = FakeClient()
+    cluster.create_cluster(client, cluster.build_spec("datus-ci-42"), now=NOW)
+
+    public_ip = client.created[0].body.cluster.public_ip
+    assert public_ip.public_bind_type == "auto_assign"
+    assert public_ip.band_width == 5
+
+
+def test_create_cluster_can_skip_the_eip_for_an_in_vpc_runner(env):
+    pytest.importorskip("huaweicloudsdkdws")
+    env.setenv("DWS_CI_PUBLIC_IP", "not_use")
+
+    client = FakeClient()
+    cluster.create_cluster(client, cluster.build_spec("datus-ci-42"), now=NOW)
+
+    assert client.created[0].body.cluster.public_ip.public_bind_type == "not_use"
+    assert client.created[0].body.cluster.public_ip.band_width is None
+
+
+def test_build_spec_rejects_an_unknown_public_ip_mode(env):
+    env.setenv("DWS_CI_PUBLIC_IP", "sometimes")
+
+    with pytest.raises(cluster.ConfigError, match="DWS_CI_PUBLIC_IP"):
+        cluster.build_spec("datus-ci-42")
+
+
+def test_delete_cluster_releases_the_bound_eip(env):
+    """release_eip_type defaults to NO_RELEASE — an auto-assigned EIP would
+    outlive the cluster and keep billing."""
+    pytest.importorskip("huaweicloudsdkdws")
+
+    captured = []
+
+    class Recording(FakeClient):
+        def delete_dws_cluster(self, request):
+            captured.append(request)
+            return SimpleNamespace()
+
+    cluster.delete_cluster(Recording(), "cluster-1")
+
+    assert captured[0].release_eip_type == "RELEASE_BINDING"

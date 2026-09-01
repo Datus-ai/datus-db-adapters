@@ -40,7 +40,37 @@ Ephemeral runs cost roughly one cluster-hour per run (creation alone takes
 Optional, with defaults: `DWS_CI_FLAVOR` (`dwsx2.xlarge.m7`), `DWS_CI_NUM_NODE`
 (`3` — the documented minimum for cluster mode), `DWS_CI_DB_NAME` (`gaussdb`),
 `DWS_CI_DB_USER` (`dbadmin`), `DWS_CI_DB_PORT` (`8000`), `DWS_CI_TTL_MINUTES`
-(`180`).
+(`180`), `DWS_CI_PUBLIC_IP` (`auto_assign`), `DWS_CI_EIP_BANDWIDTH` (`5` Mbit/s).
+
+## What costs money, and what to keep
+
+**Keep these permanently — they are free to hold:** the VPC, its subnet and the
+security group. Huawei Cloud does not bill for the network objects themselves
+(only for traffic-carrying add-ons like NAT gateways, VPN or bandwidth), so
+recreating them per run would add failure modes and IDs to rotate for no saving.
+Create them once, put their IDs in secrets, leave them alone.
+
+**These are billed and so are created and destroyed per run:** the cluster
+itself, and its EIP when one is assigned.
+
+The EIP needs care. `DWS_CI_PUBLIC_IP` defaults to `auto_assign` because the
+cloud job runs on `ubuntu-latest`, a GitHub-hosted runner on the public
+internet, which has no route to a VPC-private address. The delete call therefore
+passes `release_eip_type=RELEASE_BINDING`: the API's own default is
+`NO_RELEASE`, which would leave the EIP behind, unattached and still billing,
+after its cluster was gone.
+
+If you move this job to a self-hosted runner inside the VPC, set
+`DWS_CI_PUBLIC_IP=not_use` — no EIP is created, the private endpoint is used
+instead, and the security group can stay closed to the internet. That is both
+cheaper and safer; the internet path exists only because the job runs on a
+hosted runner today.
+
+> **Security group scope.** With a hosted runner the cluster port must be
+> reachable from GitHub's egress addresses, which are numerous and change. Weigh
+> that before opening the port broadly: an in-VPC runner (above) avoids the
+> question entirely, and the port is only ever open for the minutes a cluster
+> exists.
 
 > **Which availability zone?** Ask the API instead of guessing — the reference's
 > sample response shows a placeholder `az1` while its create-cluster sample uses

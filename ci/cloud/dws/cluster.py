@@ -31,6 +31,10 @@ Configuration comes from the environment (see ci/cloud/dws/README.md):
   DWS_CI_NUM_NODE                           default 3 (the documented minimum)
   DWS_CI_DB_NAME / _DB_PORT / _DB_USER      defaults gaussdb / 8000 / dbadmin
   DWS_CI_TTL_MINUTES                        default 180, used by `reap`
+  DWS_CI_PUBLIC_IP                          auto_assign (default) | not_use |
+                                            bind_existing (+ DWS_CI_EIP_ID)
+  DWS_CI_EIP_BANDWIDTH                      Mbit/s for an auto-assigned EIP,
+                                            default 5
 """
 
 from __future__ import annotations
@@ -52,6 +56,11 @@ EXPIRES_TAG_KEY = "datus-ci-expires-at"
 # not AVAILABLE is treated as a failure so the job stops instead of hanging.
 _PENDING_STATUSES = frozenset({"CREATING", "BUILDING", "PENDING", "REBOOTING", "RESTORING"})
 _READY_STATUS = "AVAILABLE"
+
+# A GitHub-hosted runner reaches the cluster over the internet, so it needs an
+# EIP; a self-hosted runner inside the VPC can use the private endpoint instead
+# and set DWS_CI_PUBLIC_IP=not_use.
+_PUBLIC_BIND_TYPES = frozenset({"auto_assign", "not_use", "bind_existing"})
 
 _CREATE_TIMEOUT_SECONDS = 2400  # cluster creation is documented at 10-15 minutes
 _DELETE_TIMEOUT_SECONDS = 900
@@ -82,6 +91,8 @@ class ClusterSpec:
     db_password: str
     db_port: int
     ttl_minutes: int
+    public_bind_type: str
+    eip_bandwidth: int
 
 
 def _require_env(name: str) -> str:
@@ -105,6 +116,9 @@ def build_spec(name: str, *, now: datetime | None = None) -> ClusterSpec:
     """Assemble a cluster spec from the environment."""
 
     del now  # kept for symmetry with expiry_timestamp(); spec itself is time-free
+    public_bind_type = os.getenv("DWS_CI_PUBLIC_IP", "auto_assign").strip()
+    if public_bind_type not in _PUBLIC_BIND_TYPES:
+        raise ConfigError(f"DWS_CI_PUBLIC_IP must be one of {sorted(_PUBLIC_BIND_TYPES)}, got {public_bind_type!r}")
     num_node = _int_env("DWS_CI_NUM_NODE", 3)
     if num_node < 3:
         # The API rejects fewer: cluster mode takes 3-256 nodes.
@@ -122,6 +136,8 @@ def build_spec(name: str, *, now: datetime | None = None) -> ClusterSpec:
         db_password=_require_env("DWS_CI_DB_PASSWORD"),
         db_port=_int_env("DWS_CI_DB_PORT", 8000),
         ttl_minutes=_int_env("DWS_CI_TTL_MINUTES", 180),
+        public_bind_type=public_bind_type,
+        eip_bandwidth=_int_env("DWS_CI_EIP_BANDWIDTH", 5),
     )
 
 
@@ -193,10 +209,17 @@ def create_cluster(client, spec: ClusterSpec, *, now: datetime | None = None) ->
 
     from huaweicloudsdkdws.v2 import (
         CreateClusterV2Request,
+        PublicIp,
         Tags,
         V2CreateCluster,
         V2CreateClusterReq,
     )
+
+    public_ip = PublicIp(public_bind_type=spec.public_bind_type)
+    if spec.public_bind_type == "auto_assign":
+        public_ip.band_width = spec.eip_bandwidth
+    elif spec.public_bind_type == "bind_existing":
+        public_ip.eip_id = _require_env("DWS_CI_EIP_ID")
 
     cluster = V2CreateCluster(
         name=spec.name,
@@ -209,6 +232,7 @@ def create_cluster(client, spec: ClusterSpec, *, now: datetime | None = None) ->
         vpc_id=spec.vpc_id,
         subnet_id=spec.subnet_id,
         security_group_id=spec.security_group_id,
+        public_ip=public_ip,
         tags=[
             Tags(key=OWNER_TAG_KEY, value=OWNER_TAG_VALUE),
             Tags(key=EXPIRES_TAG_KEY, value=expiry_timestamp(spec.ttl_minutes, now=now)),
@@ -248,22 +272,28 @@ def wait_available(client, cluster_id: str, *, timeout: int = _CREATE_TIMEOUT_SE
     raise ClusterError(f"Timed out after {timeout}s waiting for cluster {cluster_id} (last status {last_status!r})")
 
 
-def connection_host(detail: Any) -> str:
+def connection_host(detail: Any, *, prefer_public: bool = True) -> str:
     """Pick the address tests should connect to.
 
-    Prefers the private endpoint (CI runs inside the VPC when self-hosted) and
-    falls back to the bound EIP.
+    A GitHub-hosted runner is on the internet and can only reach the EIP, while a
+    self-hosted runner inside the VPC should prefer the private endpoint (faster
+    and no egress charge). `prefer_public` follows DWS_CI_PUBLIC_IP.
     """
 
+    public_ip = getattr(detail, "public_ip", None)
+    eip = getattr(public_ip, "eip_address", None) if public_ip else None
+    private = None
     for endpoint in getattr(detail, "endpoints", None) or []:
         connect_info = getattr(endpoint, "connect_info", None)
         if connect_info:
             # connect_info looks like "host:port"; the port is configured separately.
-            return str(connect_info).rsplit(":", 1)[0]
-    public_ip = getattr(detail, "public_ip", None)
-    eip = getattr(public_ip, "eip_address", None) if public_ip else None
-    if eip:
-        return str(eip)
+            private = str(connect_info).rsplit(":", 1)[0]
+            break
+
+    ordered = [eip, private] if prefer_public else [private, eip]
+    for candidate in ordered:
+        if candidate:
+            return str(candidate)
     raise ClusterError("Cluster is available but exposes neither a private endpoint nor an EIP")
 
 
@@ -274,7 +304,15 @@ def delete_cluster(client, cluster_id: str) -> bool:
     from huaweicloudsdkdws.v2 import DeleteDwsClusterRequest
 
     try:
-        client.delete_dws_cluster(DeleteDwsClusterRequest(cluster_id=cluster_id, keep_last_manual_backup=0))
+        # release_eip_type defaults to NO_RELEASE, which would leave an
+        # auto-assigned EIP behind billing after the cluster is gone.
+        client.delete_dws_cluster(
+            DeleteDwsClusterRequest(
+                cluster_id=cluster_id,
+                keep_last_manual_backup=0,
+                release_eip_type="RELEASE_BINDING",
+            )
+        )
     except ServiceResponseException as exc:
         if getattr(exc, "status_code", None) == 404:
             print(f"cluster {cluster_id} already gone", flush=True)
@@ -339,7 +377,7 @@ def cmd_up(args: argparse.Namespace) -> int:
     emit_outputs(
         {
             "cluster_id": cluster_id,
-            "host": connection_host(detail),
+            "host": connection_host(detail, prefer_public=spec.public_bind_type != "not_use"),
             "port": str(spec.db_port),
             "database": spec.db_name,
             "username": spec.db_user,
