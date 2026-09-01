@@ -657,7 +657,12 @@ def _connector_for_metadata(database="testdb", catalog="default_catalog"):
 
 @pytest.mark.acceptance
 def test_get_tables_falls_back_to_show_when_information_schema_fails():
-    """information_schema can time out server-side; SHOW still answers."""
+    """information_schema can time out server-side; SHOW still answers.
+
+    The view branch additionally enumerates SHOW MATERIALIZED VIEWS (MVs report
+    Table_type='VIEW' in SHOW FULL TABLES and must be subtracted); with no MVs
+    present the plain view comes back unchanged.
+    """
     connector = _connector_for_metadata()
 
     def fake_execute(sql, **kwargs):
@@ -665,6 +670,8 @@ def test_get_tables_falls_back_to_show_when_information_schema_fails():
             raise RuntimeError("call frontend service failed: THRIFT_EAGAIN (timed out)")
         if sql.startswith("SHOW FULL TABLES"):
             return pd.DataFrame({"Tables_in_testdb": ["orders", "v_orders"], "Table_type": ["BASE TABLE", "VIEW"]})
+        if sql.startswith("SHOW MATERIALIZED VIEWS"):
+            return pd.DataFrame({"id": [], "database_name": [], "name": []})
         raise AssertionError(f"unexpected query: {sql}")
 
     connector._execute_pandas = MagicMock(side_effect=fake_execute)
@@ -850,3 +857,89 @@ def test_test_connection_keeps_an_engine_it_does_not_own():
         assert connector.test_connection() is True
 
     connector.close.assert_not_called()
+
+
+# ==================== information_schema SHOW-fallback Tests ====================
+
+
+def _fallback_connector(execute_pandas_side_effect):
+    """Connector with a mocked engine whose information_schema listing fails."""
+    with patch("datus_mysql.MySQLConnector.__init__", return_value=None):
+        connector = StarRocksConnector(
+            {
+                "host": "localhost",
+                "port": 9030,
+                "username": "u",
+                "password": "p",
+                "catalog": "default_catalog",
+                "database": "test",
+            }
+        )
+    connector.database_name = "test"
+    connector.connect = MagicMock()
+    connector._execute_pandas = MagicMock(side_effect=execute_pandas_side_effect)
+    return connector
+
+
+def _show_full_tables_frame():
+    return pd.DataFrame(
+        {
+            "Tables_in_test": ["base_table", "plain_view", "async_mv"],
+            "Table_type": ["BASE TABLE", "VIEW", "VIEW"],
+        }
+    )
+
+
+def test_show_fallback_excludes_materialized_views_from_views():
+    """SHOW FULL TABLES reports MVs as VIEW; the fallback must subtract them.
+
+    MVs carry Table_type='VIEW' in SHOW FULL TABLES yet are absent from
+    information_schema.views, so without the SHOW MATERIALIZED VIEWS subtraction
+    the fallback silently reports MVs as plain views.
+    """
+
+    def fake(sql, **kwargs):
+        if "information_schema" in sql:
+            raise RuntimeError("THRIFT_EAGAIN")
+        if sql.startswith("SHOW FULL TABLES FROM"):
+            return _show_full_tables_frame()
+        if sql.startswith("SHOW MATERIALIZED VIEWS FROM"):
+            return pd.DataFrame({"id": [1], "database_name": ["test"], "name": ["async_mv"]})
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    connector = _fallback_connector(fake)
+    assert connector.get_views(database_name="test") == ["plain_view"]
+
+
+def test_show_fallback_keeps_tables_clean_without_mv_enumeration():
+    """The BASE TABLE filter already excludes MVs; tables must not need SHOW MVs."""
+
+    def fake(sql, **kwargs):
+        if "information_schema" in sql:
+            raise RuntimeError("THRIFT_EAGAIN")
+        if sql.startswith("SHOW FULL TABLES FROM"):
+            return _show_full_tables_frame()
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    connector = _fallback_connector(fake)
+    assert connector.get_tables(database_name="test") == ["base_table"]
+
+
+def test_show_fallback_view_listing_gives_up_when_mvs_cannot_be_enumerated():
+    """No MV enumeration means no honest view answer: re-raise, degrade to []."""
+
+    def fake(sql, **kwargs):
+        if "information_schema" in sql:
+            raise RuntimeError("THRIFT_EAGAIN")
+        if sql.startswith("SHOW FULL TABLES FROM"):
+            return _show_full_tables_frame()
+        if sql.startswith("SHOW MATERIALIZED VIEWS FROM"):
+            raise RuntimeError("SHOW MATERIALIZED VIEWS unsupported")
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    connector = _fallback_connector(fake)
+    # _get_metadata re-raises the original information_schema error...
+    with pytest.raises(RuntimeError, match="THRIFT_EAGAIN"):
+        connector._get_metadata(table_type="view", database_name="test")
+    # ...and the public get_views() degrades to an empty list, never leaking MVs.
+    assert connector.get_views(database_name="test") == []

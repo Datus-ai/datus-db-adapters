@@ -311,11 +311,21 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
         wanted = "VIEW" if table_type == "view" else "BASE TABLE"
         name_col, type_col = rows.columns[0], rows.columns[1]
-        return [
-            self._metadata_row(catalog_name, database_name, str(rows[name_col][i]), table_type)
-            for i in range(len(rows))
-            if str(rows[type_col][i]).upper() == wanted
-        ]
+        names = [str(rows[name_col][i]) for i in range(len(rows)) if str(rows[type_col][i]).upper() == wanted]
+
+        if table_type == "view":
+            # SHOW FULL TABLES reports materialized views as VIEW too (they are absent
+            # from information_schema.views but carry Table_type='VIEW' here), so a plain
+            # VIEW filter would leak MVs into get_views(). Subtract them — and when they
+            # cannot be enumerated there is no honest answer to the view request, so give
+            # up and let the caller re-raise the original information_schema error.
+            mv_rows = self._try_show(targets, "SHOW MATERIALIZED VIEWS FROM", catalog_name)
+            if mv_rows is None:
+                return None
+            mv_names = set(self._pick_name_column(mv_rows))
+            names = [name for name in names if name not in mv_names]
+
+        return [self._metadata_row(catalog_name, database_name, name, table_type) for name in names]
 
     def _try_show(self, targets: List[str], statement: str, catalog_name: str = ""):
         """Run ``statement`` against each target until one succeeds; None if all fail.
