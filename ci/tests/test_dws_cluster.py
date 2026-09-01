@@ -365,3 +365,27 @@ def test_delete_cluster_propagates_other_failures(env):
 
     with pytest.raises(ServiceResponseException):
         cluster.delete_cluster(Broken(), "cluster-1")
+
+
+def test_zones_lists_codes_for_the_availability_zone_setting(env, monkeypatch, capsys):
+    """`zones` is the read-only credential check; it must print the code column."""
+    pytest.importorskip("huaweicloudsdkdws")
+
+    class Zones(FakeClient):
+        def list_availability_zones(self, request):
+            return SimpleNamespace(
+                availability_zones=[
+                    SimpleNamespace(code="cn-north-4a", name="AZ1", status="available"),
+                    SimpleNamespace(code="cn-north-4b", name="AZ2", status="available"),
+                ],
+                count=2,
+            )
+
+    monkeypatch.setattr(cluster, "build_client", lambda: Zones())
+
+    assert cluster.main(["zones"]) == 0
+
+    out = capsys.readouterr().out
+    assert "cn-north-4a" in out
+    assert "status=available" in out
+    assert "2 zone(s)" in out

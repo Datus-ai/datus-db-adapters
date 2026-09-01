@@ -42,6 +42,19 @@ Optional, with defaults: `DWS_CI_FLAVOR` (`dwsx2.xlarge.m7`), `DWS_CI_NUM_NODE`
 `DWS_CI_DB_USER` (`dbadmin`), `DWS_CI_DB_PORT` (`8000`), `DWS_CI_TTL_MINUTES`
 (`180`).
 
+> **Which availability zone?** Ask the API instead of guessing — the reference's
+> sample response shows a placeholder `az1` while its create-cluster sample uses
+> `cn-north-7c`:
+>
+> ```bash
+> uv run --no-project --isolated --with huaweicloudsdkdws \
+>   python ci/cloud/dws/cluster.py zones
+> ```
+>
+> Use one of the printed `code` values. This call is read-only, so it is also the
+> cheapest way to confirm a fresh AK/SK, project ID and region work at all —
+> run it first, before anything that provisions.
+
 > **Which subnet ID?** A VPC subnet's detail page shows both a *subnet ID* and a
 > *network ID*, and different Huawei Cloud services want different ones. Use the
 > **subnet ID**: the DWS API reference calls this parameter "集群子网ID"
@@ -90,6 +103,10 @@ delete clusters.
 
 ```bash
 export HUAWEICLOUD_SDK_AK=... HUAWEICLOUD_SDK_SK=... HUAWEICLOUD_PROJECT_ID=... HUAWEICLOUD_REGION=cn-north-4
+
+# Read-only: proves the credentials work and prints the zone codes to choose from.
+uv run --no-project --isolated --with huaweicloudsdkdws python ci/cloud/dws/cluster.py zones
+
 export DWS_CI_VPC_ID=... DWS_CI_SUBNET_ID=... DWS_CI_SECURITY_GROUP_ID=... DWS_CI_AVAILABILITY_ZONE=cn-north-4a
 export DWS_CI_DB_PASSWORD=...
 

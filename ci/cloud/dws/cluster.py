@@ -13,6 +13,7 @@ Subcommands:
 
   up     create a cluster, wait for it to accept connections, emit its address
   down   delete a cluster (idempotent: an already-gone cluster is a success)
+  zones  list availability zones — read-only, so also a credential smoke test
   reap   delete abandoned CI clusters past their TTL tag
 
 Every cluster carries an owner tag and an expiry tag so ``reap`` can clean up
@@ -359,6 +360,29 @@ def cmd_down(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_zones(args: argparse.Namespace) -> int:
+    """List the availability zones this account may build clusters in.
+
+    Also the cheapest way to prove a fresh AK/SK, project ID and region are
+    wired up correctly: it is read-only and provisions nothing. The API
+    reference shows a placeholder ``az1`` in its sample response while its
+    create-cluster sample uses ``cn-north-7c``, so print whatever the account
+    actually returns rather than trusting either.
+    """
+
+    from huaweicloudsdkdws.v2 import ListAvailabilityZonesRequest
+
+    client = build_client()
+    zones = client.list_availability_zones(ListAvailabilityZonesRequest()).availability_zones or []
+    for zone in zones:
+        print(
+            f"{getattr(zone, 'code', '?')}\tstatus={getattr(zone, 'status', '?')}\tname={getattr(zone, 'name', '?')}",
+            flush=True,
+        )
+    print(f"{len(zones)} zone(s); use a 'code' value for DWS_CI_AVAILABILITY_ZONE", flush=True)
+    return 0
+
+
 def cmd_reap(args: argparse.Namespace) -> int:
     """Delete CI clusters whose TTL has passed.
 
@@ -401,6 +425,9 @@ def build_parser() -> argparse.ArgumentParser:
     down.add_argument("--cluster-id", help="cluster id (default: $DWS_CI_CLUSTER_ID)")
     down.add_argument("--wait", action="store_true", help="poll until the cluster disappears")
     down.set_defaults(func=cmd_down)
+
+    zones = sub.add_parser("zones", help="list availability zones (read-only credential check)")
+    zones.set_defaults(func=cmd_zones)
 
     reap = sub.add_parser("reap", help="delete abandoned CI clusters past their TTL")
     reap.add_argument("--dry-run", action="store_true", help="report what would be deleted")
