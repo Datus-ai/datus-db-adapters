@@ -37,7 +37,7 @@ Ephemeral runs cost roughly one cluster-hour per run (creation alone takes
 | `DWS_CI_AVAILABILITY_ZONE` | `cn-north-4a` | AZ inside the region |
 | `DWS_CI_DB_PASSWORD` | — | Cluster admin password; must satisfy the DWS complexity rules |
 
-Optional, with defaults: `DWS_CI_FLAVOR` (`dwsx2.xlarge.m7`), `DWS_CI_NUM_NODE`
+Optional, with defaults: `DWS_CI_FLAVOR` (`dwsk2.h.xlarge.4.kc1`), `DWS_CI_NUM_NODE`
 (`3` — the documented minimum for cluster mode), `DWS_CI_DB_NAME` (`gaussdb`),
 `DWS_CI_DB_USER` (`dbadmin`), `DWS_CI_DB_PORT` (`8000`), `DWS_CI_TTL_MINUTES`
 (`180`), `DWS_CI_PUBLIC_IP` (`auto_assign`), `DWS_CI_EIP_BANDWIDTH` (`5` Mbit/s).
@@ -170,7 +170,23 @@ uv run --no-project --isolated --with huaweicloudsdkdws python ci/cloud/dws/clus
 ownership guard, polling, teardown-on-failure) against fake clients, so it runs
 without cloud credentials.
 
-**Not yet exercised against the live API.** The SDK call shapes were checked
-against `huaweicloudsdkdws`' models, but no cluster has been created through
-this tool. Run `up` once manually — with the reaper's TTL as a safety net —
-before enabling the target in `ci/integration-targets.toml`.
+## Region-specific values, and a misleading error
+
+Three fields must match what the target region actually offers. Their defaults
+suit cn-east-3 and are almost certainly wrong elsewhere:
+
+| Variable | Default | Where the real value comes from |
+|---|---|---|
+| `DWS_CI_FLAVOR` | `dwsk2.h.xlarge.4.kc1` | Console → create cluster → node flavor |
+| `DWS_CI_DATASTORE_VERSION` | `9.1.0.227` | Console → create cluster → cluster version |
+| `DWS_CI_AVAILABILITY_ZONE` | — | `cluster.py zones`, or the subnet's AZ |
+
+Budget time for this: **an unavailable flavor and a missing `datastore_version`
+are both reported as `DWS.5207 Number of CN instances is invalid!`** — an error
+that names a field having nothing to do with either. If you see it, the CN count
+is the least likely cause; check the flavor and version against the console
+first. A version that exists but is wrong at least says `DWS.5003`.
+
+`list_node_types` is not a substitute for the console here: it returns
+`dwsk2.xlarge` where the console (and the API) want `dwsk2.h.xlarge.4.kc1`, and
+it carries no version information at all.

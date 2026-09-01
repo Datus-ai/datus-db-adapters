@@ -97,7 +97,7 @@ def test_build_spec_reads_environment_with_documented_defaults(env):
     spec = cluster.build_spec("datus-ci-42")
 
     assert spec.name == "datus-ci-42"
-    assert spec.flavor == "dwsx2.xlarge.m7"
+    assert spec.flavor == "dwsk2.h.xlarge.4.kc1"
     assert spec.num_node == 3
     assert spec.db_name == "gaussdb"
     assert spec.db_user == "dbadmin"
@@ -457,3 +457,28 @@ def test_delete_cluster_releases_the_bound_eip(env):
     cluster.delete_cluster(Recording(), "cluster-1")
 
     assert captured[0].release_eip_type == "RELEASE_BINDING"
+
+
+def test_build_spec_defaults_coordinators_within_the_node_count(env):
+    """CreateClusterV2 rejects an omitted num_cn (DWS.5207) despite the
+    reference calling it optional, so a value is always derived."""
+    assert cluster.build_spec("datus-ci-42").num_cn == 3
+
+    env.setenv("DWS_CI_NUM_NODE", "6")
+    assert cluster.build_spec("datus-ci-42").num_cn == 3
+
+
+@pytest.mark.parametrize("value", ["1", "4"])
+def test_build_spec_rejects_out_of_range_coordinator_counts(env, value):
+    env.setenv("DWS_CI_NUM_CN", value)
+
+    with pytest.raises(cluster.ConfigError, match="DWS_CI_NUM_CN"):
+        cluster.build_spec("datus-ci-42")
+
+
+@requires_sdk
+def test_create_cluster_sends_the_coordinator_count(env):
+    client = FakeClient()
+    cluster.create_cluster(client, cluster.build_spec("datus-ci-42"), now=NOW)
+
+    assert client.created[0].body.cluster.num_cn == 3

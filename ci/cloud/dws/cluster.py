@@ -27,8 +27,11 @@ Configuration comes from the environment (see ci/cloud/dws/README.md):
   DWS_CI_VPC_ID / _SUBNET_ID / _SECURITY_GROUP_ID
   DWS_CI_AVAILABILITY_ZONE                  e.g. cn-north-4a
   DWS_CI_DB_PASSWORD                        cluster admin password
-  DWS_CI_FLAVOR                             default dwsx2.xlarge.m7
+  DWS_CI_FLAVOR                             default dwsk2.h.xlarge.4.kc1
+                                            (region-specific!)
+  DWS_CI_DATASTORE_VERSION                  default 9.1.0.227 (region-specific!)
   DWS_CI_NUM_NODE                           default 3 (the documented minimum)
+  DWS_CI_NUM_CN                             coordinators, default min(nodes, 3)
   DWS_CI_DB_NAME / _DB_PORT / _DB_USER      defaults gaussdb / 8000 / dbadmin
   DWS_CI_TTL_MINUTES                        default 180, used by `reap`
   DWS_CI_PUBLIC_IP                          auto_assign (default) | not_use |
@@ -62,6 +65,19 @@ _READY_STATUS = "AVAILABLE"
 # and set DWS_CI_PUBLIC_IP=not_use.
 _PUBLIC_BIND_TYPES = frozenset({"auto_assign", "not_use", "bind_existing"})
 
+# Node types are region-specific. dwsk2.xlarge (4 vCPU / 32 GB / 100 GB) is the
+# smallest storage-coupled flavor offered in cn-east-3; run `flavors` to see what
+# a given region actually sells, because an unavailable flavor is rejected as
+# "DWS.5207 Number of CN instances is invalid", which points nowhere near it.
+_DEFAULT_FLAVOR = "dwsk2.h.xlarge.4.kc1"
+
+# Required by CreateClusterV2 despite the reference marking it optional-looking
+# (its row wraps as "datastore_ver / sion"). An omitted value is rejected as
+# DWS.5207 "Number of CN instances is invalid", which names the wrong field
+# entirely; a wrong value at least says DWS.5003. Console → create cluster lists
+# the versions a region offers.
+_DEFAULT_DATASTORE_VERSION = "9.1.0.227"
+
 _CREATE_TIMEOUT_SECONDS = 2400  # cluster creation is documented at 10-15 minutes
 _DELETE_TIMEOUT_SECONDS = 900
 _POLL_INTERVAL_SECONDS = 20
@@ -82,6 +98,8 @@ class ClusterSpec:
     name: str
     flavor: str
     num_node: int
+    num_cn: int
+    datastore_version: str
     availability_zone: str
     vpc_id: str
     subnet_id: str
@@ -123,10 +141,18 @@ def build_spec(name: str, *, now: datetime | None = None) -> ClusterSpec:
     if num_node < 3:
         # The API rejects fewer: cluster mode takes 3-256 nodes.
         raise ConfigError(f"DWS_CI_NUM_NODE must be at least 3, got {num_node}")
+    # Coordinator nodes. The reference calls this optional with a default of 3,
+    # but CreateClusterV2 rejects an omitted value outright (DWS.5207), so it is
+    # always sent. Range is 2..min(num_node, 20).
+    num_cn = _int_env("DWS_CI_NUM_CN", min(num_node, 3))
+    if not 2 <= num_cn <= min(num_node, 20):
+        raise ConfigError(f"DWS_CI_NUM_CN must be between 2 and {min(num_node, 20)}, got {num_cn}")
     return ClusterSpec(
         name=name,
-        flavor=os.getenv("DWS_CI_FLAVOR", "dwsx2.xlarge.m7"),
+        flavor=os.getenv("DWS_CI_FLAVOR", _DEFAULT_FLAVOR),
         num_node=num_node,
+        num_cn=num_cn,
+        datastore_version=os.getenv("DWS_CI_DATASTORE_VERSION", _DEFAULT_DATASTORE_VERSION),
         availability_zone=_require_env("DWS_CI_AVAILABILITY_ZONE"),
         vpc_id=_require_env("DWS_CI_VPC_ID"),
         subnet_id=_require_env("DWS_CI_SUBNET_ID"),
@@ -225,6 +251,8 @@ def create_cluster(client, spec: ClusterSpec, *, now: datetime | None = None) ->
         name=spec.name,
         flavor=spec.flavor,
         num_node=spec.num_node,
+        num_cn=spec.num_cn,
+        datastore_version=spec.datastore_version,
         db_name=spec.db_user,
         db_password=spec.db_password,
         db_port=spec.db_port,
@@ -359,7 +387,10 @@ def cmd_up(args: argparse.Namespace) -> int:
     spec = build_spec(name)
     client = build_client()
 
-    print(f"creating cluster {spec.name} ({spec.num_node} x {spec.flavor})", flush=True)
+    print(
+        f"creating cluster {spec.name} ({spec.num_node} x {spec.flavor}, {spec.num_cn} CN, v{spec.datastore_version})",
+        flush=True,
+    )
     cluster_id = create_cluster(client, spec)
     print(f"cluster id: {cluster_id}", flush=True)
     try:
