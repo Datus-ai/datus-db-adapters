@@ -38,6 +38,7 @@ _DWS_SYS_SCHEMAS = frozenset(
 )
 
 _SYS_SCHEMA_PREFIXES = ("dbms_", "utl_", "dbe_", "pkg_", "prvt_")
+_DWS_COMPAT_MODES = frozenset({"ORA", "TD", "MYSQL"})
 
 # ``TO GROUP`` names a node group and ``TABLESPACE`` an OBS tablespace; both are
 # properties of the cluster that produced the DDL, so neither survives being
@@ -166,6 +167,10 @@ class DWSConnector(PostgreSQLConnector):
         key = effective_database
         traits = self._traits_cache.get(key)
         if traits is not None:
+            # A transient first probe is not sticky: refresh only the missing
+            # mode while retaining the unrelated feature probes.
+            if not traits.compat_mode:
+                traits.compat_mode = self.get_compatibility_mode(effective_database)
             return traits
 
         # Each probe runs on its own connection: a failed probe aborts the
@@ -317,7 +322,6 @@ class DWSConnector(PostgreSQLConnector):
         if key in self._compat_mode_cache:
             return self._compat_mode_cache[key]
 
-        mode = ""
         try:
             row = self._probe_scalar(
                 "SELECT datcompatibility FROM pg_database WHERE datname = current_database()",
@@ -325,14 +329,17 @@ class DWSConnector(PostgreSQLConnector):
             )
             if row:
                 mode = str(row).strip().upper()
+                if mode in _DWS_COMPAT_MODES:
+                    self._compat_mode_cache[key] = mode
+                    return mode
+                logger.warning(f"DWS database '{key}' reported unsupported compatibility mode '{mode}'")
         except Exception as e:
             logger.warning(f"DWS compatibility-mode probe failed for database '{key}': {e}")
 
-        # Cache an unavailable mode too. Prompt construction happens every
-        # turn, so repeatedly retrying an unsupported or unreadable catalog
-        # probe would add latency and duplicate warnings for the whole session.
-        self._compat_mode_cache[key] = mode
-        return mode
+        # Only a recognized mode is safe compiler/prompt input. Failures and
+        # unknown values are deliberately not cached so a transient catalog or
+        # connection problem can recover on the next request.
+        return ""
 
     def get_sql_generation_context(self, database_name: str = "") -> Dict[str, str]:
         """Return live database traits that affect generated SQL semantics."""

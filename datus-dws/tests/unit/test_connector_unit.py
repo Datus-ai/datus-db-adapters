@@ -128,7 +128,7 @@ def test_sql_generation_context_exposes_only_an_available_mode(monkeypatch):
     assert connector.get_sql_generation_context() == {"compatibility_mode": "TD"}
 
 
-def test_failed_compatibility_probe_is_safe_and_cached(monkeypatch):
+def test_failed_compatibility_probe_is_safe_and_retried(monkeypatch):
     connector = _connector()
     calls = 0
 
@@ -141,7 +141,47 @@ def test_failed_compatibility_probe_is_safe_and_cached(monkeypatch):
 
     assert connector.get_sql_generation_context() == {}
     assert connector.get_sql_generation_context() == {}
-    assert calls == 1
+    assert calls == 2
+    assert connector._compat_mode_cache == {}
+
+
+def test_unknown_compatibility_mode_is_not_injected_or_cached(monkeypatch):
+    connector = _connector()
+    calls = 0
+
+    def probe(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return "PG"
+
+    monkeypatch.setattr(connector, "_probe_scalar", probe)
+
+    assert connector.get_sql_generation_context() == {}
+    assert connector.get_sql_generation_context() == {}
+    assert calls == 2
+    assert connector._compat_mode_cache == {}
+
+
+def test_traits_retry_a_transiently_missing_compatibility_mode(monkeypatch):
+    connector = _connector()
+    mode_attempts = 0
+
+    def probe(sql, _database_name=""):
+        nonlocal mode_attempts
+        if "datcompatibility" in sql:
+            mode_attempts += 1
+            if mode_attempts == 1:
+                raise RuntimeError("catalog temporarily unavailable")
+            return "ORA"
+        if "enable_matview" in sql:
+            return "off"
+        return 0
+
+    monkeypatch.setattr(connector, "_probe_scalar", probe)
+
+    assert connector._get_traits().compat_mode == ""
+    assert connector._get_traits().compat_mode == "ORA"
+    assert mode_attempts == 2
 
 
 def test_traits_reuse_the_cached_compatibility_mode(monkeypatch):

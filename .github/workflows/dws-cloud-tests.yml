@@ -8,7 +8,11 @@ on:
     secrets:
       DWS_HOST:
         required: true
-      DWS_DATABASE:
+      DWS_DATABASE_ORA:
+        required: true
+      DWS_DATABASE_TD:
+        required: true
+      DWS_DATABASE_MYSQL:
         required: true
       DWS_USERNAME:
         required: true
@@ -33,8 +37,22 @@ concurrency:
 
 jobs:
   integration:
+    name: DWS integration (${{ matrix.mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: ora
+            expected: ORA
+            database_env: DWS_DATABASE_ORA
+          - mode: td
+            expected: TD
+            database_env: DWS_DATABASE_TD
+          - mode: mysql
+            expected: MYSQL
+            database_env: DWS_DATABASE_MYSQL
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -58,15 +76,17 @@ jobs:
         shell: bash
         env:
           DWS_HOST: ${{ secrets.DWS_HOST }}
-          DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+          DWS_DATABASE_ORA: ${{ secrets.DWS_DATABASE_ORA }}
+          DWS_DATABASE_TD: ${{ secrets.DWS_DATABASE_TD }}
+          DWS_DATABASE_MYSQL: ${{ secrets.DWS_DATABASE_MYSQL }}
           DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
           DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
         run: |
           required=(
             DWS_HOST
-            DWS_DATABASE
             DWS_USERNAME
             DWS_PASSWORD
+            "${{ matrix.database_env }}"
           )
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then
@@ -74,6 +94,10 @@ jobs:
               exit 1
             fi
           done
+          database_env="${{ matrix.database_env }}"
+          database="${!database_env}"
+          echo "::add-mask::${database}"
+          echo "DWS_DATABASE=${database}" >> "${GITHUB_ENV}"
 
       - name: Materialize CA certificate
         shell: bash
@@ -96,11 +120,11 @@ jobs:
         env:
           DWS_HOST: ${{ secrets.DWS_HOST }}
           DWS_PORT: ${{ secrets.DWS_PORT }}
-          DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
           DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
           DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
           DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
           DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
+          DWS_EXPECTED_MODE: ${{ matrix.expected }}
         run: |
           uv run --all-packages --with pytest \
             pytest datus-dws/tests/integration -m integration --verbose
