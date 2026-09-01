@@ -17,6 +17,7 @@ ADAPTER_PACKAGE=""
 ADAPTER_COMPOSE=""
 ADAPTER_TEST_PATH=""
 ADAPTER_SERVICES=()
+ADAPTER_PRESERVE_VOLUMES=""
 
 usage() {
   cat <<'USAGE'
@@ -31,6 +32,10 @@ Options:
   --dry-run        Print selected adapters without starting Docker.
   --cleanup-only   Stop the requested adapters, or every adapter when none are given.
   -h, --help       Show this help.
+
+Environment:
+  DATUS_RECREATE_VOLUMES=1  Also remove preserved data volumes (adapters that
+                            set ADAPTER_PRESERVE_VOLUMES, currently oracle).
 USAGE
 }
 
@@ -145,6 +150,7 @@ reset_adapter_definition() {
     prepare_adapter_dependencies \
     prepare_adapter_test_artifacts \
     cleanup_adapter_test_artifacts \
+    cleanup_adapter_stale_volumes \
     wait_for_adapter_client_readiness 2>/dev/null || true
 
   ADAPTER_NAME=""
@@ -152,10 +158,12 @@ reset_adapter_definition() {
   ADAPTER_COMPOSE=""
   ADAPTER_TEST_PATH=""
   ADAPTER_SERVICES=()
+  ADAPTER_PRESERVE_VOLUMES=""
 
   prepare_adapter_dependencies() { :; }
   prepare_adapter_test_artifacts() { :; }
   cleanup_adapter_test_artifacts() { :; }
+  cleanup_adapter_stale_volumes() { :; }
 }
 
 load_adapter() {
@@ -208,9 +216,20 @@ compose_down() {
   if ! load_adapter "$adapter"; then
     return 0
   fi
-  if [ -f "$ADAPTER_COMPOSE" ]; then
-    docker_compose -f "$ADAPTER_COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
+  if [ ! -f "$ADAPTER_COMPOSE" ]; then
+    return 0
   fi
+  # Compose interpolates the file even for `down`, so required variables
+  # (e.g. `${ORACLE_SYS_PASSWORD:?...}`) need the adapter env here as well.
+  export_adapter_env
+  local down_args=(down --remove-orphans)
+  # Adapters with expensive first-start provisioning keep their named data
+  # volumes between runs. DATUS_RECREATE_VOLUMES=1 forces a clean slate.
+  if [ "$ADAPTER_PRESERVE_VOLUMES" != "1" ] || [ "${DATUS_RECREATE_VOLUMES:-0}" = "1" ]; then
+    down_args+=(-v)
+  fi
+  docker_compose -f "$ADAPTER_COMPOSE" "${down_args[@]}" >/dev/null 2>&1 || true
+  cleanup_adapter_stale_volumes
 }
 
 cleanup_all() {

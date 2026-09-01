@@ -24,8 +24,14 @@ services:
       # Vendored Oracle sample schemas, installed by docker/init/02_install_hr_schema.sh.
       # Kept out of the startup directory so the runner does not execute them directly.
       - ./docker/sample-schemas:/opt/oracle/sample-schemas:ro
-      # Oracle 19c and 23ai data files are not compatible.
       - oracle23free_data:/opt/oracle/oradata
 
 volumes:
   oracle23free_data:
+    # CI preserves this volume across runs (ADAPTER_PRESERVE_VOLUMES in
+    # ci/integration/adapters/oracle.sh) to skip re-expanding the multi-GB
+    # system datafiles on every cold start. The name is keyed by ORACLE_IMAGE
+    # because Oracle 19c and 23ai data files are not compatible — bumping the
+    # image switches to a fresh volume, and stale ones are pruned by
+    # cleanup_adapter_stale_volumes().
+    name: datus-oracle-data-${ORACLE_DATA_VOLUME_KEY:-default}
