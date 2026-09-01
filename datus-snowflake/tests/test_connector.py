@@ -2,7 +2,27 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+"""Live Snowflake tests.
+
+| Env var                          | Meaning                                             |
+|----------------------------------|-----------------------------------------------------|
+| `SNOWFLAKE_ACCOUNT`              | account identifier (required)                       |
+| `SNOWFLAKE_USER`                 | user name (required)                                |
+| `SNOWFLAKE_WAREHOUSE`            | warehouse (required)                                |
+| `SNOWFLAKE_PASSWORD`             | password; required unless a private key file is set |
+| `SNOWFLAKE_PRIVATE_KEY_FILE`     | PEM key path for key pair auth                      |
+| `SNOWFLAKE_PRIVATE_KEY_FILE_PWD` | passphrase for an encrypted key file                |
+| `SNOWFLAKE_DATABASE`             | database the metadata fixtures write into           |
+| `SNOWFLAKE_SCHEMA`               | schema the metadata fixtures write into             |
+| `SNOWFLAKE_ROLE`                 | role to assume (optional)                           |
+
+The whole module is skipped when the credentials are absent. Once a connection succeeds every
+fixture failure is raised, never skipped, so a green run means the adapter actually works.
+"""
+
 import os
+import uuid
+from dataclasses import dataclass
 from typing import Generator
 
 import pytest
@@ -22,9 +42,19 @@ pytestmark = [
     ),
 ]
 
+# Uppercase names with a run-unique suffix: Snowflake stores unquoted identifiers folded to
+# uppercase, so an uppercase name quotes back to itself and the objects never collide with a
+# concurrent run against the same account.
+_OBJECT_SUFFIX = uuid.uuid4().hex[:8].upper()
+METADATA_TABLE = f"DATUS_META_TABLE_{_OBJECT_SUFFIX}"
+METADATA_VIEW = f"DATUS_META_VIEW_{_OBJECT_SUFFIX}"
+METADATA_MV = f"DATUS_META_MV_{_OBJECT_SUFFIX}"
 
-@pytest.fixture
-def config_dict() -> dict:
+# Snowflake reports a missing edition feature as an "unsupported feature" programming error.
+_MV_UNSUPPORTED_MARKERS = ("unsupported feature", "enterprise edition")
+
+
+def _build_config_dict() -> dict:
     """Create Snowflake configuration from environment."""
     cfg = {
         "account": os.getenv("SNOWFLAKE_ACCOUNT", ""),
@@ -40,6 +70,37 @@ def config_dict() -> dict:
     else:
         cfg["password"] = os.getenv("SNOWFLAKE_PASSWORD", "")
     return {key: value for key, value in cfg.items() if value is not None}
+
+
+def _quoted(*parts: str) -> str:
+    """Quote and join identifier parts the way Snowflake addresses an object."""
+    return ".".join(f'"{part}"' for part in parts)
+
+
+def _require_success(result, operation: str) -> None:
+    if not result.success:
+        raise RuntimeError(f"{operation} failed: {result.error}")
+
+
+@dataclass(frozen=True)
+class MetadataObjects:
+    """Server-side coordinates of the objects the metadata tests compare against."""
+
+    database: str
+    schema: str
+    table: str
+    view: str
+
+    def identifier(self, object_name: str) -> str:
+        return f"{self.database}.{self.schema}.{object_name}"
+
+    def ref(self, object_name: str) -> str:
+        return _quoted(self.database, self.schema, object_name)
+
+
+@pytest.fixture
+def config_dict() -> dict:
+    return _build_config_dict()
 
 
 @pytest.fixture
@@ -67,6 +128,101 @@ def schema_name(config: SnowflakeConfig) -> str:
     if not config.schema_name:
         pytest.skip("SNOWFLAKE_SCHEMA not provided")
     return config.schema_name
+
+
+@pytest.fixture(scope="module")
+def setup_connector() -> Generator[SnowflakeConnector, None, None]:
+    """Hold one connection for the whole module's fixture provisioning."""
+    config = SnowflakeConfig(**_build_config_dict())
+    if not config.database:
+        pytest.skip("SNOWFLAKE_DATABASE not provided")
+    if not config.schema_name:
+        pytest.skip("SNOWFLAKE_SCHEMA not provided")
+
+    try:
+        conn = SnowflakeConnector(config)
+    except Exception as e:
+        pytest.skip(f"Snowflake is unavailable for metadata setup: {e}")
+
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@pytest.fixture(scope="module")
+def metadata_objects(setup_connector: SnowflakeConnector) -> Generator[MetadataObjects, None, None]:
+    """Create a known table (two known rows) and a view over it.
+
+    The names are resolved from ``CURRENT_DATABASE()``/``CURRENT_SCHEMA()`` rather than from the
+    env vars: Snowflake folds an unquoted ``SNOWFLAKE_SCHEMA=public`` to ``PUBLIC``, and the
+    metadata calls filter on the stored spelling, so only the server-side name is comparable.
+    """
+    context = setup_connector.execute_query(
+        'SELECT CURRENT_DATABASE() AS "database_name", CURRENT_SCHEMA() AS "schema_name"',
+        result_format="list",
+    )
+    _require_success(context, "resolve session database and schema")
+    database = context.sql_return[0]["database_name"]
+    schema = context.sql_return[0]["schema_name"]
+    if not database or not schema:
+        raise RuntimeError(f"Snowflake session has no database/schema context: {database!r}.{schema!r}")
+
+    objects = MetadataObjects(database=database, schema=schema, table=METADATA_TABLE, view=METADATA_VIEW)
+    table_ref = objects.ref(METADATA_TABLE)
+    view_ref = objects.ref(METADATA_VIEW)
+
+    try:
+        _require_success(
+            setup_connector.execute_ddl(
+                f"""
+                CREATE TABLE {table_ref} (
+                    "ID" NUMBER(9,0) NOT NULL COMMENT 'row id',
+                    "VALUE" VARCHAR(64) COMMENT 'row label'
+                )
+                """
+            ),
+            "create metadata table",
+        )
+        _require_success(
+            setup_connector.execute_insert(f"INSERT INTO {table_ref} VALUES (1, 'alpha'), (2, 'beta')"),
+            "insert metadata rows",
+        )
+        _require_success(
+            setup_connector.execute_ddl(f'CREATE VIEW {view_ref} AS SELECT "ID", "VALUE" FROM {table_ref}'),
+            "create metadata view",
+        )
+        yield objects
+    finally:
+        setup_connector.execute_ddl(f"DROP VIEW IF EXISTS {view_ref}")
+        setup_connector.execute_ddl(f"DROP TABLE IF EXISTS {table_ref}")
+
+
+@pytest.fixture(scope="module")
+def materialized_view(
+    setup_connector: SnowflakeConnector,
+    metadata_objects: MetadataObjects,
+) -> Generator[str, None, None]:
+    """Create a materialized view over the metadata table.
+
+    MATERIALIZED VIEW is an Enterprise Edition feature, so on a Standard account the CREATE fails
+    with "Unsupported feature" — a missing engine capability, not an adapter defect, and the tests
+    that need it skip. Every other failure is a real error and is raised.
+    """
+    mv_ref = metadata_objects.ref(METADATA_MV)
+    result = setup_connector.execute_ddl(
+        f'CREATE MATERIALIZED VIEW {mv_ref} AS SELECT "ID", "VALUE" FROM {metadata_objects.ref(metadata_objects.table)}'
+    )
+    if not result.success:
+        error = (result.error or "").lower()
+        if any(marker in error for marker in _MV_UNSUPPORTED_MARKERS):
+            pytest.skip(f"Snowflake edition does not support materialized views: {result.error}")
+        raise RuntimeError(f"create metadata materialized view failed: {result.error}")
+
+    try:
+        yield METADATA_MV
+    finally:
+        setup_connector.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS {mv_ref}")
 
 
 # ==================== Connection Tests ====================
@@ -125,102 +281,195 @@ def test_get_schemas_exclude_system(connector: SnowflakeConnector, database_name
 # ==================== Table Metadata Tests ====================
 
 
-def test_get_tables(connector: SnowflakeConnector, database_name: str):
-    """Test getting table list."""
-    tables = connector.get_tables(database_name=database_name)
-    assert isinstance(tables, list)
+def test_get_tables(connector: SnowflakeConnector, metadata_objects: MetadataObjects):
+    """The fixture table is listed, schema-qualified when the caller scopes only the database."""
+    assert f"{metadata_objects.schema}.{metadata_objects.table}" in connector.get_tables(
+        database_name=metadata_objects.database
+    )
+    assert metadata_objects.table in connector.get_tables(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+    )
 
 
-def test_get_tables_with_ddl(connector: SnowflakeConnector, database_name: str, schema_name: str):
-    """Test getting tables with DDL."""
-    tables = connector.get_tables_with_ddl(database_name=database_name, schema_name=schema_name)
+def test_get_tables_with_ddl(connector: SnowflakeConnector, metadata_objects: MetadataObjects):
+    """The fixture table comes back with full coordinates and its real DDL."""
+    tables = connector.get_tables_with_ddl(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+    )
 
-    if len(tables) > 0:
-        table = tables[0]
-        assert "table_name" in table
-        assert "definition" in table
-        assert table["table_type"] == "table"
-        assert "database_name" in table
-        assert "schema_name" in table
-        assert "identifier" in table
+    matches = [item for item in tables if item["table_name"] == metadata_objects.table]
+    assert len(matches) == 1, f"{metadata_objects.table} missing from {[item['table_name'] for item in tables]}"
+
+    entry = matches[0]
+    definition = entry.pop("definition")
+    assert entry == {
+        "catalog_name": "",
+        "database_name": metadata_objects.database,
+        "schema_name": metadata_objects.schema,
+        "table_name": metadata_objects.table,
+        "table_type": "table",
+        "identifier": metadata_objects.identifier(metadata_objects.table),
+    }
+    assert "CREATE" in definition.upper()
+    assert "TABLE" in definition.upper()
+    assert metadata_objects.table in definition
 
 
 # ==================== View Tests ====================
 
 
-def test_get_views(connector: SnowflakeConnector, database_name: str):
-    """Test getting view list."""
-    views = connector.get_views(database_name=database_name)
-    assert isinstance(views, list)
+def test_get_views(connector: SnowflakeConnector, metadata_objects: MetadataObjects):
+    """The fixture view is listed, schema-qualified when the caller scopes only the database."""
+    assert f"{metadata_objects.schema}.{metadata_objects.view}" in connector.get_views(
+        database_name=metadata_objects.database
+    )
+    assert metadata_objects.view in connector.get_views(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+    )
 
 
-def test_get_views_with_ddl(connector: SnowflakeConnector, database_name: str, schema_name: str):
-    """Test getting views with DDL."""
-    views = connector.get_views_with_ddl(database_name=database_name, schema_name=schema_name)
+def test_get_views_with_ddl(connector: SnowflakeConnector, metadata_objects: MetadataObjects):
+    """The fixture view comes back with full coordinates and a DDL naming its base table."""
+    views = connector.get_views_with_ddl(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+    )
 
-    if len(views) > 0:
-        view = views[0]
-        assert "table_name" in view
-        assert "definition" in view
-        assert view["table_type"] == "view"
+    matches = [item for item in views if item["table_name"] == metadata_objects.view]
+    assert len(matches) == 1, f"{metadata_objects.view} missing from {[item['table_name'] for item in views]}"
+
+    entry = matches[0]
+    definition = entry.pop("definition")
+    assert entry == {
+        "catalog_name": "",
+        "database_name": metadata_objects.database,
+        "schema_name": metadata_objects.schema,
+        "table_name": metadata_objects.view,
+        "table_type": "view",
+        "identifier": metadata_objects.identifier(metadata_objects.view),
+    }
+    assert "CREATE" in definition.upper()
+    assert "VIEW" in definition.upper()
+    assert metadata_objects.table in definition
 
 
 # ==================== Materialized View Tests (MaterializedViewSupportMixin) ====================
 
 
-def test_get_materialized_views(connector: SnowflakeConnector, database_name: str):
-    """Test getting materialized view list."""
-    mvs = connector.get_materialized_views(database_name=database_name)
-    assert isinstance(mvs, list)
+def test_get_materialized_views(
+    connector: SnowflakeConnector,
+    metadata_objects: MetadataObjects,
+    materialized_view: str,
+):
+    """The fixture materialized view is listed under both scoping depths."""
+    assert f"{metadata_objects.schema}.{materialized_view}" in connector.get_materialized_views(
+        database_name=metadata_objects.database
+    )
+    assert materialized_view in connector.get_materialized_views(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+    )
 
 
-def test_get_materialized_views_with_ddl(connector: SnowflakeConnector, database_name: str, schema_name: str):
-    """Test getting materialized views with DDL."""
-    mvs = connector.get_materialized_views_with_ddl(database_name=database_name, schema_name=schema_name)
+def test_get_materialized_views_with_ddl(
+    connector: SnowflakeConnector,
+    metadata_objects: MetadataObjects,
+    materialized_view: str,
+):
+    """The fixture materialized view comes back typed ``mv`` with its real DDL."""
+    mvs = connector.get_materialized_views_with_ddl(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+    )
 
-    if len(mvs) > 0:
-        mv = mvs[0]
-        assert "table_name" in mv
-        assert "definition" in mv
-        assert mv["table_type"] == "mv"
+    matches = [item for item in mvs if item["table_name"] == materialized_view]
+    assert len(matches) == 1, f"{materialized_view} missing from {[item['table_name'] for item in mvs]}"
+
+    entry = matches[0]
+    definition = entry.pop("definition")
+    assert entry == {
+        "catalog_name": "",
+        "database_name": metadata_objects.database,
+        "schema_name": metadata_objects.schema,
+        "table_name": materialized_view,
+        "table_type": "mv",
+        "identifier": metadata_objects.identifier(materialized_view),
+    }
+    assert "CREATE" in definition.upper()
+    assert "MATERIALIZED VIEW" in definition.upper()
+    assert metadata_objects.table in definition
 
 
 # ==================== Schema Structure Tests ====================
 
 
-def test_get_schema(connector: SnowflakeConnector, database_name: str, schema_name: str):
-    """Test getting table schema."""
-    tables = connector.get_tables(database_name=database_name, schema_name=schema_name)
+def test_get_schema(connector: SnowflakeConnector, metadata_objects: MetadataObjects):
+    """Every column of the fixture table is described exactly, plus the trailing table summary."""
+    schema = connector.get_schema(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+        table_name=metadata_objects.table,
+    )
 
-    if len(tables) > 0:
-        table_name = tables[0]
-        schema = connector.get_schema(
-            database_name=database_name,
-            schema_name=schema_name,
-            table_name=table_name,
-        )
-
-        assert isinstance(schema, list)
-        if len(schema) > 0:
-            for col in schema:
-                if isinstance(col, dict) and "name" in col:
-                    assert "type" in col
-                    assert "nullable" in col
+    assert schema == [
+        {
+            "cid": 0,
+            "name": "ID",
+            "type": "NUMBER(9,0)",
+            "nullable": False,
+            "pk": False,
+            "default_value": None,
+            "comment": "row id",
+        },
+        {
+            "cid": 1,
+            "name": "VALUE",
+            "type": "VARCHAR(64)",
+            "nullable": True,
+            "pk": False,
+            "default_value": None,
+            "comment": "row label",
+        },
+        {
+            "table": metadata_objects.table,
+            "columns": [
+                {"name": "ID", "type": "NUMBER(9,0)"},
+                {"name": "VALUE", "type": "VARCHAR(64)"},
+            ],
+            "table_type": "table",
+        },
+    ]
 
 
 # ==================== Sample Data Tests ====================
 
 
-def test_get_sample_rows(connector: SnowflakeConnector, database_name: str, schema_name: str):
-    """Test getting sample rows."""
-    sample_rows = connector.get_sample_rows(database_name=database_name, schema_name=schema_name, top_n=3)
+def test_get_sample_rows(connector: SnowflakeConnector, metadata_objects: MetadataObjects):
+    """Sampling the fixture table returns its two known rows as CSV."""
+    sample_rows = connector.get_sample_rows(
+        database_name=metadata_objects.database,
+        schema_name=metadata_objects.schema,
+        tables=[metadata_objects.table],
+        top_n=3,
+    )
 
-    if len(sample_rows) > 0:
-        item = sample_rows[0]
-        assert "database_name" in item
-        assert "table_name" in item
-        assert "schema_name" in item
-        assert "sample_rows" in item
+    assert len(sample_rows) == 1
+    assert sample_rows[0] == {
+        "identifier": metadata_objects.identifier(metadata_objects.table),
+        "catalog_name": "",
+        "database_name": metadata_objects.database,
+        "schema_name": metadata_objects.schema,
+        "table_name": metadata_objects.table,
+        "table_type": "table",
+        "sample_rows": sample_rows[0]["sample_rows"],
+    }
+
+    csv_lines = sample_rows[0]["sample_rows"].strip().split("\n")
+    assert csv_lines[0] == "ID,VALUE"
+    assert sorted(csv_lines[1:]) == ["1,alpha", "2,beta"]
 
 
 # ==================== SQL Execution Tests ====================
