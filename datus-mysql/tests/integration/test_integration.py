@@ -82,7 +82,7 @@ def test_get_tables_with_ddl(connector: MySQLConnector, config: MySQLConfig):
     table_name = f"test_table_{suffix}"
 
     connector.switch_context(database_name=config.database)
-    connector.execute_ddl(
+    create_result = connector.execute_ddl(
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             id INT PRIMARY KEY,
@@ -90,18 +90,26 @@ def test_get_tables_with_ddl(connector: MySQLConnector, config: MySQLConfig):
         )
     """
     )
+    assert create_result.success, f"failed to create {table_name}: {create_result.error}"
 
     try:
         tables = connector.get_tables_with_ddl(database_name=config.database, tables=[table_name])
 
-        if len(tables) > 0:
-            table = tables[0]
-            assert "table_name" in table
-            assert "definition" in table
-            assert table["table_type"] == "table"
-            assert "database_name" in table
-            assert table["schema_name"] == ""
-            assert "identifier" in table
+        # The `tables` filter is exact, so the table just created is the only expected result.
+        assert [t["table_name"] for t in tables] == [table_name]
+
+        table = tables[0]
+        assert table["table_type"] == "table"
+        assert table["catalog_name"] == ""
+        assert table["database_name"] == config.database
+        assert table["schema_name"] == ""
+        assert table["identifier"] == f"{config.database}.{table_name}"
+
+        definition = table["definition"]
+        assert definition.startswith(f"CREATE TABLE `{table_name}` (")
+        assert "`id` int" in definition
+        assert "`name` varchar(50)" in definition
+        assert "PRIMARY KEY (`id`)" in definition
     finally:
         connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
 
@@ -127,7 +135,7 @@ def test_get_views_with_ddl(connector: MySQLConnector, config: MySQLConfig):
     connector.switch_context(database_name=config.database)
 
     # Create base table
-    connector.execute_ddl(
+    table_result = connector.execute_ddl(
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             id INT PRIMARY KEY,
@@ -135,18 +143,31 @@ def test_get_views_with_ddl(connector: MySQLConnector, config: MySQLConfig):
         )
     """
     )
+    assert table_result.success, f"failed to create {table_name}: {table_result.error}"
 
     # Create view
-    connector.execute_ddl(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
+    view_result = connector.execute_ddl(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
+    assert view_result.success, f"failed to create {view_name}: {view_result.error}"
 
     try:
         views = connector.get_views_with_ddl(database_name=config.database)
 
-        if len(views) > 0:
-            view = [v for v in views if v["table_name"] == view_name]
-            if view:
-                assert "definition" in view[0]
-                assert view[0]["table_type"] == "view"
+        matched = [v for v in views if v["table_name"] == view_name]
+        assert len(matched) == 1, f"{view_name} missing from {[v['table_name'] for v in views]}"
+
+        view = matched[0]
+        assert view["table_type"] == "view"
+        assert view["catalog_name"] == ""
+        assert view["database_name"] == config.database
+        assert view["schema_name"] == ""
+        assert view["identifier"] == f"{config.database}.{view_name}"
+
+        # SHOW CREATE VIEW prepends ALGORITHM/DEFINER/SQL SECURITY clauses, and only
+        # qualifies the view with its database when it is not the session default.
+        definition = view["definition"]
+        assert definition.startswith("CREATE ")
+        assert f"`{view_name}` AS " in definition
+        assert f"`{table_name}`" in definition
     finally:
         connector.execute_ddl(f"DROP VIEW IF EXISTS {view_name}")
         connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
