@@ -943,3 +943,20 @@ def test_show_fallback_view_listing_gives_up_when_mvs_cannot_be_enumerated():
         connector._get_metadata(table_type="view", database_name="test")
     # ...and the public get_views() degrades to an empty list, never leaking MVs.
     assert connector.get_views(database_name="test") == []
+
+
+def test_get_schema_queries_catalog_qualified_information_schema():
+    """An explicit catalog must reach the SQL — bare INFORMATION_SCHEMA resolves
+    in the session catalog and silently ignores the argument."""
+
+    captured = []
+
+    def fake(sql, **kwargs):
+        captured.append(sql)
+        return pd.DataFrame({"Field": [], "Type": [], "Null": [], "Key": [], "Default": [], "Comment": []})
+
+    connector = _fallback_connector(fake)
+    connector.get_schema(catalog_name="hive_cat", database_name="db1", table_name="t1")
+
+    assert len(captured) == 1
+    assert "`hive_cat`.information_schema.columns" in captured[0]
