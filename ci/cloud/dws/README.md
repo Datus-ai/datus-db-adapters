@@ -32,7 +32,7 @@ Ephemeral runs cost roughly one cluster-hour per run (creation alone takes
 | `HUAWEICLOUD_PROJECT_ID` | `05f2...` | Project ID **of the target region** (My Credentials → API Credentials) |
 | `HUAWEICLOUD_REGION` | `cn-north-4` | Region ID |
 | `DWS_CI_VPC_ID` | `vpc-...` | Pre-created VPC |
-| `DWS_CI_SUBNET_ID` | `subnet-...` | Subnet inside that VPC |
+| `DWS_CI_SUBNET_ID` | `subnet-...` | See the note below — a VPC subnet exposes *two* IDs |
 | `DWS_CI_SECURITY_GROUP_ID` | `sg-...` | Must allow the DB port from wherever the job runs |
 | `DWS_CI_AVAILABILITY_ZONE` | `cn-north-4a` | AZ inside the region |
 | `DWS_CI_DB_PASSWORD` | — | Cluster admin password; must satisfy the DWS complexity rules |
@@ -41,6 +41,14 @@ Optional, with defaults: `DWS_CI_FLAVOR` (`dwsx2.xlarge.m7`), `DWS_CI_NUM_NODE`
 (`3` — the documented minimum for cluster mode), `DWS_CI_DB_NAME` (`gaussdb`),
 `DWS_CI_DB_USER` (`dbadmin`), `DWS_CI_DB_PORT` (`8000`), `DWS_CI_TTL_MINUTES`
 (`180`).
+
+> **Which subnet ID?** A VPC subnet's detail page shows both a *subnet ID* and a
+> *network ID*, and different Huawei Cloud services want different ones. Use the
+> **subnet ID**: the DWS API reference calls this parameter "集群子网ID"
+> throughout and never mentions a network ID (zero occurrences in the 1634-page
+> PDF). If a create call is rejected for an invalid subnet, try the network ID
+> from the same page — a rejected create fails immediately and provisions
+> nothing, so the experiment is free.
 
 **Long-lived mode**: `DWS_HOST`, `DWS_DATABASE`, `DWS_USERNAME`, `DWS_PASSWORD`,
 plus the optional `DWS_PORT` / `DWS_SCHEMA` / `DWS_SSLMODE` /
