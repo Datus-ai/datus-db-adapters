@@ -76,9 +76,8 @@ pre-commit install
 
 This project uses the following tools to ensure code quality:
 
-- **Black**: Code formatting (line length: 120)
-- **Flake8**: Linting and style checking
-- **isort**: Import sorting
+- **Ruff**: Code formatting, linting, and import sorting (both pre-commit and CI pin the same
+  version — see `.pre-commit-config.yaml` and `.github/workflows/python-format-check.yml`)
 - **pytest**: Testing framework
 
 ### Running Code Quality Checks
@@ -94,14 +93,11 @@ git commit -m "Your commit message"
 #### Manual Checks
 
 ```bash
-# Format code with Black
-black --line-length=120 datus-<adapter>/
+# Format code with ruff
+ruff format datus-<adapter>/
 
-# Check with Flake8
-flake8 --max-line-length=120 --extend-ignore=E203,W503 datus-<adapter>/
-
-# Sort imports with isort
-isort --profile=black --line-length=120 datus-<adapter>/
+# Lint (and auto-fix) with ruff
+ruff check --fix datus-<adapter>/
 
 # Run all pre-commit checks
 pre-commit run --all-files
@@ -110,7 +106,7 @@ pre-commit run --all-files
 ### Code Style Guidelines
 
 1. **Line Length**: Maximum 120 characters
-2. **Imports**: Sorted using isort with Black profile
+2. **Imports**: Sorted by ruff
 3. **Docstrings**: Use Google-style docstrings for all public functions and classes
 4. **Type Hints**: Use type hints for function signatures
 5. **Comments**: Write clear, concise comments in English
@@ -175,146 +171,66 @@ class MyDatabaseConnector(BaseSqlConnector):
 
 ## Testing Requirements
 
+The complete testing standard lives in **[docs/adapter-testing-standard.md](docs/adapter-testing-standard.md)** — required layout, unit-test file checklist, the shared contract tests (`datus_db_core.testing.contract`) and TPC-H fixtures (`datus_db_core.testing.tpch`), skip policy, assertion quality rules, and CI registration. Read it before writing adapter tests; this section is only a summary. `datus-doris/` is the reference implementation.
+
 ### Test Structure
 
-Each adapter should have tests in the following structure:
+Each adapter follows this structure (see the standard for the full file-by-file checklist):
 
-```
+```text
 datus-<adapter>/
-└── tests/
-    ├── __init__.py
-    ├── test_connector.py    # Unit tests for core connector functionality
-    ├── test_metadata.py     # Unit tests for metadata operations
-    ├── test_operations.py   # Unit tests for CRUD operations
-    └── integration/         # Integration tests
-        ├── __init__.py
-        ├── test_integration.py
-        └── README.md        # Environment setup instructions
+├── datus_<adapter>/
+│   └── tpch_data.py             # Dialect DDL + shared TPC-H data wiring
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── unit/                    # Mocked tests, no database needed
+│   └── integration/             # Real database tests, split by topic
+│       ├── conftest.py          # Env-var config, fixtures, TPC-H setup
+│       ├── test_connection.py
+│       ├── test_contract.py     # Shared cross-engine contract (mandatory)
+│       ├── test_sql_execution.py
+│       ├── test_metadata_retrieval.py
+│       └── test_tpch.py
+├── scripts/init_tpch_data.py    # CLI for manual data init
+└── docker-compose.yml           # Test container (self-hostable engines)
 ```
-
-**Note**: Both unit tests and integration tests will run in CI. Integration tests should use Docker containers or similar to provide test databases.
 
 ### Running Tests
 
+Run tests per adapter — running all adapters in one pytest invocation causes conftest conflicts:
+
 ```bash
-# Run all tests for a specific adapter (unit + integration, CI runs this)
-pytest datus-<adapter>/tests/
+cd datus-<adapter>
 
-# Run tests with coverage
-pytest --cov=datus_<adapter> datus-<adapter>/tests/
+# Unit tests (fast, no database; this is what PR CI runs)
+python -m pytest tests/unit -m "not integration"
 
-# Run unit tests only
-pytest datus-<adapter>/tests/ --ignore=datus-<adapter>/tests/integration/
-# Or using markers:
-pytest datus-<adapter>/tests/ -m "not integration"
+# Integration tests (requires a live database, usually: docker compose up -d)
+python -m pytest tests/integration -m integration
 
-# Run integration tests only
-pytest datus-<adapter>/tests/integration/
-# Or using markers:
-pytest datus-<adapter>/tests/ -m integration
+# Coverage (aim for >= 80% on the adapter package)
+python -m pytest tests/unit -m "not integration" --cov=datus_<adapter> --cov-report=term-missing
 ```
 
-**Note**: Integration tests use the `@pytest.mark.integration` decorator and should be configured in `pytest.ini` or `pyproject.toml`.
+**CI behavior**: pull requests run unit tests and package smoke checks only. Integration tests
+run in the merge queue and on a weekly schedule against the targets registered in
+`ci/integration-targets.toml` (see `ci/required-checks.md`).
 
-### Test Requirements
+### Key Rules
 
-1. **Unit Tests** (Required, runs in CI)
-   - Test individual components and methods without external dependencies
-   - Must pass in CI before merging
-   - Should use mocks/stubs for database connections
-   - Aim for at least 80% code coverage
-2. **Integration Tests** (Required, runs in CI)
-   - Test actual database connections and end-to-end workflows
-   - Must pass in CI before merging (or skip gracefully if database unavailable)
-   - Use Docker containers or similar to provide test databases in CI
-   - Mark tests with `@pytest.mark.integration` decorator
-   - Tests should auto-skip if database connection fails (use pytest.skip)
-   - Document required database versions and configurations
-   - Include steps to reproduce the test environment locally (e.g., Docker Compose, SQL scripts)
-   - Create a `tests/integration/README.md` with setup instructions
-   - Ensure tests can be run independently and are reproducible
-3. **Test Data**: Use fixtures for test data, never hard-code credentials
-
-### Example Tests
-
-#### Unit Test Example
-
-```python
-import pytest
-from unittest.mock import Mock, patch
-from datus_mydatabase import MyDatabaseConnector
-
-
-@pytest.fixture
-def connector_config():
-    return {
-        "host": "localhost",
-        "port": 3306,
-        "username": "test_user",
-        "password": "test_pass",
-        "database": "test_db",
-    }
-
-
-def test_connector_initialization(connector_config):
-    """Test that connector initializes correctly."""
-    connector = MyDatabaseConnector(**connector_config)
-    assert connector.host == "localhost"
-    assert connector.port == 3306
-
-
-@patch('datus_mydatabase.connector.create_engine')
-def test_execute_query(mock_engine, connector_config):
-    """Test query execution with mocked database."""
-    mock_result = Mock()
-    mock_engine.return_value.execute.return_value = mock_result
-
-    connector = MyDatabaseConnector(**connector_config)
-    result = connector.execute_query("SELECT 1")
-    assert result is not None
-```
-
-#### Integration Test Example
-
-```python
-import pytest
-import os
-from datus_mydatabase import MyDatabaseConnector
-
-
-@pytest.fixture
-def integration_connector_config():
-    """Get config from environment variables."""
-    return {
-        "host": os.getenv("TEST_DB_HOST", "localhost"),
-        "port": int(os.getenv("TEST_DB_PORT", "3306")),
-        "username": os.getenv("TEST_DB_USER", "test_user"),
-        "password": os.getenv("TEST_DB_PASSWORD", "test_pass"),
-        "database": os.getenv("TEST_DB_NAME", "test_db"),
-    }
-
-
-@pytest.mark.integration
-def test_real_database_connection(integration_connector_config):
-    """Test actual database connection."""
-    try:
-        connector = MyDatabaseConnector(**integration_connector_config)
-        result = connector.execute_query("SELECT 1")
-        assert result is not None
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
-
-
-@pytest.mark.integration
-def test_get_tables(integration_connector_config):
-    """Test retrieving tables from real database."""
-    try:
-        connector = MyDatabaseConnector(**integration_connector_config)
-        tables = connector.get_tables("test_db")
-        assert isinstance(tables, list)
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
-```
+1. **Unit tests** mock at the engine/connection boundary and must pass with no database.
+2. **Integration tests** must include the shared contract test (`datus_db_core.testing.contract`)
+   and, for engines with a live test target, TPC-H tests reusing `datus_db_core.testing.tpch` —
+   never a private copy of the data.
+3. **Skip policy**: skip only when the database is unreachable at session setup (or, for cloud
+   services, when required env vars are unset). Once connected, any provisioning failure must
+   raise — never `pytest.skip` around a failed operation, and never skip inside a test body.
+4. **Assertions**: no conditional assertions (`if len(x) > 0: assert ...`), no type-only
+   assertions (`assert isinstance(x, list)` alone) — create known objects in fixtures and
+   assert their exact content.
+5. **Test data**: use fixtures, never hard-code credentials; connection settings come from
+   `<ADAPTER>_*` environment variables with localhost defaults matching `docker-compose.yml`.
 
 ## Submitting Changes
 
@@ -333,8 +249,8 @@ def test_get_tables(integration_connector_config):
 3. **Run Quality Checks**
    ```bash
    # Format code
-   black --line-length=120 .
-   isort --profile=black --line-length=120 .
+   ruff format .
+   ruff check --fix .
 
    # Run tests
    pytest
@@ -376,10 +292,10 @@ All pull requests must:
 Your pull request will automatically run the following checks:
 
 1. **Title Check**: Ensures PR title follows conventions
-2. **Format Check**: Verifies code formatting with Black
-3. **Lint Check**: Checks code quality with Flake8
-4. **Import Check**: Verifies import sorting with isort
-5. **Tests**: Runs all unit and integration test suites to ensure functionality
+2. **Format Check**: Verifies formatting, linting, and import sorting with Ruff
+3. **Unit Tests**: Adapter CI runs unit tests and package smoke checks
+
+Integration tests run in the merge queue and on a weekly schedule, not on the PR itself (see `ci/required-checks.md`).
 
 ## Creating a New Adapter
 

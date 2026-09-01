@@ -28,7 +28,7 @@ gh pr create --repo Datus-ai/datus-db-adapters \
 
 ### Pre-commit Hooks
 
-The repo uses `black`, `flake8`, and `isort` pre-commit hooks. When a commit fails due to auto-formatting:
+The repo uses `ruff format` and `ruff check --fix` pre-commit hooks (same pinned ruff version as CI). When a commit fails due to auto-formatting:
 1. The hooks reformat the files automatically
 2. Re-stage the reformatted files: `git add <files>`
 3. Create a **new** commit (do NOT amend)
@@ -83,15 +83,22 @@ When working on multiple adapters that each need independent branches and PRs:
 
 ## Testing
 
+**Read [docs/adapter-testing-standard.md](docs/adapter-testing-standard.md) before writing, modifying, or reviewing adapter tests.** It defines the required layout, the unit-test file checklist, the mandatory shared contract tests (`datus_db_core.testing.contract`) and TPC-H fixtures (`datus_db_core.testing.tpch`), the skip policy, assertion quality rules, and CI registration steps. `datus-doris/` is the reference implementation.
+
 ### Test Structure Per Adapter
 
-```
+```text
 datus-<adapter>/
+├── datus_<adapter>/
+│   └── tpch_data.py       # Dialect DDL + shared TPC-H data wiring
 ├── tests/
 │   ├── unit/              # Mocked tests, no database needed
-│   └── integration/       # Real database tests
+│   └── integration/       # Real database tests, split by topic
 │       ├── conftest.py    # Fixtures + TPC-H data setup
-│       ├── test_integration.py
+│       ├── test_connection.py
+│       ├── test_contract.py       # Shared cross-engine contract (mandatory)
+│       ├── test_sql_execution.py
+│       ├── test_metadata_retrieval.py
 │       └── test_tpch.py   # TPC-H benchmark tests
 ├── scripts/
 │   └── init_tpch_data.py  # CLI for manual data init

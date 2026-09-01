@@ -136,6 +136,9 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
+# AI agent local state (AGENTS.md and CLAUDE.md are tracked)
+.claude/
+
 
 .omc
 
