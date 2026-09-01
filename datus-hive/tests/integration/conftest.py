@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import json
+import logging
 import os
 from typing import Generator
 
@@ -10,6 +11,15 @@ import pytest
 
 from datus_hive import HiveConfig, HiveConnector
 from datus_hive.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
+
+logger = logging.getLogger(__name__)
+
+METADATA_TABLE = "datus_metadata_table"
+METADATA_VIEW = "datus_metadata_view"
+
+
+def _require_success(result, operation: str) -> None:
+    assert result.success, f"{operation} failed: {result.error}"
 
 
 def _load_configuration() -> dict:
@@ -63,6 +73,53 @@ def connector(config: HiveConfig) -> Generator[HiveConnector, None, None]:
                 conn.close()
             except Exception:
                 pass
+
+
+@pytest.fixture(scope="session")
+def metadata_objects_setup() -> Generator[None, None, None]:
+    """Create the known table and view the metadata tests exact-compare against.
+
+    Without known objects the metadata tests can only assert shapes, which an
+    adapter returning ``[]`` for everything would pass. Only an unreachable
+    Hive skips; every statement after a successful connection is a hard
+    requirement.
+    """
+    hive_config = _build_hive_config()
+    try:
+        conn = HiveConnector(hive_config)
+        reachable = conn.test_connection()
+    except Exception as exc:
+        pytest.skip(f"Hive is not available: {exc}")
+    if not reachable:
+        pytest.skip("Hive connection test failed")
+
+    database = hive_config.database or "default"
+    table_ref = f"`{database}`.`{METADATA_TABLE}`"
+    view_ref = f"`{database}`.`{METADATA_VIEW}`"
+    try:
+        _require_success(conn.execute_ddl(f"DROP VIEW IF EXISTS {view_ref}"), "drop metadata view")
+        _require_success(conn.execute_ddl(f"DROP TABLE IF EXISTS {table_ref}"), "drop metadata table")
+        _require_success(
+            conn.execute_ddl(f"CREATE TABLE {table_ref} (id INT, value INT) STORED AS ORC"),
+            "create metadata table",
+        )
+        _require_success(
+            conn.execute_insert(f"INSERT INTO {table_ref} VALUES (1, 10), (2, 20)"),
+            "insert metadata rows",
+        )
+        _require_success(
+            conn.execute_ddl(f"CREATE VIEW {view_ref} AS SELECT id, value FROM {table_ref}"),
+            "create metadata view",
+        )
+        yield
+    finally:
+        try:
+            conn.execute_ddl(f"DROP VIEW IF EXISTS {view_ref}")
+            conn.execute_ddl(f"DROP TABLE IF EXISTS {table_ref}")
+        except Exception:
+            logger.warning("Failed to drop metadata objects during teardown", exc_info=True)
+        finally:
+            conn.close()
 
 
 @pytest.fixture(scope="session")
