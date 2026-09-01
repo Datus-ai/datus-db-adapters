@@ -28,6 +28,13 @@ REQUIRED_ENV = {
 
 NOW = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
 
+# Paths that build or interpret SDK objects need the SDK; the pure decision
+# logic above does not, so it still runs in a bare environment.
+requires_sdk = pytest.mark.skipif(
+    importlib.util.find_spec("huaweicloudsdkdws") is None,
+    reason="huaweicloudsdkdws is not installed",
+)
+
 
 @pytest.fixture
 def env(monkeypatch):
@@ -181,6 +188,7 @@ def test_is_ci_cluster_refuses_anything_not_provably_ours(candidate):
 # ==================== readiness polling ====================
 
 
+@requires_sdk
 def test_wait_available_returns_the_ready_cluster():
     client = FakeClient(details=[detail("CREATING"), detail("CREATING"), detail("AVAILABLE", id="cluster-1")])
     slept = []
@@ -191,6 +199,7 @@ def test_wait_available_returns_the_ready_cluster():
     assert slept == [cluster._POLL_INTERVAL_SECONDS] * 2
 
 
+@requires_sdk
 def test_wait_available_fails_fast_on_an_unexpected_status():
     """A FAILED cluster must not be waited on until timeout — it bills meanwhile."""
     client = FakeClient(details=[detail("CREATE_FAILED")])
@@ -199,6 +208,7 @@ def test_wait_available_fails_fast_on_an_unexpected_status():
         cluster.wait_available(client, "cluster-1", sleep=lambda _: None)
 
 
+@requires_sdk
 def test_wait_available_times_out():
     client = FakeClient(details=[detail("CREATING")])
 
@@ -255,6 +265,7 @@ def test_emit_outputs_appends_to_the_github_output_file(tmp_path, capsys):
 # ==================== reaping ====================
 
 
+@requires_sdk
 def test_reap_deletes_only_expired_ci_clusters(env, monkeypatch):
     expired = SimpleNamespace(
         id="expired-1",
@@ -286,6 +297,7 @@ def test_reap_deletes_only_expired_ci_clusters(env, monkeypatch):
     assert client.deleted == ["expired-1"]
 
 
+@requires_sdk
 def test_reap_dry_run_deletes_nothing(env, monkeypatch):
     expired = SimpleNamespace(
         id="expired-1",
@@ -312,6 +324,7 @@ def test_down_without_a_cluster_id_is_a_no_op(env, monkeypatch):
     assert cluster.main(["down"]) == 0
 
 
+@requires_sdk
 def test_up_deletes_the_cluster_when_it_never_becomes_available(env, monkeypatch):
     """A cluster stuck in CREATE_FAILED still bills, so `up` cleans up before failing."""
     client = FakeClient(details=[detail("CREATE_FAILED")])
@@ -335,10 +348,9 @@ def test_config_errors_exit_with_a_distinct_code(env):
 # ==================== SDK model wiring ====================
 
 
+@requires_sdk
 def test_create_cluster_builds_a_tagged_request(env):
     """The owner/expiry tags are what makes `reap` safe — pin them on the wire."""
-    pytest.importorskip("huaweicloudsdkdws")
-
     client = FakeClient()
     spec = cluster.build_spec("datus-ci-42")
 
@@ -355,8 +367,8 @@ def test_create_cluster_builds_a_tagged_request(env):
     }
 
 
+@requires_sdk
 def test_delete_cluster_treats_a_missing_cluster_as_success(env):
-    pytest.importorskip("huaweicloudsdkdws")
     from huaweicloudsdkcore.exceptions.exceptions import SdkError, ServiceResponseException
 
     class Missing(FakeClient):
@@ -366,8 +378,8 @@ def test_delete_cluster_treats_a_missing_cluster_as_success(env):
     assert cluster.delete_cluster(Missing(), "gone") is False
 
 
+@requires_sdk
 def test_delete_cluster_propagates_other_failures(env):
-    pytest.importorskip("huaweicloudsdkdws")
     from huaweicloudsdkcore.exceptions.exceptions import SdkError, ServiceResponseException
 
     class Broken(FakeClient):
@@ -378,9 +390,9 @@ def test_delete_cluster_propagates_other_failures(env):
         cluster.delete_cluster(Broken(), "cluster-1")
 
 
+@requires_sdk
 def test_zones_lists_codes_for_the_availability_zone_setting(env, monkeypatch, capsys):
     """`zones` is the read-only credential check; it must print the code column."""
-    pytest.importorskip("huaweicloudsdkdws")
 
     class Zones(FakeClient):
         def list_availability_zones(self, request):
@@ -402,10 +414,9 @@ def test_zones_lists_codes_for_the_availability_zone_setting(env, monkeypatch, c
     assert "2 zone(s)" in out
 
 
+@requires_sdk
 def test_create_cluster_auto_assigns_an_eip_by_default(env):
     """Without an EIP a GitHub-hosted runner has no route to the cluster."""
-    pytest.importorskip("huaweicloudsdkdws")
-
     client = FakeClient()
     cluster.create_cluster(client, cluster.build_spec("datus-ci-42"), now=NOW)
 
@@ -414,8 +425,8 @@ def test_create_cluster_auto_assigns_an_eip_by_default(env):
     assert public_ip.band_width == 5
 
 
+@requires_sdk
 def test_create_cluster_can_skip_the_eip_for_an_in_vpc_runner(env):
-    pytest.importorskip("huaweicloudsdkdws")
     env.setenv("DWS_CI_PUBLIC_IP", "not_use")
 
     client = FakeClient()
@@ -432,11 +443,10 @@ def test_build_spec_rejects_an_unknown_public_ip_mode(env):
         cluster.build_spec("datus-ci-42")
 
 
+@requires_sdk
 def test_delete_cluster_releases_the_bound_eip(env):
     """release_eip_type defaults to NO_RELEASE — an auto-assigned EIP would
     outlive the cluster and keep billing."""
-    pytest.importorskip("huaweicloudsdkdws")
-
     captured = []
 
     class Recording(FakeClient):

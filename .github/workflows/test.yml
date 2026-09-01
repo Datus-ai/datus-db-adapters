@@ -75,6 +75,7 @@ jobs:
           uv run --no-project --isolated \
             --with packaging \
             --with pytest \
+            --with huaweicloudsdkdws \
             python -m pytest ci/tests --verbose
 
   select-integration-tests:
