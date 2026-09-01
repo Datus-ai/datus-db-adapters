@@ -245,7 +245,9 @@ jobs:
     secrets:
       DWS_HOST: ${{ secrets.DWS_HOST }}
       DWS_PORT: ${{ secrets.DWS_PORT }}
-      DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+      DWS_DATABASE_ORA: ${{ secrets.DWS_DATABASE_ORA }}
+      DWS_DATABASE_TD: ${{ secrets.DWS_DATABASE_TD }}
+      DWS_DATABASE_MYSQL: ${{ secrets.DWS_DATABASE_MYSQL }}
       DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
       DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
       DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}

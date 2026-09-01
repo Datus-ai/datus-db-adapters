@@ -90,8 +90,10 @@ def _run_scope() -> str:
     """A schema suffix unique per CI run, falling back to a random one locally."""
     run_id = os.getenv("GITHUB_RUN_ID", "").strip()
     attempt = os.getenv("GITHUB_RUN_ATTEMPT", "").strip()
+    mode = os.getenv("DWS_EXPECTED_MODE", "").strip().lower()
     if run_id:
-        return f"gh{run_id}_{attempt or '1'}"
+        suffix = f"_{mode}" if mode else ""
+        return f"gh{run_id}_{attempt or '1'}{suffix}"
     return uuid.uuid4().hex[:12]
 
 

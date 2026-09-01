@@ -231,7 +231,7 @@ pip install datus-dws
 - ORA/TD/MySQL compatibility-mode probing, with ORA's empty-string and division semantics surfaced in migration notes
 - DWS system schema filtering (`cstore`, `sys`, `pg_recyclebin`, `dbms_*`, `utl_*`)
 - Adapter-packaged DWS SQL skill covering the silently-wrong ORA-mode constructs
-- Cloud integration coverage on a real DWS cluster
+- Independent ORA/TD/MySQL cloud integration jobs on a real DWS cluster
 
 ---
 
