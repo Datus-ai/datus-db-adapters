@@ -4,11 +4,11 @@
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.requires_clickzetta]
+
 # ==================== Metadata Tests ====================
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_get_tables(tpch_setup):
     """Test that TPC-H tables exist."""
     tables = tpch_setup.get_tables()
@@ -25,8 +25,6 @@ def test_tpch_get_tables(tpch_setup):
     assert expected.issubset(table_set), f"Missing tables: {expected - table_set}"
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_get_columns(tpch_setup):
     """Test getting column schema for tpch_customer table."""
     columns = tpch_setup.get_schema(table_name="tpch_customer")
@@ -37,8 +35,6 @@ def test_tpch_get_columns(tpch_setup):
     assert "nationkey" in column_names
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_get_columns_nation(tpch_setup):
     """Test getting column schema for tpch_nation table."""
     columns = tpch_setup.get_schema(table_name="tpch_nation")
@@ -51,8 +47,6 @@ def test_tpch_get_columns_nation(tpch_setup):
 # ==================== Data Query Tests ====================
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_region(tpch_setup):
     """Test querying tpch_region - should have 5 regions."""
     result = tpch_setup.execute_query(
@@ -63,8 +57,6 @@ def test_tpch_query_region(tpch_setup):
     assert len(result.sql_return) == 5
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_nation(tpch_setup):
     """Test querying tpch_nation - should have 25 nations."""
     result = tpch_setup.execute_query(
@@ -75,8 +67,6 @@ def test_tpch_query_nation(tpch_setup):
     assert len(result.sql_return) == 25
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_join(tpch_setup):
     """Test JOIN query: nation JOIN region."""
     result = tpch_setup.execute_query(
@@ -94,8 +84,6 @@ def test_tpch_query_join(tpch_setup):
     assert first_row["region_name"] == "AFRICA"
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_aggregation(tpch_setup):
     """Test aggregation: count nations per region."""
     result = tpch_setup.execute_query(
@@ -112,8 +100,6 @@ def test_tpch_query_aggregation(tpch_setup):
     assert total_nations == 25  # 25 nations total
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_customer_orders(tpch_setup):
     """Test JOIN query: customer JOIN orders."""
     result = tpch_setup.execute_query(
@@ -135,8 +121,6 @@ def test_tpch_query_customer_orders(tpch_setup):
 # ==================== Multi-Format Output Tests ====================
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_csv_format(tpch_setup):
     """Test CSV result format with TPC-H data."""
     result = tpch_setup.execute_query(
@@ -148,8 +132,6 @@ def test_tpch_query_csv_format(tpch_setup):
     assert "ASIA" in result.sql_return
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_arrow_format(tpch_setup):
     """Test Arrow result format with TPC-H data."""
     result = tpch_setup.execute_query(
@@ -161,8 +143,6 @@ def test_tpch_query_arrow_format(tpch_setup):
     assert arrow_table.num_rows == 5
 
 
-@pytest.mark.integration
-@pytest.mark.requires_clickzetta
 def test_tpch_query_pandas_format(tpch_setup):
     """Test Pandas DataFrame result format with TPC-H data."""
     result = tpch_setup.execute_query(

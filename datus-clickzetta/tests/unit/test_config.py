@@ -8,17 +8,10 @@ import pytest
 from pydantic import ValidationError
 
 
-@pytest.fixture(autouse=True)
-def setup_mocks():
-    """Setup mock environment for testing."""
-    # This will be handled by conftest.py
-    pass
-
-
 class TestClickZettaConfig:
     """Test suite for ClickZetta configuration validation."""
 
-    def test_valid_configuration(self, mock_datus_modules):
+    def test_valid_configuration(self):
         """Test valid configuration creation."""
         from datus_clickzetta.config import ClickZettaConfig
 
@@ -230,7 +223,3 @@ class TestClickZettaConfig:
         assert new_config.schema_name == original_config.schema_name
         assert new_config.secure == original_config.secure
         assert new_config.hints == original_config.hints
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

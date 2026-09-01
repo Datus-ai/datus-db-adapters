@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 
 
-@pytest.mark.usefixtures("mock_datus_modules")
 class TestUtilityFunctions:
     """Test suite for standalone utility functions."""
 
@@ -361,7 +360,3 @@ class TestNewMethods:
         assert result.sql_return.schema.names == expected_columns
 
         connector.close()
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
