@@ -60,17 +60,35 @@ passes `release_eip_type=RELEASE_BINDING`: the API's own default is
 `NO_RELEASE`, which would leave the EIP behind, unattached and still billing,
 after its cluster was gone.
 
-If you move this job to a self-hosted runner inside the VPC, set
-`DWS_CI_PUBLIC_IP=not_use` — no EIP is created, the private endpoint is used
-instead, and the security group can stay closed to the internet. That is both
-cheaper and safer; the internet path exists only because the job runs on a
-hosted runner today.
+(If this job ever moves to a self-hosted runner inside the VPC, set
+`DWS_CI_PUBLIC_IP=not_use`: no EIP, private endpoint, security group closed to
+the internet. That is cheaper and safer, but it is not how the job runs today.)
 
-> **Security group scope.** With a hosted runner the cluster port must be
-> reachable from GitHub's egress addresses, which are numerous and change. Weigh
-> that before opening the port broadly: an in-VPC runner (above) avoids the
-> question entirely, and the port is only ever open for the minutes a cluster
-> exists.
+## Security group rule
+
+The cluster is reachable over the internet, so the security group must admit the
+runner. GitHub's egress addresses are numerous and change, so pinning them is
+impractical; the practical rule is:
+
+| Direction | Protocol / port | Source |
+|---|---|---|
+| Inbound | TCP `8000` (`DWS_CI_DB_PORT`) | `0.0.0.0/0` |
+
+What keeps that acceptable, and what to keep true:
+
+- The cluster exists only for the minutes a run takes, and the reaper deletes
+  anything that outlives its TTL — the port is not open between runs.
+- It holds nothing but freshly loaded test fixtures.
+- `DWS_CI_DB_PASSWORD` is the only thing standing in front of it, so treat it
+  like any other production credential: long, random, and not reused.
+- Set `DWS_SSLMODE=require` (or `verify-ca` with `DWS_SSLROOTCERT_PEM`) so the
+  session is encrypted in transit — the adapter's own
+  `test_connection_security.py` covers those modes.
+
+A tighter variant, if this is worth revisiting later: give the CI user VPC write
+permission and have the job add a rule for its own egress address before the
+tests and remove it afterwards. That narrows the window to one IP, at the cost
+of a wider IAM grant and more moving parts.
 
 > **Which availability zone?** Ask the API instead of guessing — the reference's
 > sample response shows a placeholder `az1` while its create-cluster sample uses
