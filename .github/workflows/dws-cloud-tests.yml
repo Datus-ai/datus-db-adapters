@@ -61,6 +61,17 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    strategy:
+      # Each leg provisions its own cluster, so one failing version still
+      # reports the others rather than masking them.
+      fail-fast: false
+      matrix:
+        # DWS majors differ enough to be worth covering separately; a long-lived
+        # cluster has whatever version it has, so the extra legs no-op there
+        # (see the `skip` guard on the provisioning step).
+        datastore_version:
+          - "9.1.0.227"
+          - "8.2.1.258"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -91,6 +102,13 @@ jobs:
           HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
         run: |
           if [ -n "${DWS_HOST:-}" ]; then
+            # A long-lived cluster has a fixed version: run the tests once and
+            # let the remaining matrix legs skip.
+            if [ "${{ strategy.job-index }}" != "0" ]; then
+              echo "mode=skip" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Long-lived cluster mode covers one version; skipping ${{ matrix.datastore_version }}"
+              exit 0
+            fi
             for name in DWS_DATABASE DWS_USERNAME DWS_PASSWORD; do
               if [ -z "${!name:-}" ]; then
                 echo "::error::DWS_HOST is set, so ${name} is required too"
@@ -112,6 +130,8 @@ jobs:
         id: provision
         if: steps.mode.outputs.mode == 'ephemeral'
         env:
+          DWS_CI_DATASTORE_VERSION: ${{ matrix.datastore_version }}
+          DWS_CI_NAME_SUFFIX: ${{ matrix.datastore_version }}
           HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
           HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
           HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
@@ -126,6 +146,7 @@ jobs:
             python ci/cloud/dws/cluster.py up
 
       - name: Materialize CA certificate
+        if: steps.mode.outputs.mode != 'skip'
         shell: bash
         env:
           DWS_SSLROOTCERT_PEM: ${{ secrets.DWS_SSLROOTCERT_PEM }}
@@ -141,6 +162,7 @@ jobs:
           fi
 
       - name: Run DWS integration tests
+        if: steps.mode.outputs.mode != 'skip'
         # DWS_SSLROOTCERT is not listed here: the step above exports it through
         # GITHUB_ENV as a path, since the certificate arrives as PEM content.
         # In ephemeral mode the connection details come from the provision step

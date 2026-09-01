@@ -141,7 +141,7 @@ def test_cluster_name_sanitizes_and_truncates():
     name = cluster.cluster_name("feature/../weird name" + "x" * 40)
     assert name.startswith("datus-ci-")
     suffix = name[len("datus-ci-") :]
-    assert len(suffix) <= 24
+    assert len(suffix) <= 32
     assert all(ch.isalnum() or ch == "-" for ch in suffix)
 
 
@@ -482,3 +482,22 @@ def test_create_cluster_sends_the_coordinator_count(env):
     cluster.create_cluster(client, cluster.build_spec("datus-ci-42"), now=NOW)
 
     assert client.created[0].body.cluster.num_cn == 3
+
+
+def test_cluster_name_distinguishes_matrix_legs(env):
+    """One cluster per datastore version in a matrix run — the names must differ."""
+    env.setenv("GITHUB_RUN_ID", "42")
+
+    env.setenv("DWS_CI_NAME_SUFFIX", "9.1.0.227")
+    first = cluster.cluster_name()
+    env.setenv("DWS_CI_NAME_SUFFIX", "8.2.1.258")
+    second = cluster.cluster_name()
+
+    assert first == "datus-ci-42-9-1-0-227"
+    assert second == "datus-ci-42-8-2-1-258"
+    assert first != second
+
+
+def test_cluster_name_without_a_suffix_is_unchanged(env):
+    env.setenv("GITHUB_RUN_ID", "42")
+    assert cluster.cluster_name() == "datus-ci-42"

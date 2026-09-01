@@ -192,6 +192,17 @@ suit cn-east-3 and are almost certainly wrong elsewhere:
 |---|---|---|
 | `DWS_CI_FLAVOR` | `dwsk2.h.xlarge.4.kc1` | Console → create cluster → node flavor |
 | `DWS_CI_DATASTORE_VERSION` | `9.1.0.227` | Console → create cluster → cluster version |
+
+The cloud workflow runs a matrix over datastore versions (`9.1.0.227` and
+`8.2.1.258` today), provisioning one cluster per leg — the majors differ enough
+that passing on one says little about the other. `DWS_CI_NAME_SUFFIX` keeps the
+cluster names distinct; without it the second leg would collide with the first.
+Legs are `fail-fast: false`, so a version-specific failure does not hide the
+others. In long-lived-cluster mode only the first leg runs, since that cluster
+has whatever version it has.
+
+cn-east-3 currently offers `9.1.0.227`, `9.1.1.305` and `8.2.1.258`; all three
+were verified to be accepted with `dwsk2.h.xlarge.4.kc1`.
 | `DWS_CI_AVAILABILITY_ZONE` | — | `cluster.py zones`, or the subnet's AZ |
 
 Budget time for this: **an unavailable flavor and a missing `datastore_version`

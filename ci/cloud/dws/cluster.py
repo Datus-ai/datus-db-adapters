@@ -34,6 +34,9 @@ Configuration comes from the environment (see ci/cloud/dws/README.md):
   DWS_CI_NUM_CN                             coordinators, default min(nodes, 3)
   DWS_CI_DB_NAME / _DB_PORT / _DB_USER      defaults gaussdb / 8000 / dbadmin
   DWS_CI_TTL_MINUTES                        default 180, used by `reap`
+  DWS_CI_NAME_SUFFIX                        appended to the cluster name; set it
+                                            per matrix leg so parallel versions
+                                            do not collide
   DWS_CI_PUBLIC_IP                          auto_assign (default) | not_use |
                                             bind_existing (+ DWS_CI_EIP_ID)
   DWS_CI_EIP_BANDWIDTH                      Mbit/s for an auto-assigned EIP,
@@ -167,12 +170,19 @@ def build_spec(name: str, *, now: datetime | None = None) -> ClusterSpec:
     )
 
 
-def cluster_name(run_id: str | None = None) -> str:
-    """Name the cluster after the CI run so an orphan can be traced back."""
+def cluster_name(run_id: str | None = None, discriminator: str | None = None) -> str:
+    """Name the cluster after the CI run so an orphan can be traced back.
 
-    suffix = (run_id or os.getenv("GITHUB_RUN_ID") or "local").strip()
+    A matrix run creates one cluster per datastore version, so the discriminator
+    (DWS_CI_NAME_SUFFIX, e.g. the version) keeps their names distinct — without
+    it the second create would collide with the first.
+    """
+
+    run = (run_id or os.getenv("GITHUB_RUN_ID") or "local").strip()
+    extra = (discriminator if discriminator is not None else os.getenv("DWS_CI_NAME_SUFFIX", "")).strip()
+    raw = f"{run}-{extra}" if extra else run
     # DWS names allow letters, digits and hyphens; keep it short and traceable.
-    safe = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in suffix)[:24]
+    safe = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in raw)[:32]
     return f"{CLUSTER_NAME_PREFIX}-{safe}"
 
 
