@@ -4,7 +4,7 @@ ADAPTER_NAME="starrocks"
 ADAPTER_PACKAGE="datus-starrocks"
 ADAPTER_COMPOSE="datus-starrocks/docker-compose.yml"
 ADAPTER_TEST_PATH="datus-starrocks/tests/integration"
-ADAPTER_SERVICES=("starrocks:600")
+ADAPTER_SERVICES=("starrocks:600" "hive-metastore:600")
 
 export_adapter_env() {
   export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
@@ -15,6 +15,8 @@ export_adapter_env() {
   export STARROCKS_PASSWORD=""
   export STARROCKS_CATALOG="default_catalog"
   export STARROCKS_DATABASE="test"
+  # Resolved by the FE inside the compose network (embedded in CREATE EXTERNAL CATALOG).
+  export HIVE_METASTORE_URI="thrift://hive-metastore:9083"
 }
 
 adapter_env_summary() {
