@@ -235,9 +235,9 @@ python -m datus.cli.main --config conf/agent.clickzetta.yml --namespace clickzet
 
 **Testing Changes:**
 ```bash
-# Run adapter tests
+# Run unit tests (no ClickZetta account required)
 cd datus-clickzetta
-python test.py
+uv run pytest tests/unit -m "not integration" -v
 
 # Test with Datus CLI
 cd ../datus-agent
@@ -284,7 +284,7 @@ your-dev-folder/
 1. Clone the repository
 2. Create a feature branch
 3. Make your changes
-4. Run tests: `python test.py`
+4. Run tests: `uv run pytest tests/unit -m "not integration"`
 5. Ensure code style compliance
 6. Submit a pull request
 
@@ -310,45 +310,30 @@ This adapter includes comprehensive test coverage with multiple test types and e
 
 ```text
 tests/
-├── unit/                     # Unit tests for individual components
-├── integration/
-│   ├── conftest.py           # TPC-H fixtures and test data
-│   ├── test_connector_integration.py  # Connector integration tests
-│   └── test_tpch.py          # TPC-H benchmark tests
-├── run_tests.py              # Main test runner with multiple modes
-├── comprehensive_test.py     # Real connection testing script
-└── conftest.py               # Shared test fixtures and configuration
+├── conftest.py               # Marker declarations
+├── unit/                     # Mocked tests, no ClickZetta account needed
+│   ├── test_config.py        # ClickZettaConfig validation
+│   ├── test_connector_unit.py # Connector behaviour with a mocked Session
+│   └── test_utils.py         # Escaping, volume URIs, DDL building
+└── integration/              # Real ClickZetta account required
+    ├── conftest.py           # TPC-H fixtures and test data
+    └── test_tpch.py          # TPC-H benchmark tests
 ```
 
 ### Running Tests
 
-**Quick Start (from project root):**
+Run everything from the `datus-clickzetta/` directory:
+
 ```bash
-# Run all tests
-python test.py
+# Unit tests (no credentials, no network)
+uv run pytest tests/unit -m "not integration" -v
 
-# Run specific test types
-python test.py --mode unit          # Unit tests only (fastest)
-python test.py --mode integration   # Integration tests only
-python test.py --mode all          # All tests
-python test.py --mode coverage     # Tests with coverage report
-```
+# Integration tests (requires the CLICKZETTA_* environment variables below)
+uv run pytest tests/integration -m integration -v
 
-**Advanced Usage (from tests/ directory):**
-```bash
-cd tests
-
-# Basic test execution
-python run_tests.py --mode unit
-python run_tests.py --mode integration -v
-
-# Real connection testing (requires credentials)
-python comprehensive_test.py
-
-# Direct pytest usage
-pytest unit/                    # Unit tests
-pytest integration/             # Integration tests
-pytest -k "test_config"        # Specific test patterns
+# A single module or pattern
+uv run pytest tests/unit/test_config.py -v
+uv run pytest tests/unit -k "volume" -v
 ```
 
 ### TPC-H Integration Tests
@@ -385,10 +370,8 @@ uv run python scripts/init_tpch_data.py --drop
 
 ### Test Requirements
 
-- **Unit Tests**: No external dependencies, run with mocked components
-- **Integration Tests**: Mocked ClickZetta SDK, test connector logic
-- **TPC-H Tests**: Require actual ClickZetta credentials
-- **Real Connection Tests**: Require actual ClickZetta credentials
+- **Unit Tests**: No external dependencies, the ClickZetta `Session` is mocked
+- **Integration Tests (TPC-H)**: Require actual ClickZetta credentials
 
 **Environment Variables:**
 

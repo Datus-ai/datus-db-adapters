@@ -103,27 +103,39 @@ def test_get_tables_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLC
     suffix = uuid.uuid4().hex[:8]
     table_name = f"test_table_{suffix}"
 
-    connector.execute_ddl(
+    create_result = connector.execute_ddl(
         f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS "{config.schema_name}"."{table_name}" (
             id SERIAL PRIMARY KEY,
             name VARCHAR(50)
         )
     """
     )
+    assert create_result.success, f"failed to create {table_name}: {create_result.error}"
 
     try:
         tables = connector.get_tables_with_ddl(schema_name=config.schema_name, tables=[table_name])
 
-        if len(tables) > 0:
-            table = tables[0]
-            assert "table_name" in table
-            assert "definition" in table
-            assert table["table_type"] == "table"
-            assert "schema_name" in table
-            assert "identifier" in table
+        # The `tables` filter is exact, so the table just created is the only expected result.
+        assert [t["table_name"] for t in tables] == [table_name]
+
+        table = tables[0]
+        assert table["table_type"] == "table"
+        assert table["catalog_name"] == ""
+        assert table["database_name"] == config.database
+        assert table["schema_name"] == config.schema_name
+        assert table["identifier"] == f"{config.database}.{config.schema_name}.{table_name}"
+
+        # The DDL is reconstructed from get_schema(), not dumped by the server, so types
+        # come back without their length modifier ("character varying", not "varchar(50)").
+        definition = table["definition"]
+        assert definition.startswith(f'CREATE TABLE "{config.database}"."{config.schema_name}"."{table_name}" (')
+        assert '"id" integer NOT NULL' in definition
+        assert f"nextval('{table_name}_id_seq'::regclass)" in definition
+        assert '"name" character varying' in definition
+        assert 'PRIMARY KEY ("id")' in definition
     finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f'DROP TABLE IF EXISTS "{config.schema_name}"."{table_name}"')
 
 
 # ==================== View Tests ====================
@@ -145,29 +157,41 @@ def test_get_views_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLCo
     table_name = f"test_table_{suffix}"
 
     # Create base table
-    connector.execute_ddl(
+    table_result = connector.execute_ddl(
         f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS "{config.schema_name}"."{table_name}" (
             id SERIAL PRIMARY KEY,
             name VARCHAR(50)
         )
     """
     )
+    assert table_result.success, f"failed to create {table_name}: {table_result.error}"
 
     try:
         # Create view
-        connector.execute_ddl(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
+        view_result = connector.execute_ddl(
+            f'CREATE VIEW "{config.schema_name}"."{view_name}" AS SELECT * FROM "{config.schema_name}"."{table_name}"'
+        )
+        assert view_result.success, f"failed to create {view_name}: {view_result.error}"
 
         views = connector.get_views_with_ddl(schema_name=config.schema_name)
 
-        if len(views) > 0:
-            view = [v for v in views if v["table_name"] == view_name]
-            if view:
-                assert "definition" in view[0]
-                assert view[0]["table_type"] == "view"
+        matched = [v for v in views if v["table_name"] == view_name]
+        assert len(matched) == 1, f"{view_name} missing from {[v['table_name'] for v in views]}"
+
+        view = matched[0]
+        assert view["table_type"] == "view"
+        assert view["catalog_name"] == ""
+        assert view["database_name"] == config.database
+        assert view["schema_name"] == config.schema_name
+        assert view["identifier"] == f"{config.database}.{config.schema_name}.{view_name}"
+
+        definition = view["definition"]
+        assert definition.startswith(f'CREATE VIEW "{config.database}"."{config.schema_name}"."{view_name}" AS')
+        assert table_name in definition
     finally:
-        connector.execute_ddl(f"DROP VIEW IF EXISTS {view_name}")
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f'DROP VIEW IF EXISTS "{config.schema_name}"."{view_name}"')
+        connector.execute_ddl(f'DROP TABLE IF EXISTS "{config.schema_name}"."{table_name}"')
 
 
 # ==================== Column Schema Tests ====================
