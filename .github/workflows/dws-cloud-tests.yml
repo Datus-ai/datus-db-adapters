@@ -5,15 +5,23 @@ on:
     # Declared explicitly rather than relying on `secrets: inherit`, which would
     # hand this workflow every secret the caller can reach — including the
     # BigQuery, Hologres and MaxCompute credentials it has no business seeing.
+    #
+    # Two modes, chosen by whether DWS_HOST is set:
+    #   long-lived  DWS_HOST/_DATABASE/_USERNAME/_PASSWORD point at a cluster
+    #               somebody keeps online.
+    #   ephemeral   HUAWEICLOUD_* + DWS_CI_* let the job create a cluster for
+    #               this run and delete it afterwards. A DWS cluster bills per
+    #               hour with no self-service serverless tier, so this is the
+    #               default for scheduled runs.
     secrets:
       DWS_HOST:
-        required: true
+        required: false
       DWS_DATABASE:
-        required: true
+        required: false
       DWS_USERNAME:
-        required: true
+        required: false
       DWS_PASSWORD:
-        required: true
+        required: false
       DWS_PORT:
         required: false
       DWS_SCHEMA:
@@ -21,6 +29,24 @@ on:
       DWS_SSLMODE:
         required: false
       DWS_SSLROOTCERT_PEM:
+        required: false
+      HUAWEICLOUD_SDK_AK:
+        required: false
+      HUAWEICLOUD_SDK_SK:
+        required: false
+      HUAWEICLOUD_PROJECT_ID:
+        required: false
+      HUAWEICLOUD_REGION:
+        required: false
+      DWS_CI_VPC_ID:
+        required: false
+      DWS_CI_SUBNET_ID:
+        required: false
+      DWS_CI_SECURITY_GROUP_ID:
+        required: false
+      DWS_CI_AVAILABILITY_ZONE:
+        required: false
+      DWS_CI_DB_PASSWORD:
         required: false
   workflow_dispatch:
 
@@ -34,7 +60,7 @@ concurrency:
 jobs:
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,26 +80,50 @@ jobs:
       # Credentials start here rather than at job level: the three steps above
       # are third-party actions, and a job-level env would put the connection
       # secrets in their process environment for no reason.
-      - name: Verify cloud test configuration
+      - name: Resolve cluster mode
+        id: mode
         shell: bash
         env:
           DWS_HOST: ${{ secrets.DWS_HOST }}
           DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
           DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
           DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
         run: |
-          required=(
-            DWS_HOST
-            DWS_DATABASE
-            DWS_USERNAME
-            DWS_PASSWORD
-          )
-          for name in "${required[@]}"; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required repository secret: ${name}"
-              exit 1
-            fi
-          done
+          if [ -n "${DWS_HOST:-}" ]; then
+            for name in DWS_DATABASE DWS_USERNAME DWS_PASSWORD; do
+              if [ -z "${!name:-}" ]; then
+                echo "::error::DWS_HOST is set, so ${name} is required too"
+                exit 1
+              fi
+            done
+            echo "mode=long-lived" >> "${GITHUB_OUTPUT}"
+          elif [ -n "${HUAWEICLOUD_SDK_AK:-}" ]; then
+            echo "mode=ephemeral" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::error::Configure either DWS_HOST (long-lived cluster) or HUAWEICLOUD_SDK_AK (ephemeral cluster)"
+            exit 1
+          fi
+
+      # Runs before the tests and is torn down by the always() step at the end.
+      # Creating a cluster takes 10-15 minutes, which is why this job's timeout
+      # is generous compared with the other cloud jobs.
+      - name: Create ephemeral cluster
+        id: provision
+        if: steps.mode.outputs.mode == 'ephemeral'
+        env:
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
+          HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
+          DWS_CI_VPC_ID: ${{ secrets.DWS_CI_VPC_ID }}
+          DWS_CI_SUBNET_ID: ${{ secrets.DWS_CI_SUBNET_ID }}
+          DWS_CI_SECURITY_GROUP_ID: ${{ secrets.DWS_CI_SECURITY_GROUP_ID }}
+          DWS_CI_AVAILABILITY_ZONE: ${{ secrets.DWS_CI_AVAILABILITY_ZONE }}
+          DWS_CI_DB_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
+        run: |
+          uv run --no-project --isolated --with huaweicloudsdkdws \
+            python ci/cloud/dws/cluster.py up
 
       - name: Materialize CA certificate
         shell: bash
@@ -93,14 +143,32 @@ jobs:
       - name: Run DWS integration tests
         # DWS_SSLROOTCERT is not listed here: the step above exports it through
         # GITHUB_ENV as a path, since the certificate arrives as PEM content.
+        # In ephemeral mode the connection details come from the provision step
+        # and the password is the one it created the cluster with.
         env:
-          DWS_HOST: ${{ secrets.DWS_HOST }}
-          DWS_PORT: ${{ secrets.DWS_PORT }}
-          DWS_DATABASE: ${{ secrets.DWS_DATABASE }}
+          DWS_HOST: ${{ steps.provision.outputs.host || secrets.DWS_HOST }}
+          DWS_PORT: ${{ steps.provision.outputs.port || secrets.DWS_PORT }}
+          DWS_DATABASE: ${{ steps.provision.outputs.database || secrets.DWS_DATABASE }}
           DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
-          DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
-          DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+          DWS_USERNAME: ${{ steps.provision.outputs.username || secrets.DWS_USERNAME }}
+          DWS_PASSWORD: ${{ steps.mode.outputs.mode == 'ephemeral' && secrets.DWS_CI_DB_PASSWORD || secrets.DWS_PASSWORD }}
           DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
         run: |
           uv run --all-packages --with pytest \
             pytest datus-dws/tests/integration -m integration --verbose
+
+      # always(): an ephemeral cluster bills until it is deleted, so this must
+      # run after a failed test step, a cancelled job, or a failed provision
+      # that still left a cluster behind. `reap` is the backstop for the cases
+      # where this step never runs at all.
+      - name: Delete ephemeral cluster
+        if: always() && steps.provision.outputs.cluster_id != ''
+        env:
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
+          HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
+          DWS_CI_CLUSTER_ID: ${{ steps.provision.outputs.cluster_id }}
+        run: |
+          uv run --no-project --isolated --with huaweicloudsdkdws \
+            python ci/cloud/dws/cluster.py down --wait

@@ -1,0 +1,367 @@
+"""Unit tests for the ephemeral DWS cluster lifecycle tool.
+
+The tool talks to a billed cloud service, so every branch that decides to
+create, keep or delete a cluster is exercised here against fake clients.
+"""
+
+import importlib.util
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_SPEC = importlib.util.spec_from_file_location("dws_cluster", REPO_ROOT / "ci" / "cloud" / "dws" / "cluster.py")
+cluster = importlib.util.module_from_spec(_SPEC)
+sys.modules["dws_cluster"] = cluster
+_SPEC.loader.exec_module(cluster)
+
+REQUIRED_ENV = {
+    "DWS_CI_AVAILABILITY_ZONE": "cn-north-4a",
+    "DWS_CI_VPC_ID": "vpc-1",
+    "DWS_CI_SUBNET_ID": "subnet-1",
+    "DWS_CI_SECURITY_GROUP_ID": "sg-1",
+    "DWS_CI_DB_PASSWORD": "Sup3r-Secret!",
+}
+
+NOW = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def env(monkeypatch):
+    """Only the tool's own variables are set; the rest of the env is cleared."""
+    for name in list(REQUIRED_ENV) + [
+        "DWS_CI_NUM_NODE",
+        "DWS_CI_FLAVOR",
+        "DWS_CI_DB_NAME",
+        "DWS_CI_DB_USER",
+        "DWS_CI_DB_PORT",
+        "DWS_CI_TTL_MINUTES",
+        "GITHUB_RUN_ID",
+        "GITHUB_OUTPUT",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in REQUIRED_ENV.items():
+        monkeypatch.setenv(name, value)
+    return monkeypatch
+
+
+class FakeClient:
+    """Records calls and replays scripted cluster states."""
+
+    def __init__(self, details=(), clusters=(), create_id="cluster-1"):
+        self._details = list(details)
+        self._clusters = list(clusters)
+        self._create_id = create_id
+        self.created = []
+        self.deleted = []
+
+    def create_cluster_v2(self, request):
+        self.created.append(request)
+        return SimpleNamespace(cluster=SimpleNamespace(id=self._create_id))
+
+    def list_cluster_details(self, request):
+        if not self._details:
+            raise AssertionError("no more scripted cluster states")
+        return SimpleNamespace(cluster=self._details.pop(0))
+
+    def list_clusters(self, request):
+        return SimpleNamespace(clusters=self._clusters)
+
+    def delete_dws_cluster(self, request):
+        self.deleted.append(request.cluster_id)
+        return SimpleNamespace()
+
+
+def detail(status, **kwargs):
+    return SimpleNamespace(status=status, sub_status=None, task_status=None, **kwargs)
+
+
+def tag(key, value):
+    return SimpleNamespace(key=key, value=value)
+
+
+# ==================== spec assembly ====================
+
+
+def test_build_spec_reads_environment_with_documented_defaults(env):
+    spec = cluster.build_spec("datus-ci-42")
+
+    assert spec.name == "datus-ci-42"
+    assert spec.flavor == "dwsx2.xlarge.m7"
+    assert spec.num_node == 3
+    assert spec.db_name == "gaussdb"
+    assert spec.db_user == "dbadmin"
+    assert spec.db_port == 8000
+    assert spec.ttl_minutes == 180
+    assert spec.vpc_id == "vpc-1"
+
+
+def test_build_spec_rejects_fewer_than_three_nodes(env):
+    """The API rejects it too — fail before spending minutes on a create call."""
+    env.setenv("DWS_CI_NUM_NODE", "1")
+
+    with pytest.raises(cluster.ConfigError, match="at least 3"):
+        cluster.build_spec("datus-ci-42")
+
+
+@pytest.mark.parametrize("missing", sorted(REQUIRED_ENV))
+def test_build_spec_requires_every_infrastructure_id(env, missing):
+    env.delenv(missing)
+
+    with pytest.raises(cluster.ConfigError, match=missing):
+        cluster.build_spec("datus-ci-42")
+
+
+def test_build_spec_rejects_non_integer_node_count(env):
+    env.setenv("DWS_CI_NUM_NODE", "three")
+
+    with pytest.raises(cluster.ConfigError, match="must be an integer"):
+        cluster.build_spec("datus-ci-42")
+
+
+# ==================== naming and TTL ====================
+
+
+def test_cluster_name_traces_back_to_the_run(env):
+    env.setenv("GITHUB_RUN_ID", "1234567890")
+    assert cluster.cluster_name() == "datus-ci-1234567890"
+
+
+def test_cluster_name_sanitizes_and_truncates():
+    name = cluster.cluster_name("feature/../weird name" + "x" * 40)
+    assert name.startswith("datus-ci-")
+    suffix = name[len("datus-ci-") :]
+    assert len(suffix) <= 24
+    assert all(ch.isalnum() or ch == "-" for ch in suffix)
+
+
+def test_expiry_timestamp_is_ttl_minutes_ahead():
+    assert cluster.expiry_timestamp(90, now=NOW) == "2026-09-01T13:30:00Z"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("2026-09-01T11:59:59Z", True),
+        ("2026-09-01T12:00:00Z", True),
+        ("2026-09-01T12:00:01Z", False),
+        ("not-a-timestamp", True),
+        ("", True),
+    ],
+)
+def test_is_expired_treats_unreadable_tags_as_expired(value, expected):
+    """An unreadable tag means nothing else will clean that cluster up."""
+    assert cluster.is_expired(value, now=NOW) is expected
+
+
+# ==================== ownership guard ====================
+
+
+def test_is_ci_cluster_requires_both_owner_tag_and_name_prefix():
+    owned = SimpleNamespace(name="datus-ci-1", tags=[tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE)])
+    assert cluster.is_ci_cluster(owned) is True
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        SimpleNamespace(name="production-warehouse", tags=[tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE)]),
+        SimpleNamespace(name="datus-ci-1", tags=[tag(cluster.OWNER_TAG_KEY, "someone-else")]),
+        SimpleNamespace(name="datus-ci-1", tags=[]),
+        SimpleNamespace(name="datus-ci-1", tags=None),
+    ],
+)
+def test_is_ci_cluster_refuses_anything_not_provably_ours(candidate):
+    assert cluster.is_ci_cluster(candidate) is False
+
+
+# ==================== readiness polling ====================
+
+
+def test_wait_available_returns_the_ready_cluster():
+    client = FakeClient(details=[detail("CREATING"), detail("CREATING"), detail("AVAILABLE", id="cluster-1")])
+    slept = []
+
+    result = cluster.wait_available(client, "cluster-1", sleep=slept.append)
+
+    assert result.status == "AVAILABLE"
+    assert slept == [cluster._POLL_INTERVAL_SECONDS] * 2
+
+
+def test_wait_available_fails_fast_on_an_unexpected_status():
+    """A FAILED cluster must not be waited on until timeout — it bills meanwhile."""
+    client = FakeClient(details=[detail("CREATE_FAILED")])
+
+    with pytest.raises(cluster.ClusterError, match="CREATE_FAILED"):
+        cluster.wait_available(client, "cluster-1", sleep=lambda _: None)
+
+
+def test_wait_available_times_out():
+    client = FakeClient(details=[detail("CREATING")])
+
+    with pytest.raises(cluster.ClusterError, match="Timed out"):
+        cluster.wait_available(client, "cluster-1", timeout=0, sleep=lambda _: None)
+
+
+# ==================== connection details ====================
+
+
+def test_connection_host_prefers_the_private_endpoint():
+    ready = detail(
+        "AVAILABLE",
+        endpoints=[SimpleNamespace(connect_info="10.0.0.5:8000", jdbc_url="jdbc:postgresql://10.0.0.5:8000/gaussdb")],
+        public_ip=SimpleNamespace(eip_address="1.2.3.4"),
+    )
+    assert cluster.connection_host(ready) == "10.0.0.5"
+
+
+def test_connection_host_falls_back_to_the_elastic_ip():
+    ready = detail("AVAILABLE", endpoints=[], public_ip=SimpleNamespace(eip_address="1.2.3.4"))
+    assert cluster.connection_host(ready) == "1.2.3.4"
+
+
+def test_connection_host_raises_when_the_cluster_is_unreachable():
+    ready = detail("AVAILABLE", endpoints=None, public_ip=None)
+    with pytest.raises(cluster.ClusterError, match="neither"):
+        cluster.connection_host(ready)
+
+
+# ==================== outputs ====================
+
+
+def test_emit_outputs_appends_to_the_github_output_file(tmp_path, capsys):
+    target = tmp_path / "outputs.txt"
+
+    cluster.emit_outputs({"host": "10.0.0.5", "port": "8000"}, github_output=str(target))
+
+    assert target.read_text().splitlines() == ["host=10.0.0.5", "port=8000"]
+    assert "host=10.0.0.5" in capsys.readouterr().out
+
+
+# ==================== reaping ====================
+
+
+def test_reap_deletes_only_expired_ci_clusters(env, monkeypatch):
+    expired = SimpleNamespace(
+        id="expired-1",
+        name="datus-ci-old",
+        tags=[
+            tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE),
+            tag(cluster.EXPIRES_TAG_KEY, (NOW - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+        ],
+    )
+    live = SimpleNamespace(
+        id="live-1",
+        name="datus-ci-current",
+        tags=[
+            tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE),
+            tag(
+                cluster.EXPIRES_TAG_KEY,
+                (datetime.now(timezone.utc) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ),
+        ],
+    )
+    foreign = SimpleNamespace(id="prod-1", name="production-warehouse", tags=[])
+    client = FakeClient(clusters=[expired, live, foreign])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "delete_cluster", lambda c, cid: c.delete_dws_cluster(SimpleNamespace(cluster_id=cid)))
+
+    exit_code = cluster.main(["reap"])
+
+    assert exit_code == 0
+    assert client.deleted == ["expired-1"]
+
+
+def test_reap_dry_run_deletes_nothing(env, monkeypatch):
+    expired = SimpleNamespace(
+        id="expired-1",
+        name="datus-ci-old",
+        tags=[
+            tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE),
+            tag(cluster.EXPIRES_TAG_KEY, "2020-01-01T00:00:00Z"),
+        ],
+    )
+    client = FakeClient(clusters=[expired])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+
+    assert cluster.main(["reap", "--dry-run"]) == 0
+    assert client.deleted == []
+
+
+# ==================== command wiring ====================
+
+
+def test_down_without_a_cluster_id_is_a_no_op(env, monkeypatch):
+    """The teardown step runs with `if: always()`, including before `up` ran."""
+    monkeypatch.setattr(cluster, "build_client", lambda: pytest.fail("must not reach the cloud"))
+
+    assert cluster.main(["down"]) == 0
+
+
+def test_up_deletes_the_cluster_when_it_never_becomes_available(env, monkeypatch):
+    """A cluster stuck in CREATE_FAILED still bills, so `up` cleans up before failing."""
+    client = FakeClient(details=[detail("CREATE_FAILED")])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "create_cluster", lambda c, spec: "cluster-1")
+    deleted = []
+    monkeypatch.setattr(cluster, "delete_cluster", lambda c, cid: deleted.append(cid))
+
+    exit_code = cluster.main(["up"])
+
+    assert exit_code == 1
+    assert deleted == ["cluster-1"]
+
+
+def test_config_errors_exit_with_a_distinct_code(env):
+    env.delenv("DWS_CI_VPC_ID")
+
+    assert cluster.main(["up"]) == 2
+
+
+# ==================== SDK model wiring ====================
+
+
+def test_create_cluster_builds_a_tagged_request(env):
+    """The owner/expiry tags are what makes `reap` safe — pin them on the wire."""
+    pytest.importorskip("huaweicloudsdkdws")
+
+    client = FakeClient()
+    spec = cluster.build_spec("datus-ci-42")
+
+    cluster_id = cluster.create_cluster(client, spec, now=NOW)
+
+    assert cluster_id == "cluster-1"
+    sent = client.created[0].body.cluster
+    assert sent.name == "datus-ci-42"
+    assert sent.num_node == 3
+    assert sent.availability_zones == ["cn-north-4a"]
+    assert {t.key: t.value for t in sent.tags} == {
+        cluster.OWNER_TAG_KEY: cluster.OWNER_TAG_VALUE,
+        cluster.EXPIRES_TAG_KEY: "2026-09-01T15:00:00Z",
+    }
+
+
+def test_delete_cluster_treats_a_missing_cluster_as_success(env):
+    pytest.importorskip("huaweicloudsdkdws")
+    from huaweicloudsdkcore.exceptions.exceptions import SdkError, ServiceResponseException
+
+    class Missing(FakeClient):
+        def delete_dws_cluster(self, request):
+            raise ServiceResponseException(404, SdkError(error_msg="cluster not found"))
+
+    assert cluster.delete_cluster(Missing(), "gone") is False
+
+
+def test_delete_cluster_propagates_other_failures(env):
+    pytest.importorskip("huaweicloudsdkdws")
+    from huaweicloudsdkcore.exceptions.exceptions import SdkError, ServiceResponseException
+
+    class Broken(FakeClient):
+        def delete_dws_cluster(self, request):
+            raise ServiceResponseException(500, SdkError(error_msg="internal error"))
+
+    with pytest.raises(ServiceResponseException):
+        cluster.delete_cluster(Broken(), "cluster-1")

@@ -251,6 +251,16 @@ jobs:
       DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
       DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
       DWS_SSLROOTCERT_PEM: ${{ secrets.DWS_SSLROOTCERT_PEM }}
+      # Ephemeral-cluster mode; unused when DWS_HOST points at a long-lived one.
+      HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+      HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+      HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
+      HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
+      DWS_CI_VPC_ID: ${{ secrets.DWS_CI_VPC_ID }}
+      DWS_CI_SUBNET_ID: ${{ secrets.DWS_CI_SUBNET_ID }}
+      DWS_CI_SECURITY_GROUP_ID: ${{ secrets.DWS_CI_SECURITY_GROUP_ID }}
+      DWS_CI_AVAILABILITY_ZONE: ${{ secrets.DWS_CI_AVAILABILITY_ZONE }}
+      DWS_CI_DB_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
 
   integration-tests:
     if: always() && (github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
