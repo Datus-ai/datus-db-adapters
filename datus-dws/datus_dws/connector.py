@@ -96,6 +96,7 @@ class DWSConnector(PostgreSQLConnector):
         self.dialect = "dws"
         self.config = config
         self.connection_string = self._build_connection_string(self._default_database)
+        self._compat_mode_cache: Dict[str, str] = {}
         self._traits_cache: Dict[str, DWSTraits] = {}
 
     # ==================== Connection ====================
@@ -161,28 +162,20 @@ class DWSConnector(PostgreSQLConnector):
     # ==================== Feature Probing ====================
 
     def _get_traits(self, database_name: str = "") -> DWSTraits:
-        key = database_name or self._default_database
+        effective_database = database_name or self.database_name or self._default_database
+        key = effective_database
         traits = self._traits_cache.get(key)
         if traits is not None:
             return traits
 
         # Each probe runs on its own connection: a failed probe aborts the
-        # transaction and would poison every probe after it. Probe SQL stays
-        # compatibility-mode neutral — no `= ''` comparisons (ORA mode folds
-        # empty strings to NULL) and no `||` concatenation.
-        traits = DWSTraits()
-        try:
-            row = self._probe_scalar(
-                "SELECT datcompatibility FROM pg_database WHERE datname = current_database()",
-                database_name,
-            )
-            if row:
-                traits.compat_mode = str(row).strip().upper()
-        except Exception as e:
-            logger.warning(f"DWS compatibility-mode probe failed for database '{key}': {e}")
+        # transaction and would poison every probe after it. Compatibility mode
+        # has its own cache because SQL prompting needs it without paying for
+        # the unrelated materialized-view probes below.
+        traits = DWSTraits(compat_mode=self.get_compatibility_mode(effective_database))
 
         try:
-            self._probe_scalar("SELECT count(*) FROM pg_matviews WHERE 1 = 0", database_name)
+            self._probe_scalar("SELECT count(*) FROM pg_matviews WHERE 1 = 0", effective_database)
             traits.has_matviews = True
         except Exception:
             traits.has_matviews = False
@@ -191,7 +184,7 @@ class DWSConnector(PostgreSQLConnector):
         # cluster ships with it off. An unreadable GUC leaves the permissive
         # default so discovery is never blocked by a failed probe.
         try:
-            value = self._probe_scalar("SHOW enable_matview", database_name)
+            value = self._probe_scalar("SHOW enable_matview", effective_database)
             if value is not None:
                 traits.enable_matview = str(value).strip().lower() in ("on", "true", "1")
         except Exception as e:
@@ -319,7 +312,32 @@ class DWSConnector(PostgreSQLConnector):
 
     def get_compatibility_mode(self, database_name: str = "") -> str:
         """Return the database's compatibility mode (ORA, TD or MySQL)."""
-        return self._get_traits(database_name).compat_mode
+        effective_database = database_name or self.database_name or self._default_database
+        key = effective_database
+        if key in self._compat_mode_cache:
+            return self._compat_mode_cache[key]
+
+        mode = ""
+        try:
+            row = self._probe_scalar(
+                "SELECT datcompatibility FROM pg_database WHERE datname = current_database()",
+                effective_database,
+            )
+            if row:
+                mode = str(row).strip().upper()
+        except Exception as e:
+            logger.warning(f"DWS compatibility-mode probe failed for database '{key}': {e}")
+
+        # Cache an unavailable mode too. Prompt construction happens every
+        # turn, so repeatedly retrying an unsupported or unreadable catalog
+        # probe would add latency and duplicate warnings for the whole session.
+        self._compat_mode_cache[key] = mode
+        return mode
+
+    def get_sql_generation_context(self, database_name: str = "") -> Dict[str, str]:
+        """Return live database traits that affect generated SQL semantics."""
+        mode = self.get_compatibility_mode(database_name)
+        return {"compatibility_mode": mode} if mode else {}
 
     def get_server_version(self, database_name: str = "") -> Tuple[str, str]:
         """Return (server_version, full version banner).

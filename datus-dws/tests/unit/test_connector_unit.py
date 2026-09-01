@@ -79,6 +79,115 @@ def test_dialect_is_dws_not_postgresql():
     assert _connector().dialect == "dws"
 
 
+# ==================== SQL generation context ====================
+
+
+def test_compatibility_mode_is_normalized_and_cached_per_database(monkeypatch):
+    connector = _connector()
+    calls = []
+
+    def probe(sql, database_name=""):
+        calls.append((sql, database_name))
+        return {"gaussdb": " td ", "reporting": "ora"}[database_name]
+
+    monkeypatch.setattr(connector, "_probe_scalar", probe)
+
+    assert connector.get_compatibility_mode() == "TD"
+    assert connector.get_compatibility_mode() == "TD"
+    assert connector.get_compatibility_mode("reporting") == "ORA"
+    assert connector.get_compatibility_mode("reporting") == "ORA"
+    assert len(calls) == 2
+    assert all("pg_database" in sql for sql, _ in calls)
+    assert [database_name for _, database_name in calls] == ["gaussdb", "reporting"]
+
+
+def test_compatibility_mode_cache_tracks_the_effective_database_context(monkeypatch):
+    connector = _connector()
+    calls = []
+    modes = {"reporting": "TD", "gaussdb": "ORA"}
+
+    def probe(_sql, database_name=""):
+        calls.append(database_name)
+        return modes[database_name]
+
+    monkeypatch.setattr(connector, "_probe_scalar", probe)
+
+    connector.database_name = "reporting"
+    assert connector.get_compatibility_mode() == "TD"
+    connector.database_name = "gaussdb"
+    assert connector.get_compatibility_mode() == "ORA"
+
+    assert calls == ["reporting", "gaussdb"]
+    assert connector._compat_mode_cache == {"reporting": "TD", "gaussdb": "ORA"}
+
+
+def test_sql_generation_context_exposes_only_an_available_mode(monkeypatch):
+    connector = _connector()
+    monkeypatch.setattr(connector, "_probe_scalar", lambda *_args, **_kwargs: "TD")
+
+    assert connector.get_sql_generation_context() == {"compatibility_mode": "TD"}
+
+
+def test_failed_compatibility_probe_is_safe_and_cached(monkeypatch):
+    connector = _connector()
+    calls = 0
+
+    def probe(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(connector, "_probe_scalar", probe)
+
+    assert connector.get_sql_generation_context() == {}
+    assert connector.get_sql_generation_context() == {}
+    assert calls == 1
+
+
+def test_traits_reuse_the_cached_compatibility_mode(monkeypatch):
+    connector = _connector()
+    calls = []
+
+    def probe(sql, _database_name=""):
+        calls.append(sql)
+        if "datcompatibility" in sql:
+            return "TD"
+        if "enable_matview" in sql:
+            return "off"
+        return 0
+
+    monkeypatch.setattr(connector, "_probe_scalar", probe)
+
+    assert connector.get_compatibility_mode() == "TD"
+    traits = connector._get_traits()
+
+    assert traits.compat_mode == "TD"
+    assert traits.has_matviews is True
+    assert traits.enable_matview is False
+    assert sum("datcompatibility" in sql for sql in calls) == 1
+
+
+def test_traits_cache_tracks_the_effective_database_context(monkeypatch):
+    connector = _connector()
+    modes = {"reporting": "TD", "gaussdb": "ORA"}
+
+    def probe(sql, database_name=""):
+        if "datcompatibility" in sql:
+            return modes[database_name]
+        if "enable_matview" in sql:
+            return "off"
+        return 0
+
+    monkeypatch.setattr(connector, "_probe_scalar", probe)
+
+    connector.database_name = "reporting"
+    assert connector._get_traits().compat_mode == "TD"
+    connector.database_name = "gaussdb"
+    assert connector._get_traits().compat_mode == "ORA"
+
+    assert set(connector._traits_cache) == {"reporting", "gaussdb"}
+
+
 # ==================== connection string ====================
 
 
