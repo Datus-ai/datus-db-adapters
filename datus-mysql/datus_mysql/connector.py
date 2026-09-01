@@ -413,9 +413,13 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             return result
 
         # Otherwise get metadata and query all tables
-        metadata = self._get_metadata(table_type, "", database_name)
+        metadata = self._get_metadata(table_type, catalog_name, database_name)
         for meta in metadata:
-            full_name = self.full_name(database_name=meta["database_name"], table_name=meta["table_name"])
+            full_name = self.full_name(
+                catalog_name=meta["catalog_name"],
+                database_name=meta["database_name"],
+                table_name=meta["table_name"],
+            )
             sql = f"SELECT * FROM {full_name} LIMIT {top_n}"
             df = self._execute_pandas(sql)
             if not df.empty:

@@ -105,3 +105,58 @@ def test_switch_back_to_original_catalog(
         assert config.database in connector.get_databases()
     finally:
         connector.switch_catalog(original_catalog)
+
+
+# ==================== Cross-catalog scoping ====================
+
+METADATA_TABLE = "datus_metadata_table"
+
+
+@pytest.mark.integration
+def test_cross_catalog_listing_from_default_session_targets_hive(
+    connector: StarRocksConnector, hive_catalog_setup: str
+):
+    """An explicit Hive catalog argument wins over the default-catalog session.
+
+    The metastore's ``default`` database is empty, so any internal table leaking
+    into this listing would betray the request being resolved in the session
+    catalog instead of the requested one.
+    """
+    tables = connector.get_tables(catalog_name=hive_catalog_setup, database_name="default")
+    assert tables == []
+
+
+@pytest.mark.integration
+def test_cross_catalog_metadata_resolves_in_the_requested_catalog(
+    connector: StarRocksConnector,
+    config: StarRocksConfig,
+    hive_catalog_setup: str,
+    metadata_objects_setup,
+):
+    """Explicit internal-catalog arguments win over a Hive-catalog session.
+
+    End-to-end regression coverage for ``get_sample_rows()`` dropping the
+    catalog: with the session switched to the Hive catalog, a no-``tables``
+    sampling that explicitly requests the internal catalog must list and sample
+    the internal objects. Before the fix the listing resolved in the session
+    catalog, so it came back empty or with another catalog's tables.
+    """
+    internal = connector.default_catalog()
+    original_catalog = connector.catalog_name
+    try:
+        connector.switch_catalog(hive_catalog_setup)
+
+        tables = connector.get_tables(catalog_name=internal, database_name=config.database)
+        assert METADATA_TABLE in tables
+
+        columns = connector.get_schema(catalog_name=internal, database_name=config.database, table_name=METADATA_TABLE)
+        assert [column["name"] for column in columns] == ["id", "value"]
+
+        samples = connector.get_sample_rows(catalog_name=internal, database_name=config.database)
+        matched = [row for row in samples if row["table_name"] == METADATA_TABLE]
+        assert len(matched) == 1, f"{METADATA_TABLE} missing from {[row['table_name'] for row in samples]}"
+        assert matched[0]["catalog_name"] == internal
+        assert "1,10" in matched[0]["sample_rows"]
+    finally:
+        connector.switch_catalog(original_catalog)
+        connector.switch_context(database_name=config.database)

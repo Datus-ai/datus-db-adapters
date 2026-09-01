@@ -398,3 +398,35 @@ def test_connector_database_name_empty_when_none():
         connector = MySQLConnector(config)
 
         assert connector.database_name == ""
+
+
+# ==================== get_sample_rows catalog propagation ====================
+
+
+def test_get_sample_rows_propagates_catalog_to_metadata_listing():
+    """The no-tables branch must forward catalog_name instead of hardcoding ''.
+
+    StarRocks/Doris inherit this method; dropping the catalog made the listing
+    (and the sampled full names) resolve in the session catalog instead of the
+    requested one.
+    """
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
+        connector = MySQLConnector(MySQLConfig(host="h", port=3306, username="u", password="p", database="db1"))
+    connector.connect = MagicMock()
+    meta_row = {
+        "identifier": "cat1.db1.t1",
+        "catalog_name": "cat1",
+        "database_name": "db1",
+        "schema_name": "",
+        "table_name": "t1",
+    }
+    connector._get_metadata = MagicMock(return_value=[meta_row])
+    connector.full_name = MagicMock(return_value="`cat1`.`db1`.`t1`")
+    connector._execute_pandas = MagicMock(return_value=__import__("pandas").DataFrame({"id": [1]}))
+
+    result = connector.get_sample_rows(catalog_name="cat1", database_name="db1")
+
+    connector._get_metadata.assert_called_once_with("table", "cat1", "db1")
+    connector.full_name.assert_called_once_with(catalog_name="cat1", database_name="db1", table_name="t1")
+    assert result[0]["catalog_name"] == "cat1"
+    assert result[0]["identifier"] == "cat1.db1.t1"

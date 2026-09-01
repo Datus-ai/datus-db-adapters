@@ -311,11 +311,21 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
         wanted = "VIEW" if table_type == "view" else "BASE TABLE"
         name_col, type_col = rows.columns[0], rows.columns[1]
-        return [
-            self._metadata_row(catalog_name, database_name, str(rows[name_col][i]), table_type)
-            for i in range(len(rows))
-            if str(rows[type_col][i]).upper() == wanted
-        ]
+        names = [str(rows[name_col][i]) for i in range(len(rows)) if str(rows[type_col][i]).upper() == wanted]
+
+        if table_type == "view":
+            # SHOW FULL TABLES reports materialized views as VIEW too (they are absent
+            # from information_schema.views but carry Table_type='VIEW' here), so a plain
+            # VIEW filter would leak MVs into get_views(). Subtract them — and when they
+            # cannot be enumerated there is no honest answer to the view request, so give
+            # up and let the caller re-raise the original information_schema error.
+            mv_rows = self._try_show(targets, "SHOW MATERIALIZED VIEWS FROM", catalog_name)
+            if mv_rows is None:
+                return None
+            mv_names = set(self._pick_name_column(mv_rows))
+            names = [name for name in names if name not in mv_names]
+
+        return [self._metadata_row(catalog_name, database_name, name, table_type) for name in names]
 
     def _try_show(self, targets: List[str], statement: str, catalog_name: str = ""):
         """Run ``statement`` against each target until one succeeds; None if all fail.
@@ -340,24 +350,54 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
     ) -> List[Dict[str, Any]]:
         """Column metadata, falling back to SHOW when information_schema fails.
 
+        The MySQL base implementation queries a bare INFORMATION_SCHEMA, which the
+        server resolves in the *session* catalog — an explicit ``catalog_name``
+        argument would be silently ignored (empty or wrong columns whenever the
+        session sits on another catalog). Qualify the query like every other
+        metadata lookup in this class so it stays stateless.
+
         Column lookups reach the FE through the same thrift call as the object
         listing above, so they time out under the same conditions.
         """
+        if not table_name:
+            return []
+
+        current_catalog = self._resolve_catalog(catalog_name)
+        database_name = database_name or self.database_name
+        sql = f"""
+            SELECT
+                COLUMN_NAME as Field,
+                COLUMN_TYPE as Type,
+                IS_NULLABLE as `Null`,
+                COLUMN_KEY as `Key`,
+                COLUMN_DEFAULT as `Default`,
+                COLUMN_COMMENT as Comment
+            FROM {self.quote_identifier(current_catalog)}.information_schema.columns
+            WHERE TABLE_SCHEMA = '{database_name.replace("'", "''")}'
+              AND TABLE_NAME = '{table_name.replace("'", "''")}'
+            ORDER BY ORDINAL_POSITION
+        """
         try:
-            return super().get_schema(
-                catalog_name=catalog_name,
-                database_name=database_name,
-                schema_name=schema_name,
-                table_name=table_name,
-            )
+            query_result = self._execute_pandas(sql)
         except Exception as e:
-            columns = self._show_columns(
-                self._resolve_catalog(catalog_name), database_name or self.database_name, table_name
-            )
+            columns = self._show_columns(current_catalog, database_name, table_name)
             if columns is None:
                 raise
             logger.warning(f"information_schema columns failed ({e}); fell back to SHOW for {table_name}")
             return columns
+
+        return [
+            {
+                "cid": i,
+                "name": query_result["Field"][i],
+                "type": query_result["Type"][i],
+                "nullable": query_result["Null"][i] == "YES",
+                "default_value": query_result["Default"][i],
+                "pk": query_result["Key"][i] == "PRI",
+                "comment": query_result["Comment"][i],
+            }
+            for i in range(len(query_result))
+        ]
 
     def _show_columns(self, catalog_name: str, database_name: str, table_name: str) -> Optional[List[Dict[str, Any]]]:
         """Describe one table with SHOW FULL COLUMNS; None when SHOW cannot answer."""
