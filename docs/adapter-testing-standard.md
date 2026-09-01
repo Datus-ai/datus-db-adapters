@@ -253,6 +253,12 @@ Never inline or copy TPC-H data. Three pieces, no data duplication anywhere:
    TPCH_DATA = build_tpch_inserts(lambda t: f"`{t}`")             # adapter's quoting
    ```
 
+   Engines without a multi-row `VALUES` clause (Oracle) use `build_tpch_row_inserts` instead —
+   one INSERT per row, plus `date_literal=True` to emit `DATE 'YYYY-MM-DD'` so the load does not
+   depend on the session's date format. It returns the statements grouped per table; expose the
+   flattened list as `TPCH_DATA` and the grouping as `TPCH_DATA_BY_TABLE`
+   (`datus-oracle/datus_oracle/tpch_data.py`).
+
 2. `tests/integration/conftest.py::tpch_setup` — imports from `tpch_data.py`.
 
 3. `scripts/init_tpch_data.py` — argparse CLI for manual setup: `--host/--port/--username/

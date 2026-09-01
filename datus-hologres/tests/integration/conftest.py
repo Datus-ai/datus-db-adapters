@@ -8,97 +8,11 @@ from typing import Generator
 import pytest
 
 from datus_hologres import HologresConfig, HologresConnector, register
+from datus_hologres.tpch_data import ROW_COUNTS, TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
 register()
 
-TPCH_DDL = {
-    "tpch_region": """
-        CREATE TABLE "{schema}"."tpch_region" (
-            "r_regionkey" INTEGER NOT NULL PRIMARY KEY,
-            "r_name" TEXT NOT NULL,
-            "r_comment" TEXT
-        )
-        WITH (orientation = 'column', distribution_key = 'r_regionkey')
-    """,
-    "tpch_nation": """
-        CREATE TABLE "{schema}"."tpch_nation" (
-            "n_nationkey" INTEGER NOT NULL PRIMARY KEY,
-            "n_name" TEXT NOT NULL,
-            "n_regionkey" INTEGER NOT NULL,
-            "n_comment" TEXT
-        )
-        WITH (orientation = 'column', distribution_key = 'n_nationkey')
-    """,
-    "tpch_supplier": """
-        CREATE TABLE "{schema}"."tpch_supplier" (
-            "s_suppkey" INTEGER NOT NULL PRIMARY KEY,
-            "s_name" TEXT NOT NULL,
-            "s_nationkey" INTEGER NOT NULL,
-            "s_acctbal" DECIMAL(15, 2) NOT NULL
-        )
-        WITH (orientation = 'column', distribution_key = 's_suppkey')
-    """,
-    "tpch_customer": """
-        CREATE TABLE "{schema}"."tpch_customer" (
-            "c_custkey" INTEGER NOT NULL PRIMARY KEY,
-            "c_name" TEXT NOT NULL,
-            "c_nationkey" INTEGER NOT NULL,
-            "c_acctbal" DECIMAL(15, 2) NOT NULL,
-            "c_mktsegment" TEXT NOT NULL
-        )
-        WITH (orientation = 'column', distribution_key = 'c_custkey')
-    """,
-    "tpch_orders": """
-        CREATE TABLE "{schema}"."tpch_orders" (
-            "o_orderkey" INTEGER NOT NULL PRIMARY KEY,
-            "o_custkey" INTEGER NOT NULL,
-            "o_orderstatus" TEXT NOT NULL,
-            "o_totalprice" DECIMAL(15, 2) NOT NULL,
-            "o_orderdate" DATE NOT NULL
-        )
-        WITH (
-            orientation = 'column',
-            distribution_key = 'o_orderkey',
-            event_time_column = 'o_orderdate'
-        )
-    """,
-}
-
-TPCH_DATA = {
-    "tpch_region": [
-        (0, "AFRICA", "regional comment"),
-        (1, "AMERICA", "regional comment"),
-        (2, "ASIA", "regional comment"),
-        (3, "EUROPE", "regional comment"),
-        (4, "MIDDLE EAST", "regional comment"),
-    ],
-    "tpch_nation": [
-        (0, "ALGERIA", 0, "nation comment"),
-        (1, "ARGENTINA", 1, "nation comment"),
-        (2, "BRAZIL", 1, "nation comment"),
-        (6, "FRANCE", 3, "nation comment"),
-        (18, "CHINA", 2, "nation comment"),
-    ],
-    "tpch_supplier": [
-        (1, "Supplier#1", 6, 5755.94),
-        (2, "Supplier#2", 18, 4032.68),
-        (3, "Supplier#3", 2, 4192.40),
-    ],
-    "tpch_customer": [
-        (1, "Customer#1", 18, 711.56, "BUILDING"),
-        (2, "Customer#2", 6, 121.65, "AUTOMOBILE"),
-        (3, "Customer#3", 2, 7498.12, "BUILDING"),
-        (4, "Customer#4", 1, 2866.83, "MACHINERY"),
-    ],
-    "tpch_orders": [
-        (1, 1, "O", 173665.47, "2024-01-02"),
-        (2, 1, "F", 46929.18, "2024-01-03"),
-        (3, 2, "O", 193846.25, "2024-02-10"),
-        (4, 3, "F", 32151.78, "2024-02-11"),
-        (5, 3, "O", 144659.20, "2024-03-05"),
-        (6, 4, "F", 58749.59, "2024-03-06"),
-    ],
-}
+__all__ = ["ROW_COUNTS", "TPCH_DATA", "TPCH_DDL", "TPCH_TABLES"]
 
 
 def _required_env(name: str) -> str:
@@ -110,14 +24,6 @@ def _required_env(name: str) -> str:
 
 def _assert_success(result, operation: str):
     assert result.success, f"{operation} failed: {result.error}"
-
-
-def _sql_literal(value) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, str):
-        return "'" + value.replace("'", "''") + "'"
-    return str(value)
 
 
 @pytest.fixture(scope="session")
@@ -154,16 +60,20 @@ def connector(base_config: HologresConfig) -> Generator[HologresConnector, None,
 
 @pytest.fixture(scope="session")
 def tpch_setup(connector: HologresConnector) -> HologresConnector:
+    """Create and load the shared TPC-H dataset in the session's isolated schema.
+
+    Statements are unqualified; the connector applies `SET search_path` from
+    its schema_name to every statement.
+    """
     schema = connector.schema_name
-    for table_name, ddl in TPCH_DDL.items():
+    for table_name, ddl in zip(TPCH_TABLES, TPCH_DDL):
         drop = connector.execute_ddl(f'DROP TABLE IF EXISTS "{schema}"."{table_name}" CASCADE')
         _assert_success(drop, f"drop stale {table_name}")
-        create = connector.execute_ddl(ddl.format(schema=schema))
+        create = connector.execute_ddl(ddl)
         _assert_success(create, f"create {table_name}")
 
-    for table_name, rows in TPCH_DATA.items():
-        values = ",\n".join(f"({', '.join(_sql_literal(value) for value in row)})" for row in rows)
-        insert = connector.execute_insert(f'INSERT INTO "{schema}"."{table_name}" VALUES {values}')
+    for table_name, insert_sql in zip(TPCH_TABLES, TPCH_DATA):
+        insert = connector.execute_insert(insert_sql)
         _assert_success(insert, f"load {table_name}")
 
     return connector

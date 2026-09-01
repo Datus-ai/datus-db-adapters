@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
-# See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Initialize TPC-H sample data in Greenplum for Datus integration testing.
+"""Initialize TPC-H sample data in Hologres for Datus integration testing.
 
 Creates the five TPC-H tables (region, nation, customer, orders, supplier) and
 populates them with the shared dataset used by the integration suite. The DDL
-and rows come from ``datus_greenplum.tpch_data`` — this script never holds a
+and rows come from ``datus_hologres.tpch_data`` — this script never holds a
 second copy, so the tables it provisions are exactly the ones
 ``tests/integration/conftest.py::tpch_setup`` expects.
 
+Hologres authenticates with an Alibaba Cloud AccessKey pair, which the config
+accepts under either the ``username``/``password`` or the
+``access_key_id``/``access_key_secret`` names.
+
 Usage:
     python scripts/init_tpch_data.py \\
-        --host localhost --port 15432 \\
-        --username gpadmin --password pivotal \\
-        --database test --schema public
+        --host my-instance.hologres.aliyuncs.com --port 80 \\
+        --access-key-id "$ALIBABA_CLOUD_ACCESS_KEY_ID" \\
+        --access-key-secret "$ALIBABA_CLOUD_ACCESS_KEY_SECRET" \\
+        --database mydb --schema public
 
     # Drop existing tables first, then recreate
     python scripts/init_tpch_data.py --drop
 
 Environment variables (used as defaults):
-    GREENPLUM_HOST, GREENPLUM_PORT, GREENPLUM_USER, GREENPLUM_PASSWORD,
-    GREENPLUM_DATABASE, GREENPLUM_SCHEMA
+    HOLOGRES_HOST, HOLOGRES_PORT, HOLOGRES_ACCESS_KEY_ID,
+    HOLOGRES_ACCESS_KEY_SECRET, HOLOGRES_DATABASE, HOLOGRES_SCHEMA,
+    HOLOGRES_SSLMODE
 """
 
 import argparse
@@ -32,46 +37,74 @@ import sys
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Initialize TPC-H data in Greenplum")
-    parser.add_argument("--host", default=os.getenv("GREENPLUM_HOST", "localhost"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("GREENPLUM_PORT", "15432")))
-    parser.add_argument("--username", default=os.getenv("GREENPLUM_USER", "gpadmin"))
-    parser.add_argument("--password", default=os.getenv("GREENPLUM_PASSWORD", "pivotal"))
-    parser.add_argument("--database", default=os.getenv("GREENPLUM_DATABASE", "test"))
-    parser.add_argument("--schema", default=os.getenv("GREENPLUM_SCHEMA", "public"))
+    parser = argparse.ArgumentParser(description="Initialize TPC-H data in Hologres")
+    parser.add_argument("--host", default=os.getenv("HOLOGRES_HOST"), help="Hologres endpoint (or set HOLOGRES_HOST)")
+    parser.add_argument("--port", type=int, default=int(os.getenv("HOLOGRES_PORT") or "80"))
+    parser.add_argument(
+        "--access-key-id",
+        dest="access_key_id",
+        default=os.getenv("HOLOGRES_ACCESS_KEY_ID"),
+        help="Alibaba Cloud AccessKey ID (or set HOLOGRES_ACCESS_KEY_ID)",
+    )
+    parser.add_argument(
+        "--access-key-secret",
+        dest="access_key_secret",
+        default=os.getenv("HOLOGRES_ACCESS_KEY_SECRET"),
+        help="Alibaba Cloud AccessKey Secret (or set HOLOGRES_ACCESS_KEY_SECRET)",
+    )
+    parser.add_argument(
+        "--database", default=os.getenv("HOLOGRES_DATABASE"), help="Database (or set HOLOGRES_DATABASE)"
+    )
+    parser.add_argument("--schema", default=os.getenv("HOLOGRES_SCHEMA") or "public")
+    parser.add_argument("--sslmode", default=os.getenv("HOLOGRES_SSLMODE") or "prefer")
     parser.add_argument("--drop", action="store_true", help="Drop existing tables before creating")
     args = parser.parse_args()
+
+    missing = [
+        name
+        for name, value in (
+            ("--host", args.host),
+            ("--access-key-id", args.access_key_id),
+            ("--access-key-secret", args.access_key_secret),
+            ("--database", args.database),
+        )
+        if not value
+    ]
+    if missing:
+        print(f"ERROR: missing required argument(s): {', '.join(missing)}")
+        sys.exit(1)
 
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", args.schema):
         print("ERROR: --schema must be a valid SQL identifier (letters, digits, underscores).")
         sys.exit(1)
 
     try:
-        from datus_greenplum import GreenplumConfig, GreenplumConnector
-        from datus_greenplum.tpch_data import ROW_COUNTS, TPCH_DATA, TPCH_DDL, TPCH_TABLES
+        from datus_hologres import HologresConfig, HologresConnector
+        from datus_hologres.tpch_data import ROW_COUNTS, TPCH_DATA, TPCH_DDL, TPCH_TABLES
     except ImportError:
-        print("ERROR: datus-greenplum is not installed.")
-        print("  pip install -e ../datus-greenplum")
+        print("ERROR: datus-hologres is not installed.")
+        print("  pip install -e ../datus-hologres")
         sys.exit(1)
 
-    config = GreenplumConfig(
+    config = HologresConfig(
         host=args.host,
         port=args.port,
-        username=args.username,
-        password=args.password,
+        access_key_id=args.access_key_id,
+        access_key_secret=args.access_key_secret,
         database=args.database,
-        schema_name=args.schema,
+        schema=args.schema,
+        sslmode=args.sslmode,
     )
 
     conn = None
     schema = args.schema
 
     try:
-        conn = GreenplumConnector(config)
+        conn = HologresConnector(config)
         if not conn.test_connection():
             print("ERROR: Connection test failed.")
             sys.exit(1)
-        print(f"Connected to Greenplum at {args.host}:{args.port}/{args.database}")
+        print(f"Connected to Hologres at {config.host}:{config.port}/{args.database}")
 
         # Statements are unqualified; the connector applies `SET search_path`
         # from schema_name to every statement.
@@ -81,18 +114,15 @@ def main():
                 conn.execute_ddl(f'DROP TABLE IF EXISTS "{schema}"."{table}" CASCADE')
                 print(f"  Dropped {table}")
 
-        # Note: Greenplum (based on PG 8.x/9.4) does not support IF NOT EXISTS
-        # in CREATE TABLE, so use --drop to recreate tables cleanly.
         print("\nCreating TPC-H tables...")
         for i, ddl in enumerate(TPCH_DDL):
             result = conn.execute_ddl(ddl)
             if not result.success:
                 print(f"  Error creating {TPCH_TABLES[i]}: {result.error}")
+                print("  Re-run with --drop if the tables already exist.")
                 sys.exit(1)
             print(f"  Created {TPCH_TABLES[i]}")
 
-        # Note: Greenplum does not support ON CONFLICT DO NOTHING (PG 9.5+),
-        # so use --drop to ensure a clean slate before inserting.
         print("\nInserting TPC-H data...")
         for i, insert_sql in enumerate(TPCH_DATA):
             result = conn.execute_insert(insert_sql)

@@ -4,6 +4,7 @@
 import pytest
 
 from datus_hologres import HologresConnector
+from datus_hologres.tpch_data import ROW_COUNTS, TPCH_TABLES
 
 
 def _query(connector: HologresConnector, sql: str):
@@ -14,78 +15,65 @@ def _query(connector: HologresConnector, sql: str):
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_tiny_tpch_counts(tpch_setup: HologresConnector):
+@pytest.mark.parametrize("table_name,expected", list(zip(TPCH_TABLES, ROW_COUNTS)))
+def test_tpch_counts(tpch_setup: HologresConnector, table_name, expected):
     schema = tpch_setup.schema_name
-    expected = {
-        "tpch_region": 5,
-        "tpch_nation": 5,
-        "tpch_supplier": 3,
-        "tpch_customer": 4,
-        "tpch_orders": 6,
-    }
-
-    for table_name, count in expected.items():
-        rows = _query(tpch_setup, f'SELECT COUNT(*) AS count FROM "{schema}"."{table_name}"')
-        assert rows == [{"count": count}]
+    rows = _query(tpch_setup, f'SELECT COUNT(*) AS count FROM "{schema}"."{table_name}"')
+    assert rows == [{"count": expected}]
 
 
 @pytest.mark.integration
-def test_tiny_tpch_join_and_aggregate(tpch_setup: HologresConnector):
+def test_tpch_join_and_aggregate(tpch_setup: HologresConnector):
     schema = tpch_setup.schema_name
     rows = _query(
         tpch_setup,
         f"""
         SELECT
-            c.c_name,
+            c.name,
             COUNT(*) AS order_count,
-            SUM(o.o_totalprice) AS total_price
+            SUM(o.totalprice) AS total_price
         FROM "{schema}"."tpch_customer" c
         JOIN "{schema}"."tpch_orders" o
-          ON c.c_custkey = o.o_custkey
-        GROUP BY c.c_name
-        ORDER BY c.c_name
+          ON c.custkey = o.custkey
+        GROUP BY c.name
+        ORDER BY c.name
         """,
     )
 
-    assert [row["c_name"] for row in rows] == ["Customer#1", "Customer#2", "Customer#3", "Customer#4"]
-    assert [row["order_count"] for row in rows] == [2, 1, 2, 1]
+    assert [row["name"] for row in rows] == [f"Customer#{i:03d}" for i in range(1, 11)]
+    assert [row["order_count"] for row in rows] == [3, 2, 2, 2, 1, 1, 1, 1, 1, 1]
+    assert sum(row["order_count"] for row in rows) == 15
 
 
 @pytest.mark.integration
-def test_tiny_tpch_three_table_join(tpch_setup: HologresConnector):
+def test_tpch_three_table_join(tpch_setup: HologresConnector):
     schema = tpch_setup.schema_name
     rows = _query(
         tpch_setup,
         f"""
-        SELECT r.r_name, COUNT(*) AS supplier_count
+        SELECT r.name, COUNT(*) AS supplier_count
         FROM "{schema}"."tpch_supplier" s
         JOIN "{schema}"."tpch_nation" n
-          ON s.s_nationkey = n.n_nationkey
+          ON s.nationkey = n.nationkey
         JOIN "{schema}"."tpch_region" r
-          ON n.n_regionkey = r.r_regionkey
-        GROUP BY r.r_name
-        ORDER BY r.r_name
+          ON n.regionkey = r.regionkey
+        GROUP BY r.name
+        ORDER BY r.name
         """,
     )
 
     assert rows == [
-        {"r_name": "AMERICA", "supplier_count": 1},
-        {"r_name": "ASIA", "supplier_count": 1},
-        {"r_name": "EUROPE", "supplier_count": 1},
+        {"name": "AFRICA", "supplier_count": 1},
+        {"name": "AMERICA", "supplier_count": 2},
+        {"name": "ASIA", "supplier_count": 2},
     ]
 
 
 @pytest.mark.integration
-def test_tiny_tpch_metadata(tpch_setup: HologresConnector):
+def test_tpch_metadata(tpch_setup: HologresConnector):
     schema = tpch_setup.schema_name
     tables = tpch_setup.get_tables(schema_name=schema)
-    assert {name.rsplit(".", 1)[-1] for name in tables} >= {
-        "tpch_region",
-        "tpch_nation",
-        "tpch_supplier",
-        "tpch_customer",
-        "tpch_orders",
-    }
+    assert {name.rsplit(".", 1)[-1] for name in tables} >= set(TPCH_TABLES)
 
     ddl_items = tpch_setup.get_tables_with_ddl(schema_name=schema)
     tpch_ddls = [item for item in ddl_items if item["table_name"].startswith("tpch_")]
