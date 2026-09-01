@@ -23,10 +23,11 @@ Shared infrastructure this standard builds on:
 6. [pytest config and markers](#6-pytest-config-and-markers)
 7. [CI registration](#7-ci-registration)
 8. [Audit checklist](#8-audit-checklist)
+9. [Amendment rule](#9-amendment-rule)
 
 ## 1. Required layout
 
-```
+```text
 datus-<adapter>/
 ├── datus_<adapter>/tpch_data.py     # dialect DDL + build_tpch_inserts() wiring
 ├── tests/
@@ -49,12 +50,16 @@ Mock at the engine/connection boundary, never at the method under test.
 
 | File | Required when | Covers |
 |---|---|---|
-| `test_config.py` | always | defaults via one full `model_dump()` comparison; parametrized rejection tests (missing required field, wrong type, `extra_forbidden`) |
-| `test_connector_unit.py` | always | init, context resolution, `full_name`/`quote_identifier`, `close()` swallowing driver errors |
+| `test_config.py` | always¹ | defaults via one full `model_dump()` comparison; parametrized rejection tests (missing required field, wrong type, `extra_forbidden`) |
+| `test_connector_unit.py` | always | init, context resolution, `full_name`/`quote_identifier`, `close()` swallowing driver errors, server-error fallback branches |
 | `test_registration.py` | always | registry metadata, capability set, hook identity, entry point resolves |
 | `test_migration_mixin.py` | always | `describe_migration_capabilities()`, `validate_ddl()`, `suggest_table_layout()`, `map_source_type()` |
 | `test_handlers.py` | `handlers.py` exists | URI builder (no credential leakage), context resolver, identifier parser |
 | `test_skills.py` | `skills.py` exists | SKILL.md packaged, frontmatter stripped, `datus.skills` entry point unique and correct |
+
+¹ Independent adapters without a Pydantic config model (e.g. ClickZetta's keyword-argument
+constructor) cover the same surface with constructor argument-validation tests instead: defaults,
+required-argument errors, and invalid-type rejection.
 
 ### test_config.py — one model_dump, parametrized rejections
 
@@ -100,6 +105,13 @@ with patch("datus_mysql.MySQLConnector.__init__", return_value=None):
 
 Must cover: init/context resolution, `full_name` with and without catalog/database,
 `quote_identifier` escaping, `close()` swallowing driver exceptions, `to_dict`/`get_type`.
+
+Additionally, **every server-error fallback/degradation branch is mandatory to test** whenever the
+connector has one (e.g. primary `information_schema` query fails → fall back to `SHOW`): make the
+mocked engine raise on the primary query and assert the fallback result, including that it stays
+typed and correctly scoped. This class is not optional polish — StarRocks shipped four consecutive
+BugFixes in exactly these branches (`4be5d6d`, `17253d9`, `ea5aaab`, `af982be`) because nothing
+exercised them.
 
 ### test_registration.py — identity, not existence
 
@@ -151,8 +163,9 @@ entry point is unique and points at the right directory.
 ### Deeper unit coverage (optional but encouraged)
 
 `datus-doris/tests/unit/test_connector_contract.py` shows the next tier: branches integration
-tests can't reach — identifier rendering with no catalog set, DDL retarget fallback, graceful
-degradation (empty list) when the server errors, `_conn()` rollback paths.
+tests can't reach — identifier rendering with no catalog set, DDL retarget fallback, `_conn()`
+rollback paths. (Server-error fallback branches used to live in this optional tier; they are now
+mandatory, see `test_connector_unit.py` above.)
 
 ## 3. Integration tests (`tests/integration/`)
 
@@ -162,7 +175,7 @@ against a live engine (docker-compose or cloud). Split by topic — do NOT write
 
 - `test_connection.py` — config object path, dict path, context manager
 - `test_contract.py` — **mandatory**, see below
-- `test_sql_execution.py` — SELECT / EXPLAIN / INSERT / UPDATE / DELETE round-trips; bad SQL returns `success is False`
+- `test_sql_execution.py` — SELECT / EXPLAIN / INSERT / UPDATE / DELETE round-trips; bad SQL returns `success is False`; a non-ASCII round-trip (insert a CJK string, select it back, assert exact equality — charset bugs have shipped, e.g. GaussDB GBK/UTF8 `b7759be`)
 - `test_metadata_retrieval.py` — `get_tables` / `get_views` / `get_schema` / `get_sample_rows`, exact-compare against objects created by a conftest fixture
 - `test_tpch.py` — table list, parametrized row counts, JOIN, aggregation, `csv`/`arrow`/`pandas` result formats
 - `test_catalog_operations.py`, `test_materialized_views.py` — only if the engine supports them
@@ -421,3 +434,11 @@ To audit an existing adapter, run through in order and report gaps with file:lin
 7. `[tool.pytest.ini_options]` present; every used marker declared?
 8. CI: package mapped in `ci/run-unit-tests.sh`; listed in `ci/integration-targets.toml` (or in
    `packages_without_live_targets` with reason)?
+
+## 9. Amendment rule
+
+This standard was derived inductively from the repo's best test suites and its bug history, so it
+inherits their blind spots. Keep it converging: **every bug that escapes to production or review
+must answer, in its fix PR, which test category mandated here should have caught it** — if the
+answer is "none", amend this document in the same PR. Treat a gap in the standard as a bug in the
+standard, not just a bug in the code.

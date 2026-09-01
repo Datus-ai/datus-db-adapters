@@ -87,7 +87,7 @@ When working on multiple adapters that each need independent branches and PRs:
 
 ### Test Structure Per Adapter
 
-```
+```text
 datus-<adapter>/
 ├── datus_<adapter>/
 │   └── tpch_data.py       # Dialect DDL + shared TPC-H data wiring

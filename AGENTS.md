@@ -21,8 +21,8 @@ Run tests per adapter (running all adapters together causes conftest conflicts):
 
 ```bash
 cd datus-<adapter>
-python -m pytest tests/unit -m "not integration"        # fast, no database
-python -m pytest tests/integration -m integration       # needs live DB (docker compose up -d)
+uv run python -m pytest tests/unit -m "not integration"   # fast, no database
+uv run python -m pytest tests/integration -m integration  # needs live DB (docker compose up -d)
 ```
 
 ## Conventions

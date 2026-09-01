@@ -177,7 +177,7 @@ The complete testing standard lives in **[docs/adapter-testing-standard.md](docs
 
 Each adapter follows this structure (see the standard for the full file-by-file checklist):
 
-```
+```text
 datus-<adapter>/
 ├── datus_<adapter>/
 │   └── tpch_data.py             # Dialect DDL + shared TPC-H data wiring
@@ -249,8 +249,8 @@ run in the merge queue and on a weekly schedule against the targets registered i
 3. **Run Quality Checks**
    ```bash
    # Format code
-   black --line-length=120 .
-   isort --profile=black --line-length=120 .
+   ruff format .
+   ruff check --fix .
 
    # Run tests
    pytest
@@ -292,10 +292,10 @@ All pull requests must:
 Your pull request will automatically run the following checks:
 
 1. **Title Check**: Ensures PR title follows conventions
-2. **Format Check**: Verifies code formatting with Black
-3. **Lint Check**: Checks code quality with Flake8
-4. **Import Check**: Verifies import sorting with isort
-5. **Tests**: Runs all unit and integration test suites to ensure functionality
+2. **Format Check**: Verifies formatting, linting, and import sorting with Ruff
+3. **Unit Tests**: Adapter CI runs unit tests and package smoke checks
+
+Integration tests run in the merge queue and on a weekly schedule, not on the PR itself (see `ci/required-checks.md`).
 
 ## Creating a New Adapter
 
