@@ -194,8 +194,8 @@ def metadata_objects(setup_connector: SnowflakeConnector) -> Generator[MetadataO
         )
         yield objects
     finally:
-        setup_connector.execute_ddl(f"DROP VIEW IF EXISTS {view_ref}")
-        setup_connector.execute_ddl(f"DROP TABLE IF EXISTS {table_ref}")
+        _require_success(setup_connector.execute_ddl(f"DROP VIEW IF EXISTS {view_ref}"), "drop metadata view")
+        _require_success(setup_connector.execute_ddl(f"DROP TABLE IF EXISTS {table_ref}"), "drop metadata table")
 
 
 @pytest.fixture(scope="module")
@@ -222,7 +222,10 @@ def materialized_view(
     try:
         yield METADATA_MV
     finally:
-        setup_connector.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS {mv_ref}")
+        _require_success(
+            setup_connector.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS {mv_ref}"),
+            "drop metadata materialized view",
+        )
 
 
 # ==================== Connection Tests ====================

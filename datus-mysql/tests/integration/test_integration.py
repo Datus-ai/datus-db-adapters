@@ -84,7 +84,7 @@ def test_get_tables_with_ddl(connector: MySQLConnector, config: MySQLConfig):
     connector.switch_context(database_name=config.database)
     create_result = connector.execute_ddl(
         f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS `{config.database}`.`{table_name}` (
             id INT PRIMARY KEY,
             name VARCHAR(50)
         )
@@ -111,7 +111,7 @@ def test_get_tables_with_ddl(connector: MySQLConnector, config: MySQLConfig):
         assert "`name` varchar(50)" in definition
         assert "PRIMARY KEY (`id`)" in definition
     finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{config.database}`.`{table_name}`")
 
 
 # ==================== View Tests ====================
@@ -137,7 +137,7 @@ def test_get_views_with_ddl(connector: MySQLConnector, config: MySQLConfig):
     # Create base table
     table_result = connector.execute_ddl(
         f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS `{config.database}`.`{table_name}` (
             id INT PRIMARY KEY,
             name VARCHAR(50)
         )
@@ -146,7 +146,9 @@ def test_get_views_with_ddl(connector: MySQLConnector, config: MySQLConfig):
     assert table_result.success, f"failed to create {table_name}: {table_result.error}"
 
     # Create view
-    view_result = connector.execute_ddl(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
+    view_result = connector.execute_ddl(
+        f"CREATE VIEW `{config.database}`.`{view_name}` AS SELECT * FROM `{config.database}`.`{table_name}`"
+    )
     assert view_result.success, f"failed to create {view_name}: {view_result.error}"
 
     try:
@@ -169,8 +171,8 @@ def test_get_views_with_ddl(connector: MySQLConnector, config: MySQLConfig):
         assert f"`{view_name}` AS " in definition
         assert f"`{table_name}`" in definition
     finally:
-        connector.execute_ddl(f"DROP VIEW IF EXISTS {view_name}")
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f"DROP VIEW IF EXISTS `{config.database}`.`{view_name}`")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{config.database}`.`{table_name}`")
 
 
 # ==================== Schema Tests ====================

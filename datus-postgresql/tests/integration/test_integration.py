@@ -105,7 +105,7 @@ def test_get_tables_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLC
 
     create_result = connector.execute_ddl(
         f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS "{config.schema_name}"."{table_name}" (
             id SERIAL PRIMARY KEY,
             name VARCHAR(50)
         )
@@ -135,7 +135,7 @@ def test_get_tables_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLC
         assert '"name" character varying' in definition
         assert 'PRIMARY KEY ("id")' in definition
     finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f'DROP TABLE IF EXISTS "{config.schema_name}"."{table_name}"')
 
 
 # ==================== View Tests ====================
@@ -159,7 +159,7 @@ def test_get_views_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLCo
     # Create base table
     table_result = connector.execute_ddl(
         f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS "{config.schema_name}"."{table_name}" (
             id SERIAL PRIMARY KEY,
             name VARCHAR(50)
         )
@@ -169,7 +169,9 @@ def test_get_views_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLCo
 
     try:
         # Create view
-        view_result = connector.execute_ddl(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
+        view_result = connector.execute_ddl(
+            f'CREATE VIEW "{config.schema_name}"."{view_name}" AS SELECT * FROM "{config.schema_name}"."{table_name}"'
+        )
         assert view_result.success, f"failed to create {view_name}: {view_result.error}"
 
         views = connector.get_views_with_ddl(schema_name=config.schema_name)
@@ -188,8 +190,8 @@ def test_get_views_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLCo
         assert definition.startswith(f'CREATE VIEW "{config.database}"."{config.schema_name}"."{view_name}" AS')
         assert table_name in definition
     finally:
-        connector.execute_ddl(f"DROP VIEW IF EXISTS {view_name}")
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f'DROP VIEW IF EXISTS "{config.schema_name}"."{view_name}"')
+        connector.execute_ddl(f'DROP TABLE IF EXISTS "{config.schema_name}"."{table_name}"')
 
 
 # ==================== Column Schema Tests ====================

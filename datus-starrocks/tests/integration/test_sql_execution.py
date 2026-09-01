@@ -59,7 +59,7 @@ def test_execute_ddl_create_drop(connector: StarRocksConnector, config: StarRock
     connector.switch_context(database_name=config.database)
 
     create_sql = f"""
-    CREATE TABLE {table_name} (
+    CREATE TABLE `{table_name}` (
         `id` BIGINT NOT NULL,
         `name` VARCHAR(64)
     ) ENGINE=OLAP
@@ -75,11 +75,11 @@ def test_execute_ddl_create_drop(connector: StarRocksConnector, config: StarRock
         assert create_result.success, f"Failed to create table: {create_result.error}"
         assert table_name in connector.get_tables(**scope)
 
-        drop_result = connector.execute_ddl(f"DROP TABLE {table_name}")
+        drop_result = connector.execute_ddl(f"DROP TABLE `{table_name}`")
         assert drop_result.success, f"Failed to drop table: {drop_result.error}"
         assert table_name not in connector.get_tables(**scope)
     finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
 
 
 @pytest.mark.integration
@@ -99,7 +99,7 @@ def test_execute_ddl_create_drop_materialized_view(connector: StarRocksConnector
     connector.switch_context(database_name=config.database)
 
     create_table_sql = f"""
-    CREATE TABLE {table_name} (
+    CREATE TABLE `{table_name}` (
         `id` BIGINT NOT NULL,
         `value` INT
     ) ENGINE=OLAP
@@ -109,12 +109,12 @@ def test_execute_ddl_create_drop_materialized_view(connector: StarRocksConnector
     """
 
     create_mv_sql = f"""
-    CREATE MATERIALIZED VIEW {mv_name}
+    CREATE MATERIALIZED VIEW `{mv_name}`
     DISTRIBUTED BY HASH(`id`) BUCKETS 1
     REFRESH ASYNC
     PROPERTIES ("replication_num" = "1")
     AS SELECT `id`, SUM(`value`) AS total_value
-    FROM {table_name}
+    FROM `{table_name}`
     GROUP BY `id`;
     """
 
@@ -122,19 +122,19 @@ def test_execute_ddl_create_drop_materialized_view(connector: StarRocksConnector
         create_result = connector.execute_ddl(create_table_sql)
         assert create_result.success, f"Failed to create base table: {create_result.error}"
 
-        insert_result = connector.execute_insert(f"INSERT INTO {table_name} VALUES (1, 10), (2, 20)")
+        insert_result = connector.execute_insert(f"INSERT INTO `{table_name}` VALUES (1, 10), (2, 20)")
         assert insert_result.success, f"Failed to insert base rows: {insert_result.error}"
 
         mv_result = connector.execute_ddl(create_mv_sql)
         assert mv_result.success, f"Failed to create materialized view: {mv_result.error}"
         _wait_until_materialized_view_is_listed(connector, config, mv_name)
 
-        drop_result = connector.execute_ddl(f"DROP MATERIALIZED VIEW {mv_name}")
+        drop_result = connector.execute_ddl(f"DROP MATERIALIZED VIEW `{mv_name}`")
         assert drop_result.success, f"Failed to drop materialized view: {drop_result.error}"
         assert mv_name not in connector.get_materialized_views(**scope)
     finally:
-        connector.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name}")
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f"DROP MATERIALIZED VIEW IF EXISTS `{mv_name}`")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
 
 
 def _wait_until_materialized_view_is_listed(
@@ -172,7 +172,7 @@ def test_execute_insert(connector: StarRocksConnector, config: StarRocksConfig):
     connector.switch_context(database_name=config.database)
 
     create_sql = f"""
-    CREATE TABLE {table_name} (
+    CREATE TABLE `{table_name}` (
         `id` BIGINT NOT NULL,
         `name` VARCHAR(64)
     ) ENGINE=OLAP
@@ -187,11 +187,13 @@ def test_execute_insert(connector: StarRocksConnector, config: StarRocksConfig):
         create_result = connector.execute_ddl(create_sql)
         assert create_result.success, f"Failed to create test table: {create_result.error}"
 
-        insert_result = connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        insert_result = connector.execute_insert(
+            f"INSERT INTO `{table_name}` (id, name) VALUES (1, 'Alice'), (2, 'Bob')"
+        )
         assert insert_result.success, f"Failed to insert rows: {insert_result.error}"
 
         query_result = connector.execute(
-            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
+            {"sql_query": f"SELECT id, name FROM `{table_name}` ORDER BY id"},
             result_format="list",
         )
         assert query_result.success
@@ -200,7 +202,7 @@ def test_execute_insert(connector: StarRocksConnector, config: StarRocksConfig):
             {"id": 2, "name": "Bob"},
         ]
     finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
 
 
 @pytest.mark.integration
@@ -212,7 +214,7 @@ def test_execute_update(connector: StarRocksConnector, config: StarRocksConfig):
     connector.switch_context(database_name=config.database)
 
     create_sql = f"""
-    CREATE TABLE {table_name} (
+    CREATE TABLE `{table_name}` (
         `id` BIGINT NOT NULL,
         `name` VARCHAR(64)
     ) ENGINE=OLAP
@@ -227,17 +229,19 @@ def test_execute_update(connector: StarRocksConnector, config: StarRocksConfig):
         create_result = connector.execute_ddl(create_sql)
         assert create_result.success, f"Failed to create test table: {create_result.error}"
 
-        insert_result = connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        insert_result = connector.execute_insert(
+            f"INSERT INTO `{table_name}` (id, name) VALUES (1, 'Alice'), (2, 'Bob')"
+        )
         assert insert_result.success, f"Failed to insert rows: {insert_result.error}"
 
         update_result = connector.execute(
-            {"sql_query": f"UPDATE {table_name} SET name = 'Alice Updated' WHERE id = 1"},
+            {"sql_query": f"UPDATE `{table_name}` SET name = 'Alice Updated' WHERE id = 1"},
             result_format="list",
         )
         assert update_result.success, f"Failed to update row: {update_result.error}"
 
         query_result = connector.execute(
-            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
+            {"sql_query": f"SELECT id, name FROM `{table_name}` ORDER BY id"},
             result_format="list",
         )
         assert query_result.success
@@ -246,7 +250,7 @@ def test_execute_update(connector: StarRocksConnector, config: StarRocksConfig):
             {"id": 2, "name": "Bob"},
         ]
     finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
 
 
 @pytest.mark.integration
@@ -258,7 +262,7 @@ def test_execute_delete(connector: StarRocksConnector, config: StarRocksConfig):
     connector.switch_context(database_name=config.database)
 
     create_sql = f"""
-    CREATE TABLE {table_name} (
+    CREATE TABLE `{table_name}` (
         `id` BIGINT NOT NULL,
         `name` VARCHAR(64)
     ) ENGINE=OLAP
@@ -273,23 +277,25 @@ def test_execute_delete(connector: StarRocksConnector, config: StarRocksConfig):
         create_result = connector.execute_ddl(create_sql)
         assert create_result.success, f"Failed to create test table: {create_result.error}"
 
-        insert_result = connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+        insert_result = connector.execute_insert(
+            f"INSERT INTO `{table_name}` (id, name) VALUES (1, 'Alice'), (2, 'Bob')"
+        )
         assert insert_result.success, f"Failed to insert rows: {insert_result.error}"
 
         delete_result = connector.execute(
-            {"sql_query": f"DELETE FROM {table_name} WHERE id = 2"},
+            {"sql_query": f"DELETE FROM `{table_name}` WHERE id = 2"},
             result_format="list",
         )
         assert delete_result.success, f"Failed to delete row: {delete_result.error}"
 
         query_result = connector.execute(
-            {"sql_query": f"SELECT id, name FROM {table_name} ORDER BY id"},
+            {"sql_query": f"SELECT id, name FROM `{table_name}` ORDER BY id"},
             result_format="list",
         )
         assert query_result.success
         assert query_result.sql_return == [{"id": 1, "name": "Alice"}]
     finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+        connector.execute_ddl(f"DROP TABLE IF EXISTS `{table_name}`")
 
 
 # ==================== Error Handling Tests ====================
