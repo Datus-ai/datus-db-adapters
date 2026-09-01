@@ -175,7 +175,7 @@ against a live engine (docker-compose or cloud). Split by topic — do NOT write
 
 - `test_connection.py` — config object path, dict path, context manager
 - `test_contract.py` — **mandatory**, see below
-- `test_sql_execution.py` — SELECT / EXPLAIN / INSERT / UPDATE / DELETE round-trips; bad SQL returns `success is False`; a non-ASCII round-trip (insert a CJK string, select it back, assert exact equality — charset bugs have shipped, e.g. GaussDB GBK/UTF8 `b7759be`)
+- `test_sql_execution.py` — SELECT / EXPLAIN / INSERT / UPDATE / DELETE round-trips; bad SQL returns `success is False`; a non-ASCII round-trip — DML-capable adapters insert a CJK string and select it back asserting exact equality; read-only engines/catalogs (the `SelectContractCase` kind) select a CJK literal instead (e.g. `SELECT '数据' AS cjk_value`) and assert it survives the result path unchanged. Charset bugs have shipped, e.g. GaussDB GBK/UTF8 `b7759be`
 - `test_metadata_retrieval.py` — `get_tables` / `get_views` / `get_schema` / `get_sample_rows`, exact-compare against objects created by a conftest fixture
 - `test_tpch.py` — table list, parametrized row counts, JOIN, aggregation, `csv`/`arrow`/`pandas` result formats
 - `test_catalog_operations.py`, `test_materialized_views.py` — only if the engine supports them
