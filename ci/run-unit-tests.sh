@@ -18,7 +18,7 @@ PACKAGE_SPECS=(
   "datus-hive:datus-hive/tests/unit"
   "datus-spark:datus-spark/tests/unit"
   "datus-redshift:datus-redshift/tests/unit"
-  "datus-snowflake:datus-snowflake/tests"
+  "datus-snowflake:datus-snowflake/tests/unit"
   "datus-clickzetta:datus-clickzetta/tests/unit"
   "datus-maxcompute:datus-maxcompute/tests/unit"
   "datus-hologres:datus-hologres/tests/unit"
