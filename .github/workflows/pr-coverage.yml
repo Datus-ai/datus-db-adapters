@@ -1,0 +1,113 @@
+name: "PR Coverage"
+
+# Mirrors the arrangement datus-agent uses.
+#
+# pull_request_target rather than pull_request: posting a comment needs write
+# access to the PR, which pull_request does not grant for forks — and this
+# repository is developed from forks. The trade-off is that the workflow runs
+# with the base repository's permissions while checking out the PR's code, so
+# nothing here may execute PR-authored code with those permissions beyond the
+# test suite itself, which is this workflow's whole purpose.
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  merge_group:
+
+concurrency:
+  group: pr-coverage-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  coverage:
+    # Documentation-only PRs change no measurable lines, so the report would
+    # always read 100% and say nothing.
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      !startsWith(github.event.pull_request.title, '[Doc]') &&
+      !startsWith(github.event.pull_request.title, '[doc]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          # actions/checkout refuses fork-PR checkouts under
+          # pull_request_target by default. Running the PR's tests is the point
+          # of this workflow, so opt in explicitly.
+          allow-unsafe-pr-checkout: true
+
+      - name: Fetch base branch
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          BASE_REF="${BASE_REF#refs/heads/}"
+          git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Run unit tests with coverage
+        id: metrics
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          python3 ci/run_pr_coverage.py "${BASE_REF#refs/heads/}"
+
+      - name: Post coverage comment
+        if: always() && steps.metrics.outcome != 'cancelled'
+        uses: actions/github-script@v7
+        env:
+          METRIC_OVERALL: ${{ steps.metrics.outputs.overall }}
+          METRIC_DIFF: ${{ steps.metrics.outputs.diff }}
+          METRIC_TEST_OUTCOME: ${{ steps.metrics.outputs.test_outcome }}
+          METRIC_TEST_TOTAL: ${{ steps.metrics.outputs.test_total }}
+          METRIC_TEST_PASSED: ${{ steps.metrics.outputs.test_passed }}
+          METRIC_TEST_FAILED: ${{ steps.metrics.outputs.test_failed }}
+          METRIC_TEST_SKIPPED: ${{ steps.metrics.outputs.test_skipped }}
+        with:
+          script: |
+            const script = require('./ci/post-coverage-comment.js');
+            await script({ github, context, core });
+
+      # Reports without failing, for now. The 80% line is the target this repo
+      # is aiming at, not yet a gate: turn the exit below into a failure once a
+      # few PRs have shown what the numbers actually look like.
+      - name: Report coverage against the target
+        if: always() && steps.metrics.outcome != 'cancelled'
+        run: |
+          python3 - <<'PY'
+          diff = float("${{ steps.metrics.outputs.diff }}" or 0)
+          outcome = "${{ steps.metrics.outputs.test_outcome }}"
+          if diff < 80:
+              print(f"::warning::Diff coverage {diff}% is below the 80% target")
+          else:
+              print(f"Diff coverage {diff}% meets the 80% target")
+          if outcome != "success":
+              print("::warning::Unit tests did not pass; see the job log")
+          PY
+
+  # A merge group has no pull request to measure or comment on. This publishes
+  # the same check name so the context exists in both places, which a branch
+  # ruleset would need if this is ever made required.
+  coverage-merge-group-context:
+    name: coverage
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish merge queue coverage context
+        run: echo "Coverage is reported on pull_request_target; there is no pull request to measure here."

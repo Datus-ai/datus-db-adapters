@@ -388,8 +388,16 @@ Marker semantics:
 - Any marker used but undeclared produces `PytestUnknownMarkWarning` and breaks under
   `--strict-markers`.
 
-Aim for ≥80% line coverage on the adapter package. CI does not currently measure coverage, so
-check locally when touching an adapter:
+**Aim for 80% diff coverage** — the share of the lines a PR changed that its tests execute.
+`.github/workflows/pr-coverage.yml` posts that number, alongside overall coverage, as a comment on
+every PR. It reports without blocking today; the intent is to enforce it once a few PRs have shown
+what the numbers look like in practice.
+
+The target is on the diff rather than the total on purpose: 13 of 21 packages sit below 80%
+overall, so a total-coverage gate would block every PR regardless of what it touched, while a diff
+target asks only that new code arrives tested.
+
+Check locally when touching an adapter:
 
 ```bash
 cd datus-<name> && python -m pytest tests/unit -m "not integration" --cov=datus_<name> --cov-report=term-missing

@@ -138,7 +138,9 @@ if [ "${#selected_packages[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
   exit 0
 fi
 
-for package in "${selected_packages[@]}"; do
+# ${arr[@]+"${arr[@]}"} expands to nothing for an empty array instead of
+# tripping `set -u`, which bash 3.2 — still the system bash on macOS — does.
+for package in ${selected_packages[@]+"${selected_packages[@]}"}; do
   if ! is_known_package "$package"; then
     echo "Unknown package '$package'. Use --list to see valid package names." >&2
     exit 2
@@ -152,7 +154,7 @@ should_run_package() {
   fi
 
   local requested
-  for requested in "${selected_packages[@]}"; do
+  for requested in ${selected_packages[@]+"${selected_packages[@]}"}; do
     if [ "$requested" = "$package" ]; then
       return 0
     fi
@@ -182,5 +184,10 @@ for spec in "${PACKAGE_SPECS[@]}"; do
     continue
   fi
 
-  uv run --all-packages --with pytest --with pandas --with pyarrow pytest "$test_path" -m "not integration" --tb=short --verbose
+  # --strict-markers turns an undeclared marker into an error instead of a
+  # warning, so a typo cannot silently deselect a test. Coverage is deliberately
+  # not measured here: ci/run_pr_coverage.py does that once, for the whole
+  # workspace, and reports it on the pull request.
+  uv run --all-packages --with pytest --with pandas --with pyarrow \
+    pytest "$test_path" -m "not integration" --strict-markers --tb=short --verbose
 done
