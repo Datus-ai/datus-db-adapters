@@ -14,6 +14,7 @@ Subcommands:
   up     create a cluster, wait for it to accept connections, emit its address
   down   delete a cluster (idempotent: an already-gone cluster is a success)
   zones  list availability zones — read-only, so also a credential smoke test
+  flavors list node types — read-only; confirm exact names in the console
   reap   delete abandoned CI clusters past their TTL tag
 
 Every cluster carries an owner tag and an expiry tag so ``reap`` can clean up
@@ -262,6 +263,9 @@ def create_cluster(client, spec: ClusterSpec, *, now: datetime | None = None) ->
         flavor=spec.flavor,
         num_node=spec.num_node,
         num_cn=spec.num_cn,
+        # V2 calls the admin account "db_name" (v1 called it user_name). The
+        # database itself is not nameable here — DWS always creates "gaussdb" —
+        # which is what spec.db_name carries for the connection string.
         datastore_version=spec.datastore_version,
         db_name=spec.db_user,
         db_password=spec.db_password,
@@ -402,7 +406,10 @@ def cmd_up(args: argparse.Namespace) -> int:
         flush=True,
     )
     cluster_id = create_cluster(client, spec)
-    print(f"cluster id: {cluster_id}", flush=True)
+    # Publish the id before the long wait: if the runner is cancelled while
+    # polling, the always() teardown still has something to delete. Without this
+    # the cluster would bill until the reaper's TTL caught it.
+    emit_outputs({"cluster_id": cluster_id})
     try:
         detail = wait_available(client, cluster_id)
     except BaseException:
@@ -417,7 +424,6 @@ def cmd_up(args: argparse.Namespace) -> int:
 
     emit_outputs(
         {
-            "cluster_id": cluster_id,
             "host": connection_host(detail, prefer_public=spec.public_bind_type != "not_use"),
             "port": str(spec.db_port),
             "database": spec.db_name,
@@ -434,6 +440,20 @@ def cmd_down(args: argparse.Namespace) -> int:
         return 0
 
     client = build_client()
+    if not args.force:
+        # Refuse to delete anything this tool did not create: a mistyped or
+        # stale id must not take out someone's warehouse.
+        try:
+            detail = describe(client, cluster_id)
+        except Exception as exc:
+            print(f"::notice::Cannot inspect {cluster_id} ({exc}); assuming it is already gone", flush=True)
+            return 0
+        if not is_ci_cluster(detail):
+            raise ClusterError(
+                f"Refusing to delete {cluster_id}: it lacks the {OWNER_TAG_KEY} tag "
+                f"or the {CLUSTER_NAME_PREFIX} name prefix. Pass --force to override."
+            )
+
     if delete_cluster(client, cluster_id) and args.wait:
         wait_deleted(client, cluster_id)
     return 0
@@ -459,6 +479,31 @@ def cmd_zones(args: argparse.Namespace) -> int:
             flush=True,
         )
     print(f"{len(zones)} zone(s); use a 'code' value for DWS_CI_AVAILABILITY_ZONE", flush=True)
+    return 0
+
+
+def cmd_flavors(args: argparse.Namespace) -> int:
+    """List node types this account can build, for DWS_CI_FLAVOR.
+
+    Read-only. Note that the console is still authoritative for the exact
+    spelling: this API answers `dwsk2.xlarge` where create wants
+    `dwsk2.h.xlarge.4.kc1`, so treat the output as a shortlist to confirm
+    against the console rather than as values to paste.
+    """
+
+    from huaweicloudsdkdws.v2 import ListNodeTypesRequest
+
+    client = build_client()
+    node_types = client.list_node_types(ListNodeTypesRequest()).node_types or []
+    for node_type in node_types:
+        detail = {d.type: d.value for d in (getattr(node_type, "detail", None) or [])}
+        print(
+            f"{getattr(node_type, 'spec_name', '?'):28}"
+            f"vCPU={detail.get('vCPU', '?'):>4}  mem={detail.get('mem', '?'):>5}GB  "
+            f"datastore={getattr(node_type, 'datastore_type', '?')}",
+            flush=True,
+        )
+    print(f"{len(node_types)} flavor(s); confirm the exact name in the console", flush=True)
     return 0
 
 
@@ -503,10 +548,14 @@ def build_parser() -> argparse.ArgumentParser:
     down = sub.add_parser("down", help="delete a cluster (idempotent)")
     down.add_argument("--cluster-id", help="cluster id (default: $DWS_CI_CLUSTER_ID)")
     down.add_argument("--wait", action="store_true", help="poll until the cluster disappears")
+    down.add_argument("--force", action="store_true", help="skip the owner-tag check")
     down.set_defaults(func=cmd_down)
 
     zones = sub.add_parser("zones", help="list availability zones (read-only credential check)")
     zones.set_defaults(func=cmd_zones)
+
+    flavors = sub.add_parser("flavors", help="list node types (read-only)")
+    flavors.set_defaults(func=cmd_flavors)
 
     reap = sub.add_parser("reap", help="delete abandoned CI clusters past their TTL")
     reap.add_argument("--dry-run", action="store_true", help="report what would be deleted")

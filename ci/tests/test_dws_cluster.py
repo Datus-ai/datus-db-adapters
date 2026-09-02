@@ -501,3 +501,54 @@ def test_cluster_name_distinguishes_matrix_legs(env):
 def test_cluster_name_without_a_suffix_is_unchanged(env):
     env.setenv("GITHUB_RUN_ID", "42")
     assert cluster.cluster_name() == "datus-ci-42"
+
+
+@requires_sdk
+def test_up_publishes_the_cluster_id_before_waiting(env, monkeypatch, tmp_path):
+    """A cancelled runner must still leave the always() teardown an id to use."""
+    target = tmp_path / "outputs.txt"
+    env.setenv("GITHUB_OUTPUT", str(target))
+    client = FakeClient(details=[detail("CREATING")])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "create_cluster", lambda c, spec: "cluster-1")
+    monkeypatch.setattr(cluster, "delete_cluster", lambda c, cid: True)
+    monkeypatch.setattr(cluster, "wait_available", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        cluster.main(["up"])
+
+    assert "cluster_id=cluster-1" in target.read_text()
+
+
+@requires_sdk
+def test_down_refuses_a_cluster_it_did_not_create(env, monkeypatch):
+    """A mistyped or stale id must not take out somebody's warehouse."""
+    foreign = SimpleNamespace(id="prod-1", name="production-warehouse", tags=[])
+    client = FakeClient(details=[foreign])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+
+    assert cluster.main(["down", "--cluster-id", "prod-1"]) == 1
+    assert client.deleted == []
+
+
+@requires_sdk
+def test_down_deletes_its_own_cluster(env, monkeypatch):
+    owned = SimpleNamespace(
+        id="cluster-1",
+        name="datus-ci-42",
+        tags=[tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE)],
+    )
+    client = FakeClient(details=[owned])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+
+    assert cluster.main(["down", "--cluster-id", "cluster-1"]) == 0
+    assert client.deleted == ["cluster-1"]
+
+
+@requires_sdk
+def test_down_force_skips_the_ownership_check(env, monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+
+    assert cluster.main(["down", "--cluster-id", "anything", "--force"]) == 0
+    assert client.deleted == ["anything"]

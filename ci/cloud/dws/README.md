@@ -30,11 +30,11 @@ Ephemeral runs cost roughly one cluster-hour per run (creation alone takes
 | `HUAWEICLOUD_SDK_AK` | `ABCD...` | IAM access key ID |
 | `HUAWEICLOUD_SDK_SK` | — | IAM secret access key |
 | `HUAWEICLOUD_PROJECT_ID` | `05f2...` | Project ID **of the target region** (My Credentials → API Credentials) |
-| `HUAWEICLOUD_REGION` | `cn-north-4` | Region ID |
+| `HUAWEICLOUD_REGION` | `cn-east-3` | Region ID |
 | `DWS_CI_VPC_ID` | `vpc-...` | Pre-created VPC |
 | `DWS_CI_SUBNET_ID` | `subnet-...` | See the note below — a VPC subnet exposes *two* IDs |
 | `DWS_CI_SECURITY_GROUP_ID` | `sg-...` | Must allow the DB port from wherever the job runs |
-| `DWS_CI_AVAILABILITY_ZONE` | `cn-north-4a` | AZ inside the region |
+| `DWS_CI_AVAILABILITY_ZONE` | `cn-east-3a` | AZ inside the region |
 | `DWS_CI_DB_PASSWORD` | — | Cluster admin password; must satisfy the DWS complexity rules |
 
 Optional, with defaults: `DWS_CI_FLAVOR` (`dwsk2.h.xlarge.4.kc1`), `DWS_CI_NUM_NODE`
@@ -67,14 +67,19 @@ the internet. That is cheaper and safer, but it is not how the job runs today.)
 ## Security group rule
 
 The cluster is reachable over the internet, so the security group must admit the
-runner. GitHub's egress addresses are numerous and change, so pinning them is
-impractical; the practical rule is:
+runner. Prefer, in this order:
 
-| Direction | Protocol / port | Source |
-|---|---|---|
-| Inbound | TCP `8000` (`DWS_CI_DB_PORT`) | `0.0.0.0/0` |
+1. **A self-hosted runner inside the VPC** with `DWS_CI_PUBLIC_IP=not_use`. No
+   EIP, no inbound rule, nothing exposed. This is the only option that avoids
+   the question rather than managing it.
+2. **A hosted runner with a pinned source range**, if your runners have stable
+   egress (a NAT gateway, a proxy, an enterprise fixed IP). Scope the rule to
+   that range.
+3. **A hosted runner with `0.0.0.0/0`** — what GitHub-hosted runners force,
+   since their egress addresses are numerous and change. Treat this as a
+   deliberate exception, not a default to reach for.
 
-What keeps that acceptable, and what to keep true:
+If you land on (3), what keeps it acceptable, and what to keep true:
 
 - The cluster exists only for the minutes a run takes, and the reaper deletes
   anything that outlives its TTL — the port is not open between runs.
@@ -95,14 +100,14 @@ of a wider IAM grant and more moving parts.
 > `cn-north-7c`:
 >
 > ```bash
-> uv run --no-project --isolated --with huaweicloudsdkdws \
+> uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 \
 >   python ci/cloud/dws/cluster.py zones
 > ```
 >
 > Use one of the printed `code` values. This call is read-only, so it is also the
 > cheapest way to confirm a fresh AK/SK, project ID and region work at all —
 > run it first, before anything that provisions.
-
+>
 > **Which subnet ID?** A VPC subnet's detail page shows both a *subnet ID* and a
 > *network ID*, and different Huawei Cloud services want different ones. Use the
 > **subnet ID**: the DWS API reference calls this parameter "集群子网ID"
@@ -134,9 +139,10 @@ delete clusters.
 
 ## Safety properties
 
-- **Ownership guard.** `reap` and every delete path only touch clusters that
-  carry the `datus-ci-owner` tag *and* a `datus-ci-` name prefix. A cluster
-  missing either is never considered.
+- **Ownership guard.** `reap` and `down` both refuse a cluster that lacks the
+  `datus-ci-owner` tag *or* the `datus-ci-` name prefix, so a mistyped or stale
+  id cannot take out someone's warehouse. `down --force` overrides it for the
+  rare case where the tags are gone.
 - **TTL backstop.** Each cluster is tagged with an expiry instant.
   `.github/workflows/dws-reaper.yml` runs hourly and deletes CI clusters past
   theirs, covering the case where the job's `always()` teardown never ran (a
@@ -150,20 +156,21 @@ delete clusters.
 ## Local use
 
 ```bash
-export HUAWEICLOUD_SDK_AK=... HUAWEICLOUD_SDK_SK=... HUAWEICLOUD_PROJECT_ID=... HUAWEICLOUD_REGION=cn-north-4
+export HUAWEICLOUD_SDK_AK=... HUAWEICLOUD_SDK_SK=... HUAWEICLOUD_PROJECT_ID=... HUAWEICLOUD_REGION=cn-east-3
 
 # Read-only: proves the credentials work and prints the zone codes to choose from.
-uv run --no-project --isolated --with huaweicloudsdkdws python ci/cloud/dws/cluster.py zones
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py zones
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py flavors
 
-export DWS_CI_VPC_ID=... DWS_CI_SUBNET_ID=... DWS_CI_SECURITY_GROUP_ID=... DWS_CI_AVAILABILITY_ZONE=cn-north-4a
+export DWS_CI_VPC_ID=... DWS_CI_SUBNET_ID=... DWS_CI_SECURITY_GROUP_ID=... DWS_CI_AVAILABILITY_ZONE=cn-east-3a
 export DWS_CI_DB_PASSWORD=...
 
-uv run --no-project --isolated --with huaweicloudsdkdws python ci/cloud/dws/cluster.py up
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py up
 # ... run tests against the printed host/port ...
-uv run --no-project --isolated --with huaweicloudsdkdws python ci/cloud/dws/cluster.py down --cluster-id <id> --wait
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py down --cluster-id <id> --wait
 
 # See what the reaper would remove, without removing it:
-uv run --no-project --isolated --with huaweicloudsdkdws python ci/cloud/dws/cluster.py reap --dry-run
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py reap --dry-run
 ```
 
 `ci/tests/test_dws_cluster.py` covers the decision logic (naming, TTL, the
