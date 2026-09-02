@@ -46,6 +46,12 @@ def env(monkeypatch):
         "DWS_CI_DB_USER",
         "DWS_CI_DB_PORT",
         "DWS_CI_TTL_MINUTES",
+        "DWS_CI_NAME_SUFFIX",
+        "DWS_CI_NUM_CN",
+        "DWS_CI_DATASTORE_VERSION",
+        "DWS_CI_PUBLIC_IP",
+        "DWS_CI_EIP_BANDWIDTH",
+        "DWS_CI_CLUSTER_ID",
         "GITHUB_RUN_ID",
         "GITHUB_OUTPUT",
     ]:
@@ -554,3 +560,24 @@ def test_down_force_skips_the_ownership_check(env, monkeypatch):
 
     assert cluster.main(["down", "--cluster-id", "anything", "--force"]) == 0
     assert client.deleted == ["anything"]
+
+
+@requires_sdk
+def test_down_propagates_a_non_404_inspection_failure(env, monkeypatch):
+    """A permission or network error is not evidence the cluster is gone.
+
+    Treating it as such would skip the delete and exit 0, leaving a billing
+    cluster behind with nothing to signal it.
+    """
+    from huaweicloudsdkcore.exceptions.exceptions import SdkError, ServiceResponseException
+
+    class Forbidden(FakeClient):
+        def list_cluster_details(self, request):
+            raise ServiceResponseException(403, SdkError(error_msg="permission denied"))
+
+    client = Forbidden()
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+
+    with pytest.raises(ServiceResponseException):
+        cluster.main(["down", "--cluster-id", "cluster-1"])
+    assert client.deleted == []

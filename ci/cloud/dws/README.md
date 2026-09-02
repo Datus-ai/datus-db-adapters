@@ -70,8 +70,10 @@ The cluster is reachable over the internet, so the security group must admit the
 runner. Prefer, in this order:
 
 1. **A self-hosted runner inside the VPC** with `DWS_CI_PUBLIC_IP=not_use`. No
-   EIP, no inbound rule, nothing exposed. This is the only option that avoids
-   the question rather than managing it.
+   EIP and no internet-facing rule — but still a rule: the security group must
+   admit the runner's private address (or its own security group) on the
+   database port, or the tests time out exactly as they would from outside.
+   This narrows the exposure to the VPC rather than removing the question.
 2. **A hosted runner with a pinned source range**, if your runners have stable
    egress (a NAT gateway, a proxy, an enterprise fixed IP). Scope the rule to
    that range.
@@ -86,9 +88,13 @@ If you land on (3), what keeps it acceptable, and what to keep true:
 - It holds nothing but freshly loaded test fixtures.
 - `DWS_CI_DB_PASSWORD` is the only thing standing in front of it, so treat it
   like any other production credential: long, random, and not reused.
-- Set `DWS_SSLMODE=require` (or `verify-ca` with `DWS_SSLROOTCERT_PEM`) so the
-  session is encrypted in transit — the adapter's own
-  `test_connection_security.py` covers those modes.
+- Use `DWS_SSLMODE=verify-ca` with `DWS_SSLROOTCERT_PEM` set to the **v2** CA
+  from the console's `dws_ssl_cert` bundle. `require` alone encrypts the session
+  but authenticates nothing, which on a world-reachable endpoint leaves it open
+  to an impostor; `verify-ca` is what actually pins the server. Do not reach for
+  `verify-full`: the default DWS server certificate is `CN=server` with no SAN,
+  so hostname verification can never succeed — the adapter's
+  `test_connection_security.py` asserts exactly that.
 
 A tighter variant, if this is worth revisiting later: give the CI user VPC write
 permission and have the job add a rule for its own egress address before the

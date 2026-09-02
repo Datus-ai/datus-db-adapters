@@ -443,10 +443,17 @@ def cmd_down(args: argparse.Namespace) -> int:
     if not args.force:
         # Refuse to delete anything this tool did not create: a mistyped or
         # stale id must not take out someone's warehouse.
+        from huaweicloudsdkcore.exceptions.exceptions import ServiceResponseException
+
         try:
             detail = describe(client, cluster_id)
-        except Exception as exc:
-            print(f"::notice::Cannot inspect {cluster_id} ({exc}); assuming it is already gone", flush=True)
+        except ServiceResponseException as exc:
+            if getattr(exc, "status_code", None) != 404:
+                # A permission, network or API error is not evidence that the
+                # cluster is gone. Swallowing it here would skip the delete and
+                # leave a billing cluster behind with a success exit code.
+                raise
+            print(f"::notice::Cluster {cluster_id} no longer exists", flush=True)
             return 0
         if not is_ci_cluster(detail):
             raise ClusterError(
