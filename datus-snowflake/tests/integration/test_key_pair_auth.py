@@ -14,20 +14,9 @@ import pytest
 
 from datus_snowflake import SnowflakeConfig, SnowflakeConnector
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not all(
-            [
-                os.getenv("SNOWFLAKE_ACCOUNT"),
-                os.getenv("SNOWFLAKE_USER"),
-                os.getenv("SNOWFLAKE_PRIVATE_KEY_FILE"),
-                os.getenv("SNOWFLAKE_WAREHOUSE"),
-            ]
-        ),
-        reason="Snowflake key pair credentials (SNOWFLAKE_PRIVATE_KEY_FILE) not provided",
-    ),
-]
+from .conftest import requires_key_pair_credentials
+
+pytestmark = [pytest.mark.integration, requires_key_pair_credentials]
 
 
 def test_connection_with_key_pair():
