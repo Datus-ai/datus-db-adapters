@@ -14,8 +14,11 @@ from typing import Generator
 import pytest
 
 from datus_dws import DWSConfig, DWSConnector, register
+from datus_dws.tpch_data import ROW_COUNTS, TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
 register()
+
+__all__ = ["ROW_COUNTS", "TPCH_DATA", "TPCH_DDL", "TPCH_TABLES"]
 
 # Covers every storage and distribution form the adapter claims to represent.
 TABLE_DDL = {
@@ -129,6 +132,23 @@ def connector(base_config: DWSConfig) -> Generator[DWSConnector, None, None]:
         # Runs even when a test raises, so a failed run leaves nothing behind.
         _assert_success(admin.execute_ddl(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'), "drop test schema")
         admin.close()
+
+
+@pytest.fixture(scope="session")
+def tpch_setup(connector: DWSConnector) -> DWSConnector:
+    """Create and load the shared TPC-H dataset in the run-scoped schema."""
+    schema = connector.schema_name
+    for table_name, ddl in zip(TPCH_TABLES, TPCH_DDL):
+        _assert_success(
+            connector.execute_ddl(f'DROP TABLE IF EXISTS "{schema}"."{table_name}" CASCADE'),
+            f"drop stale {table_name}",
+        )
+        _assert_success(connector.execute_ddl(ddl), f"create {table_name}")
+
+    for table_name, insert_sql in zip(TPCH_TABLES, TPCH_DATA):
+        _assert_success(connector.execute_insert(insert_sql), f"load {table_name}")
+
+    return connector
 
 
 @pytest.fixture(scope="session")
