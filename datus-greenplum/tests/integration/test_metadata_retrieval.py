@@ -8,16 +8,17 @@ import pytest
 
 from datus_greenplum import GreenplumConfig, GreenplumConnector
 
+METADATA_TABLE = "datus_metadata_table"
+METADATA_VIEW = "datus_metadata_view"
+
 # ==================== Database Tests ====================
 
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_get_databases(connector: GreenplumConnector):
-    """Test getting list of databases."""
-    databases = connector.get_databases()
-    assert isinstance(databases, list)
-    assert len(databases) > 0
+def test_get_databases(connector: GreenplumConnector, config: GreenplumConfig):
+    """The database the tests connect to is listed."""
+    assert config.database in connector.get_databases()
 
 
 @pytest.mark.integration
@@ -34,11 +35,10 @@ def test_get_databases_exclude_system(connector: GreenplumConnector):
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_get_schemas(connector: GreenplumConnector):
-    """Test getting list of schemas."""
+def test_get_schemas(connector: GreenplumConnector, config: GreenplumConfig):
+    """The schema the fixture objects live in is listed."""
     schemas = connector.get_schemas()
-    assert isinstance(schemas, list)
-    assert len(schemas) > 0
+    assert config.schema_name in schemas
     assert "public" in schemas
 
 
@@ -56,15 +56,42 @@ def test_get_schemas_exclude_system(connector: GreenplumConnector):
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_get_tables(connector: GreenplumConnector, config: GreenplumConfig):
-    """Test getting table list."""
-    tables = connector.get_tables(schema_name=config.schema_name)
-    assert isinstance(tables, list)
+def test_get_tables(connector: GreenplumConnector, config: GreenplumConfig, metadata_objects_setup):
+    """A listing names objects only by the levels the caller left unspecified."""
+    assert METADATA_TABLE in connector.get_tables(
+        database_name=config.database,
+        schema_name=config.schema_name,
+    )
+    assert f"{config.database}.{METADATA_TABLE}" in connector.get_tables(schema_name=config.schema_name)
+    assert f"{config.database}.{config.schema_name}.{METADATA_TABLE}" in connector.get_tables()
+
+
+@pytest.mark.integration
+def test_get_tables_with_ddl_of_fixture_table(
+    connector: GreenplumConnector,
+    config: GreenplumConfig,
+    metadata_objects_setup,
+):
+    """Every coordinate of a table entry, compared against the created table."""
+    tables = [
+        item
+        for item in connector.get_tables_with_ddl(schema_name=config.schema_name)
+        if item["table_name"] == METADATA_TABLE
+    ]
+    assert len(tables) == 1, f"expected exactly one entry, got {tables}"
+    table = tables[0]
+
+    assert "CREATE TABLE" in table["definition"].upper()
+    assert table["table_type"] == "table"
+    assert table["catalog_name"] == ""
+    assert table["database_name"] == config.database
+    assert table["schema_name"] == config.schema_name
+    assert table["identifier"] == f"{config.database}.{config.schema_name}.{METADATA_TABLE}"
 
 
 @pytest.mark.integration
 def test_get_tables_with_ddl(connector: GreenplumConnector, config: GreenplumConfig):
-    """Test getting tables with DDL."""
+    """A freshly created table is returned by a listing filtered to its own name."""
     suffix = uuid.uuid4().hex[:8]
     table_name = f"test_table_{suffix}"
 
@@ -81,13 +108,13 @@ def test_get_tables_with_ddl(connector: GreenplumConnector, config: GreenplumCon
     try:
         tables = connector.get_tables_with_ddl(schema_name=config.schema_name, tables=[table_name])
 
-        if len(tables) > 0:
-            table = tables[0]
-            assert "table_name" in table
-            assert "definition" in table
-            assert table["table_type"] == "table"
-            assert "schema_name" in table
-            assert "identifier" in table
+        assert len(tables) == 1
+        table = tables[0]
+        assert table["table_name"] == table_name
+        assert "CREATE TABLE" in table["definition"].upper()
+        assert table["table_type"] == "table"
+        assert table["schema_name"] == config.schema_name
+        assert table["identifier"] == f"{config.database}.{config.schema_name}.{table_name}"
     finally:
         connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
 
@@ -96,43 +123,36 @@ def test_get_tables_with_ddl(connector: GreenplumConnector, config: GreenplumCon
 
 
 @pytest.mark.integration
-def test_get_views(connector: GreenplumConnector, config: GreenplumConfig):
-    """Test getting view list."""
-    views = connector.get_views(schema_name=config.schema_name)
-    assert isinstance(views, list)
+def test_get_views(connector: GreenplumConnector, config: GreenplumConfig, metadata_objects_setup):
+    """The fixture view is listed, and is not reported as a table."""
+    assert METADATA_VIEW in connector.get_views(
+        database_name=config.database,
+        schema_name=config.schema_name,
+    )
+    assert f"{config.database}.{config.schema_name}.{METADATA_VIEW}" in connector.get_views()
+    assert METADATA_VIEW not in connector.get_tables(
+        database_name=config.database,
+        schema_name=config.schema_name,
+    )
 
 
 @pytest.mark.integration
-def test_get_views_with_ddl(connector: GreenplumConnector, config: GreenplumConfig):
-    """Test getting views with DDL."""
-    suffix = uuid.uuid4().hex[:8]
-    view_name = f"test_view_{suffix}"
-    table_name = f"test_table_{suffix}"
+def test_get_views_with_ddl(connector: GreenplumConnector, config: GreenplumConfig, metadata_objects_setup):
+    """Every coordinate of a view entry, compared against the created view."""
+    views = [
+        item
+        for item in connector.get_views_with_ddl(schema_name=config.schema_name)
+        if item["table_name"] == METADATA_VIEW
+    ]
+    assert len(views) == 1, f"expected exactly one entry, got {views}"
+    view = views[0]
 
-    connector.execute_ddl(f"DROP VIEW IF EXISTS {view_name}")
-    connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
-    connector.execute_ddl(
-        f"""
-        CREATE TABLE {table_name} (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(50)
-        )
-    """
-    )
-
-    try:
-        connector.execute_ddl(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
-
-        views = connector.get_views_with_ddl(schema_name=config.schema_name)
-
-        if len(views) > 0:
-            view = [v for v in views if v["table_name"] == view_name]
-            if view:
-                assert "definition" in view[0]
-                assert view[0]["table_type"] == "view"
-    finally:
-        connector.execute_ddl(f"DROP VIEW IF EXISTS {view_name}")
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+    assert "CREATE VIEW" in view["definition"].upper()
+    assert view["table_type"] == "view"
+    assert view["catalog_name"] == ""
+    assert view["database_name"] == config.database
+    assert view["schema_name"] == config.schema_name
+    assert view["identifier"] == f"{config.database}.{config.schema_name}.{METADATA_VIEW}"
 
 
 # ==================== Column Schema Tests ====================
@@ -178,35 +198,19 @@ def test_get_schema(connector: GreenplumConnector, config: GreenplumConfig):
 
 
 @pytest.mark.integration
-def test_get_sample_rows(connector: GreenplumConnector, config: GreenplumConfig):
-    """Test getting sample rows."""
-    suffix = uuid.uuid4().hex[:8]
-    table_name = f"test_sample_{suffix}"
+def test_get_sample_rows(connector: GreenplumConnector, config: GreenplumConfig, metadata_objects_setup):
+    """Naming one table samples that table and nothing else, rows included."""
+    sample_rows = connector.get_sample_rows(schema_name=config.schema_name, tables=[METADATA_TABLE], top_n=3)
 
-    connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
-    connector.execute_ddl(
-        f"""
-        CREATE TABLE {table_name} (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(50)
-        )
-    """
-    )
-
-    try:
-        connector.execute_insert(
-            f"""
-            INSERT INTO {table_name} (name) VALUES
-            ('Alice'),
-            ('Bob'),
-            ('Charlie')
-        """
-        )
-
-        sample_rows = connector.get_sample_rows(schema_name=config.schema_name, tables=[table_name], top_n=2)
-
-        assert len(sample_rows) == 1
-        assert sample_rows[0]["table_name"] == table_name
-        assert "sample_rows" in sample_rows[0]
-    finally:
-        connector.execute_ddl(f"DROP TABLE IF EXISTS {table_name}")
+    assert len(sample_rows) == 1
+    assert sample_rows[0] == {
+        "identifier": f"{config.database}.{config.schema_name}.{METADATA_TABLE}",
+        "catalog_name": "",
+        "database_name": config.database,
+        "schema_name": config.schema_name,
+        "table_name": METADATA_TABLE,
+        "sample_rows": sample_rows[0]["sample_rows"],
+    }
+    assert sample_rows[0]["sample_rows"].splitlines()[0] == "id,value"
+    assert "1,10" in sample_rows[0]["sample_rows"]
+    assert "2,20" in sample_rows[0]["sample_rows"]
