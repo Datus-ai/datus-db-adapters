@@ -29,6 +29,32 @@ def test_notes_warn_about_the_two_silent_ora_traps():
     assert "'' IS NULL" in notes
 
 
+def test_notes_route_mode_sensitive_sql_by_database_compatibility():
+    notes = get_dws_sql_generation_notes()
+
+    assert "SELECT datcompatibility" in notes
+    assert "current_database()" in notes
+    assert "Never infer it from `server_version`" in notes
+    assert "### ORA mode" in notes
+    assert "### TD mode" in notes
+    assert "### MySQL mode" in notes
+
+
+def test_notes_cover_td_silent_coercions_and_guc_dependent_behaviour():
+    notes = get_dws_sql_generation_notes()
+
+    for rule in (
+        "`'' IS NULL` is false",
+        "`''::int` yields `0`",
+        "`varchar + int` as `numeric + numeric`",
+        "td_compatible_truncation",
+        "convert_empty_str_to_null_td",
+        "strict_text_concat_td",
+        "bpchar_text_without_rtrim",
+    ):
+        assert rule in notes
+
+
 def test_notes_cover_distribution_and_portability():
     notes = get_dws_sql_generation_notes()
 

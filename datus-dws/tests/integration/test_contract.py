@@ -3,6 +3,8 @@
 
 """Adapter contract as Datus consumes it, exercised against a live cluster."""
 
+import os
+
 import pytest
 
 from datus_db_core import connector_registry
@@ -61,6 +63,9 @@ def test_compatibility_mode_is_probed_from_the_catalog(connector: DWSConnector):
 
     # DWS reports ORA, TD or MySQL — never GaussDB's A/B/PG naming.
     assert mode in ("ORA", "TD", "MYSQL"), f"unexpected compatibility mode: {mode}"
+    expected = os.getenv("DWS_EXPECTED_MODE", "").strip().upper()
+    if expected:
+        assert mode == expected, f"selected database reports {mode}, expected {expected}"
 
 
 @pytest.mark.integration

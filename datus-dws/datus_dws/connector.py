@@ -38,6 +38,7 @@ _DWS_SYS_SCHEMAS = frozenset(
 )
 
 _SYS_SCHEMA_PREFIXES = ("dbms_", "utl_", "dbe_", "pkg_", "prvt_")
+_DWS_COMPAT_MODES = frozenset({"ORA", "TD", "MYSQL"})
 
 # ``TO GROUP`` names a node group and ``TABLESPACE`` an OBS tablespace; both are
 # properties of the cluster that produced the DDL, so neither survives being
@@ -96,6 +97,7 @@ class DWSConnector(PostgreSQLConnector):
         self.dialect = "dws"
         self.config = config
         self.connection_string = self._build_connection_string(self._default_database)
+        self._compat_mode_cache: Dict[str, str] = {}
         self._traits_cache: Dict[str, DWSTraits] = {}
 
     # ==================== Connection ====================
@@ -161,28 +163,24 @@ class DWSConnector(PostgreSQLConnector):
     # ==================== Feature Probing ====================
 
     def _get_traits(self, database_name: str = "") -> DWSTraits:
-        key = database_name or self._default_database
+        effective_database = database_name or self.database_name or self._default_database
+        key = effective_database
         traits = self._traits_cache.get(key)
         if traits is not None:
+            # A transient first probe is not sticky: refresh only the missing
+            # mode while retaining the unrelated feature probes.
+            if not traits.compat_mode:
+                traits.compat_mode = self.get_compatibility_mode(effective_database)
             return traits
 
         # Each probe runs on its own connection: a failed probe aborts the
-        # transaction and would poison every probe after it. Probe SQL stays
-        # compatibility-mode neutral — no `= ''` comparisons (ORA mode folds
-        # empty strings to NULL) and no `||` concatenation.
-        traits = DWSTraits()
-        try:
-            row = self._probe_scalar(
-                "SELECT datcompatibility FROM pg_database WHERE datname = current_database()",
-                database_name,
-            )
-            if row:
-                traits.compat_mode = str(row).strip().upper()
-        except Exception as e:
-            logger.warning(f"DWS compatibility-mode probe failed for database '{key}': {e}")
+        # transaction and would poison every probe after it. Compatibility mode
+        # has its own cache because SQL prompting needs it without paying for
+        # the unrelated materialized-view probes below.
+        traits = DWSTraits(compat_mode=self.get_compatibility_mode(effective_database))
 
         try:
-            self._probe_scalar("SELECT count(*) FROM pg_matviews WHERE 1 = 0", database_name)
+            self._probe_scalar("SELECT count(*) FROM pg_matviews WHERE 1 = 0", effective_database)
             traits.has_matviews = True
         except Exception:
             traits.has_matviews = False
@@ -191,7 +189,7 @@ class DWSConnector(PostgreSQLConnector):
         # cluster ships with it off. An unreadable GUC leaves the permissive
         # default so discovery is never blocked by a failed probe.
         try:
-            value = self._probe_scalar("SHOW enable_matview", database_name)
+            value = self._probe_scalar("SHOW enable_matview", effective_database)
             if value is not None:
                 traits.enable_matview = str(value).strip().lower() in ("on", "true", "1")
         except Exception as e:
@@ -319,7 +317,34 @@ class DWSConnector(PostgreSQLConnector):
 
     def get_compatibility_mode(self, database_name: str = "") -> str:
         """Return the database's compatibility mode (ORA, TD or MySQL)."""
-        return self._get_traits(database_name).compat_mode
+        effective_database = database_name or self.database_name or self._default_database
+        key = effective_database
+        if key in self._compat_mode_cache:
+            return self._compat_mode_cache[key]
+
+        try:
+            row = self._probe_scalar(
+                "SELECT datcompatibility FROM pg_database WHERE datname = current_database()",
+                effective_database,
+            )
+            if row:
+                mode = str(row).strip().upper()
+                if mode in _DWS_COMPAT_MODES:
+                    self._compat_mode_cache[key] = mode
+                    return mode
+                logger.warning(f"DWS database '{key}' reported unsupported compatibility mode '{mode}'")
+        except Exception as e:
+            logger.warning(f"DWS compatibility-mode probe failed for database '{key}': {e}")
+
+        # Only a recognized mode is safe compiler/prompt input. Failures and
+        # unknown values are deliberately not cached so a transient catalog or
+        # connection problem can recover on the next request.
+        return ""
+
+    def get_sql_generation_context(self, database_name: str = "") -> Dict[str, str]:
+        """Return live database traits that affect generated SQL semantics."""
+        mode = self.get_compatibility_mode(database_name)
+        return {"compatibility_mode": mode} if mode else {}
 
     def get_server_version(self, database_name: str = "") -> Tuple[str, str]:
         """Return (server_version, full version banner).

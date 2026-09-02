@@ -9,7 +9,19 @@ Generate DWS-compatible SQL from metadata-provided object and column names. The 
 
 ## Compatibility-mode semantics
 
-Every database has a compatibility mode, readable from `pg_database.datcompatibility`: `ORA`, `TD` or `MySQL`. The mode changes expression semantics, not just formatting. The rules below are verified against ORA mode, which is the default for new clusters.
+Every database has a compatibility mode, readable from `pg_database.datcompatibility`: `ORA`, `TD` or `MySQL`. The mode changes expression semantics, not just formatting. Use the mode supplied by datasource metadata. If it is absent and database access is available, query it before generating mode-sensitive SQL:
+
+```sql
+SELECT datcompatibility
+FROM pg_database
+WHERE datname = current_database();
+```
+
+The mode is scoped to the database. Never infer it from `server_version`, the connection driver, or table DDL, and apply only the matching subsection below. If the mode cannot be established, avoid mode-dependent implicit conversions and state the assumption.
+
+### ORA mode
+
+The rules in this subsection are verified against ORA mode, which is the default for new clusters.
 
 **These two silently produce wrong results — never ignore them:**
 
@@ -25,7 +37,34 @@ Other verified ORA-mode differences from standard PostgreSQL:
 
 Behaviour matching standard PostgreSQL and safe to rely on: trailing-blank sensitivity for `varchar` equality, `SUM` over an empty set returning NULL, and ISO week numbering.
 
-TD and MySQL modes are **not verified**. When metadata reports either, state that the semantics above may not hold rather than assuming they carry over.
+### TD mode
+
+TD mode follows Teradata-oriented coercion rules. These differ materially from ORA mode and must not inherit its empty-string, date, or division assumptions:
+
+- **Empty strings are values.** `'' IS NULL` is false, so use `col = ''` for an empty string and `col IS NULL` for NULL. Do not merge the two cases in predicates or data-quality checks.
+- **An empty string coerces to numeric zero.** For example, `''::int` yields `0`. Avoid relying on this implicit coercion: validate the input and cast explicitly so malformed or missing data is not silently treated as a real zero.
+- **`DATE` stores a calendar date.** It carries year, month and day rather than ORA mode's timestamp value. Cast to `timestamp` explicitly when time-of-day semantics are required.
+- **Mixed arithmetic is numeric.** DWS resolves `varchar + int` as `numeric + numeric` in TD mode. Cast the string operand explicitly and choose the desired numeric type instead of depending on implicit precision or error behaviour.
+- **Mixed conditional expressions coerce types.** `CASE` and `COALESCE` can accept numeric and string branches and resolve them as text. Give their branches an explicit common type when downstream comparison, ordering or aggregation depends on the result type.
+- **Do not carry ORA division behaviour into TD mode.** When integer versus fractional division matters, express the intended result with explicit numeric casts or `div(a, b)` rather than relying on operand types.
+
+Some TD behaviours depend on session or cluster GUCs. Inspect them when the query depends on truncation, empty-string conversion functions, date formatting, NULL concatenation, or fixed-width spaces:
+
+```sql
+SHOW td_compatible_truncation;
+SHOW behavior_compat_options;
+```
+
+- With `td_compatible_truncation=on`, overlong values inserted into `char` and `varchar` columns are silently truncated. Never enable it just to make generated DML succeed; validate lengths before writing.
+- When `behavior_compat_options` contains `convert_empty_str_to_null_td`, `to_date('')`, `to_timestamp('')`, and `to_number('')` return NULL, and `to_char(date_value)` follows TD date formatting. Do not generalize the `''::int` result to these conversion functions; inspect this option before relying on their empty-string or date-format behaviour.
+- When `behavior_compat_options` contains `strict_text_concat_td`, concatenating any value with NULL using `||` returns NULL. Otherwise do not assume that NULL behaviour; use an explicit `CASE` or `COALESCE` matching the requested result.
+- When `behavior_compat_options` contains `bpchar_text_without_rtrim`, concatenating `char(n)` values preserves their padding. Use `rtrim()` explicitly when trailing spaces must not affect the result.
+
+These TD rules are documented by DWS but are not yet covered by this adapter's live integration suite. Preserve that distinction when reporting confidence about generated SQL.
+
+### MySQL mode
+
+MySQL mode is **not verified**. When metadata reports it, do not apply ORA or TD semantics; state the limitation and use explicit types and NULL handling.
 
 ## Namespaces and identifiers
 
