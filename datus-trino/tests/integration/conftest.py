@@ -31,6 +31,13 @@ from datus_trino import TrinoConfig, TrinoConnector
 
 logger = logging.getLogger(__name__)
 
+# Where the metadata fixtures live. Trino's catalogs differ in what they allow:
+# CI points TRINO_CATALOG at `tpch`, a read-only generator that rejects CREATE
+# TABLE outright, so the writable objects must be pinned to a catalog that
+# accepts them rather than following the configured one.
+WRITABLE_CATALOG = os.getenv("TRINO_WRITABLE_CATALOG", "memory")
+WRITABLE_SCHEMA = os.getenv("TRINO_WRITABLE_SCHEMA", "default")
+
 METADATA_TABLE = "datus_metadata_table"
 METADATA_VIEW = "datus_metadata_view"
 
@@ -81,10 +88,12 @@ def connector(config: TrinoConfig) -> Generator[TrinoConnector, None, None]:
 def metadata_objects_setup() -> Generator[None, None, None]:
     """Create the known table and view the metadata tests exact-compare against.
 
-    The objects live in the ``memory`` catalog, which supports ``CREATE TABLE``,
-    ``INSERT``, and ``CREATE VIEW``. Without known objects the metadata tests
-    could only assert shapes, which an adapter returning ``[]`` for everything
-    would pass.
+    The objects live in ``WRITABLE_CATALOG`` (``memory`` by default), which
+    supports ``CREATE TABLE``, ``INSERT`` and ``CREATE VIEW``. They deliberately
+    do not follow ``TRINO_CATALOG``: CI sets that to ``tpch``, whose connector
+    answers "This connector does not support creating tables". Without known
+    objects the metadata tests could only assert shapes, which an adapter
+    returning ``[]`` for everything would pass.
     """
     test_config = _build_config()
     try:
@@ -95,7 +104,7 @@ def metadata_objects_setup() -> Generator[None, None, None]:
     if not reachable:
         pytest.skip("Trino connection test failed")
 
-    quoted = f'"{test_config.catalog}"."{test_config.schema_name}"'
+    quoted = f'"{WRITABLE_CATALOG}"."{WRITABLE_SCHEMA}"'
     table_ref = f'{quoted}."{METADATA_TABLE}"'
     view_ref = f'{quoted}."{METADATA_VIEW}"'
     try:

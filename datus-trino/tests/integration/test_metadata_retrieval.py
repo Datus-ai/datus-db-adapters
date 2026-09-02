@@ -6,6 +6,8 @@ import pytest
 
 from datus_trino import TrinoConfig, TrinoConnector
 
+from .conftest import WRITABLE_CATALOG, WRITABLE_SCHEMA
+
 METADATA_TABLE = "datus_metadata_table"
 METADATA_VIEW = "datus_metadata_view"
 
@@ -78,46 +80,52 @@ def test_get_schemas_exclude_system(connector: TrinoConnector, config: TrinoConf
 @pytest.mark.acceptance
 def test_get_tables(connector: TrinoConnector, config: TrinoConfig, metadata_objects_setup):
     """The fixture table is listed bare when scoped and fully qualified when not."""
-    tables = connector.get_tables(catalog_name=config.catalog, schema_name=config.schema_name)
+    tables = connector.get_tables(catalog_name=WRITABLE_CATALOG, schema_name=WRITABLE_SCHEMA)
     assert METADATA_TABLE in tables
-    assert f"{config.catalog}.{config.schema_name}.{METADATA_TABLE}" in connector.get_tables()
+    # An unscoped listing follows the session catalog/schema and qualifies every
+    # name it returns. Asserted on shape rather than on a specific table: the
+    # session catalog is tpch in CI and memory locally, and the fixture objects
+    # live in the writable one either way.
+    unscoped = connector.get_tables()
+    assert unscoped, "the session catalog/schema should list at least one table"
+    assert all(name.count(".") == 2 for name in unscoped), unscoped[:3]
 
     table = next(
         item
         for item in connector.get_tables_with_ddl(
-            catalog_name=config.catalog,
-            schema_name=config.schema_name,
+            catalog_name=WRITABLE_CATALOG,
+            schema_name=WRITABLE_SCHEMA,
         )
         if item["table_name"] == METADATA_TABLE
     )
     assert "CREATE TABLE" in table["definition"].upper()
     assert table["table_type"] == "table"
-    assert table["catalog_name"] == config.catalog
-    assert table["database_name"] == config.schema_name
-    assert table["schema_name"] == config.schema_name
-    assert table["identifier"] == f'"{config.catalog}"."{config.schema_name}"."{METADATA_TABLE}"'
+    assert table["catalog_name"] == WRITABLE_CATALOG
+    assert table["database_name"] == WRITABLE_SCHEMA
+    assert table["schema_name"] == WRITABLE_SCHEMA
+    assert table["identifier"] == f'"{WRITABLE_CATALOG}"."{WRITABLE_SCHEMA}"."{METADATA_TABLE}"'
 
 
 @pytest.mark.integration
 def test_get_views(connector: TrinoConnector, config: TrinoConfig, metadata_objects_setup):
     """The fixture view is listed, with every coordinate of its DDL entry exact."""
-    views = connector.get_views(catalog_name=config.catalog, schema_name=config.schema_name)
+    views = connector.get_views(catalog_name=WRITABLE_CATALOG, schema_name=WRITABLE_SCHEMA)
     assert METADATA_VIEW in views
 
     view = next(
         item
         for item in connector.get_views_with_ddl(
-            catalog_name=config.catalog,
-            schema_name=config.schema_name,
+            catalog_name=WRITABLE_CATALOG,
+            schema_name=WRITABLE_SCHEMA,
         )
         if item["table_name"] == METADATA_VIEW
     )
     assert "CREATE VIEW" in view["definition"].upper()
     assert view["table_type"] == "view"
-    assert view["catalog_name"] == config.catalog
-    assert view["database_name"] == config.schema_name
-    assert view["schema_name"] == config.schema_name
-    assert view["identifier"] == f'"{config.catalog}"."{config.schema_name}"."{METADATA_VIEW}"'
+    assert view["catalog_name"] == WRITABLE_CATALOG
+    assert view["database_name"] == WRITABLE_SCHEMA
+    assert view["schema_name"] == WRITABLE_SCHEMA
+    assert view["identifier"] == f'"{WRITABLE_CATALOG}"."{WRITABLE_SCHEMA}"."{METADATA_VIEW}"'
 
 
 # ==================== Sample Data Tests ====================
@@ -127,14 +135,19 @@ def test_get_views(connector: TrinoConnector, config: TrinoConfig, metadata_obje
 @pytest.mark.acceptance
 def test_get_sample_rows(connector: TrinoConnector, metadata_objects_setup):
     """Naming one table samples that table and nothing else, rows included."""
-    sample_rows = connector.get_sample_rows(tables=[METADATA_TABLE], top_n=3)
+    sample_rows = connector.get_sample_rows(
+        tables=[METADATA_TABLE], top_n=3, catalog_name=WRITABLE_CATALOG, schema_name=WRITABLE_SCHEMA
+    )
 
     assert len(sample_rows) == 1
     assert sample_rows[0] == {
-        "identifier": METADATA_TABLE,
-        "catalog_name": "",
+        "identifier": f"{WRITABLE_CATALOG}.{WRITABLE_SCHEMA}.{METADATA_TABLE}",
+        "catalog_name": WRITABLE_CATALOG,
+        # Sampling leaves database_name empty: Trino addresses objects as
+        # catalog.schema, so the middle level the other engines call a database
+        # has no value to report here.
         "database_name": "",
-        "schema_name": "",
+        "schema_name": WRITABLE_SCHEMA,
         "table_name": METADATA_TABLE,
         "table_type": "table",
         "sample_rows": sample_rows[0]["sample_rows"],
