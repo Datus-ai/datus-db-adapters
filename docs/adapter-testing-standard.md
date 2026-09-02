@@ -290,11 +290,14 @@ An adapter returning `[]` for everything must fail these tests.
   `export_adapter_env()` sets both and is the single place they must agree.
 - Pin `TZ: UTC`. A non-UTC server clock makes `NOW()` and date arithmetic depend on where the
   suite runs, and osi-engine's corpus tests share these containers.
-- Every service needs a healthcheck. Prefer a real client query (`mysql -e 'SELECT 1'`,
-  `psql -c 'SELECT 1'`, `clickhouse-client --query`), fall back to TCP
-  (`bash -c 'echo > /dev/tcp/localhost/9083'`) or an HTTP status endpoint. Read the user and
-  database from the container's own environment (`pg_isready -U "$${POSTGRES_USER}"`) so an
-  override doesn't leave the probe checking a name that is gone.
+- Every service needs a healthcheck, and it must authenticate: a real client query
+  (`mysql -e 'SELECT 1'`, `psql -c 'SELECT 1'`, `clickhouse-client --query`), falling back to
+  TCP (`bash -c 'echo > /dev/tcp/localhost/9083'`) or an HTTP status endpoint only where no
+  client exists. `pg_isready` is not enough — it answers "accepting connections" without
+  logging in, so a data volume left from different credentials comes up healthy and fails at
+  test time instead. Read the user and database from the container's own environment
+  (`psql -U "$${POSTGRES_USER}"`) so an override doesn't leave the probe checking a name
+  that is gone.
 - Slow-starting engines (Doris-class) additionally ship `scripts/wait_for_<engine>.py` used by CI.
 
 ### High-water-mark tests

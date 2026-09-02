@@ -2,6 +2,7 @@ services:
   hive-metastore:
     image: apache/hive:4.0.1
     environment:
+      TZ: UTC
       SERVICE_NAME: metastore
     ports:
       - "${HIVE_METASTORE_HOST_PORT:-9083}:9083"
@@ -17,6 +18,7 @@ services:
   hive-server:
     image: apache/hive:4.0.1
     environment:
+      TZ: UTC
       SERVICE_NAME: hiveserver2
       SERVICE_OPTS: "-Dhive.metastore.uris=thrift://hive-metastore:9083"
       IS_RESUME: "true"
