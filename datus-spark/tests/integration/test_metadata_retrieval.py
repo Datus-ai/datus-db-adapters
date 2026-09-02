@@ -44,9 +44,9 @@ def test_get_tables(connector: SparkConnector, config: SparkConfig, metadata_obj
     assert METADATA_TABLE in connector.get_tables(database_name=db)
     assert f"{db}.{METADATA_TABLE}" in connector.get_tables()
 
-    table = next(
-        item for item in connector.get_tables_with_ddl(database_name=db) if item["table_name"] == METADATA_TABLE
-    )
+    tables = [item for item in connector.get_tables_with_ddl(database_name=db) if item["table_name"] == METADATA_TABLE]
+    assert len(tables) == 1, f"expected exactly one entry, got {tables}"
+    table = tables[0]
     assert "CREATE TABLE" in table["definition"].upper()
     assert table["table_type"] == "table"
     assert table["catalog_name"] == ""

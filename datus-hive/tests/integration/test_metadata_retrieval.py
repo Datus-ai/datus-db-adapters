@@ -40,9 +40,11 @@ def test_get_tables_with_ddl_of_fixture_table(
     ``SHOW CREATE TABLE`` echoes ``CREATE EXTERNAL TABLE``.
     """
     database = config.database or "default"
-    table = next(
+    tables = [
         item for item in connector.get_tables_with_ddl(database_name=database) if item["table_name"] == METADATA_TABLE
-    )
+    ]
+    assert len(tables) == 1, f"expected exactly one entry, got {tables}"
+    table = tables[0]
 
     definition = table["definition"].upper()
     assert definition.startswith("CREATE")
@@ -105,9 +107,11 @@ def test_get_views(connector: HiveConnector, config: HiveConfig, metadata_object
 def test_get_views_with_ddl(connector: HiveConnector, config: HiveConfig, metadata_objects_setup):
     """Every coordinate of a view entry, compared against the created view."""
     database = config.database or "default"
-    view = next(
+    views = [
         item for item in connector.get_views_with_ddl(database_name=database) if item["table_name"] == METADATA_VIEW
-    )
+    ]
+    assert len(views) == 1, f"expected exactly one entry, got {views}"
+    view = views[0]
 
     assert "CREATE VIEW" in view["definition"].upper()
     assert view["table_type"] == "view"

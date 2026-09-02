@@ -58,6 +58,25 @@ def _require_success(result, operation: str) -> None:
     assert result.success, f"{operation} failed: {result.error}"
 
 
+def _drop_all(conn, statements: list[tuple[str, str]]) -> None:
+    """Run every cleanup statement, then report any that failed.
+
+    Each drop is attempted even when an earlier one fails, so one stuck object
+    cannot strand the rest. execute_ddl reports failure through its result
+    rather than by raising, so the result is what gets checked.
+    """
+    failures = []
+    for statement, operation in statements:
+        try:
+            result = conn.execute_ddl(statement)
+            if not result.success:
+                failures.append(f"{operation}: {result.error}")
+        except Exception as exc:  # noqa: BLE001 - reported below, not swallowed
+            failures.append(f"{operation}: {exc}")
+    if failures:
+        logger.warning("Metadata teardown left objects behind: %s", "; ".join(failures))
+
+
 @pytest.fixture
 def config() -> TrinoConfig:
     """Create Trino configuration from environment or defaults for integration tests."""
@@ -125,10 +144,13 @@ def metadata_objects_setup() -> Generator[None, None, None]:
         yield
     finally:
         try:
-            conn.execute_ddl(f"DROP VIEW IF EXISTS {view_ref}")
-            conn.execute_ddl(f"DROP TABLE IF EXISTS {table_ref}")
-        except Exception:
-            logger.warning("Failed to drop metadata objects during teardown", exc_info=True)
+            _drop_all(
+                conn,
+                [
+                    (f"DROP VIEW IF EXISTS {view_ref}", "drop metadata view"),
+                    (f"DROP TABLE IF EXISTS {table_ref}", "drop metadata table"),
+                ],
+            )
         finally:
             conn.close()
 

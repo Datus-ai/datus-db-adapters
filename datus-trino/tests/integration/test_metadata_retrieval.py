@@ -56,6 +56,9 @@ def test_get_schemas(connector: TrinoConnector, config: TrinoConfig, metadata_ob
     """The schema holding the fixture objects is listed."""
     schemas = connector.get_schemas(catalog_name=config.catalog)
     assert config.schema_name in schemas
+    # The fixture objects live in the writable catalog, which in CI is a
+    # different one; listing it must show their schema too.
+    assert WRITABLE_SCHEMA in connector.get_schemas(catalog_name=WRITABLE_CATALOG)
 
 
 @pytest.mark.integration
@@ -63,6 +66,7 @@ def test_get_databases(connector: TrinoConnector, config: TrinoConfig, metadata_
     """Trino has no database level: databases are exactly the schemas."""
     databases = connector.get_databases(catalog_name=config.catalog)
     assert config.schema_name in databases
+    assert WRITABLE_SCHEMA in connector.get_databases(catalog_name=WRITABLE_CATALOG)
     assert databases == connector.get_schemas(catalog_name=config.catalog)
 
 
@@ -90,14 +94,16 @@ def test_get_tables(connector: TrinoConnector, config: TrinoConfig, metadata_obj
     assert unscoped, "the session catalog/schema should list at least one table"
     assert all(name.count(".") == 2 for name in unscoped), unscoped[:3]
 
-    table = next(
+    tables = [
         item
         for item in connector.get_tables_with_ddl(
             catalog_name=WRITABLE_CATALOG,
             schema_name=WRITABLE_SCHEMA,
         )
         if item["table_name"] == METADATA_TABLE
-    )
+    ]
+    assert len(tables) == 1, f"expected exactly one entry, got {tables}"
+    table = tables[0]
     assert "CREATE TABLE" in table["definition"].upper()
     assert table["table_type"] == "table"
     assert table["catalog_name"] == WRITABLE_CATALOG
@@ -112,14 +118,16 @@ def test_get_views(connector: TrinoConnector, config: TrinoConfig, metadata_obje
     views = connector.get_views(catalog_name=WRITABLE_CATALOG, schema_name=WRITABLE_SCHEMA)
     assert METADATA_VIEW in views
 
-    view = next(
+    views = [
         item
         for item in connector.get_views_with_ddl(
             catalog_name=WRITABLE_CATALOG,
             schema_name=WRITABLE_SCHEMA,
         )
         if item["table_name"] == METADATA_VIEW
-    )
+    ]
+    assert len(views) == 1, f"expected exactly one entry, got {views}"
+    view = views[0]
     assert "CREATE VIEW" in view["definition"].upper()
     assert view["table_type"] == "view"
     assert view["catalog_name"] == WRITABLE_CATALOG

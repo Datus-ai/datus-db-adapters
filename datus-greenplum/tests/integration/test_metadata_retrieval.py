@@ -73,11 +73,13 @@ def test_get_tables_with_ddl_of_fixture_table(
     metadata_objects_setup,
 ):
     """Every coordinate of a table entry, compared against the created table."""
-    table = next(
+    tables = [
         item
         for item in connector.get_tables_with_ddl(schema_name=config.schema_name)
         if item["table_name"] == METADATA_TABLE
-    )
+    ]
+    assert len(tables) == 1, f"expected exactly one entry, got {tables}"
+    table = tables[0]
 
     assert "CREATE TABLE" in table["definition"].upper()
     assert table["table_type"] == "table"
@@ -137,11 +139,13 @@ def test_get_views(connector: GreenplumConnector, config: GreenplumConfig, metad
 @pytest.mark.integration
 def test_get_views_with_ddl(connector: GreenplumConnector, config: GreenplumConfig, metadata_objects_setup):
     """Every coordinate of a view entry, compared against the created view."""
-    view = next(
+    views = [
         item
         for item in connector.get_views_with_ddl(schema_name=config.schema_name)
         if item["table_name"] == METADATA_VIEW
-    )
+    ]
+    assert len(views) == 1, f"expected exactly one entry, got {views}"
+    view = views[0]
 
     assert "CREATE VIEW" in view["definition"].upper()
     assert view["table_type"] == "view"
