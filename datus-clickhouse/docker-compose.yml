@@ -5,6 +5,7 @@ services:
       - "${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
       - "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
     environment:
+      - TZ=UTC
       - CLICKHOUSE_USER=default_user
       - CLICKHOUSE_PASSWORD=default_test
       - CLICKHOUSE_DB=default_test

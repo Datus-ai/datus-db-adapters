@@ -45,10 +45,13 @@ The service/PDB is a connection target only — SQL object identifiers are `SCHE
 # Unit tests (no database needed)
 cd datus-oracle && python -m pytest tests/unit/ -v
 
-# Start the local integration database. Both passwords are required; choose
-# values that are not reused outside this disposable development environment.
-export ORACLE_SYS_PASSWORD='<strong-sys-password>'
-export ORACLE_PASSWORD='<app-password-starting-with-a-letter>'
+# Start the local integration database. The DATUS_TEST_* pair provisions the
+# container and is required; choose values not reused outside this disposable
+# environment. ORACLE_PASSWORD is what the tests connect with, so it has to
+# match DATUS_TEST_ORACLE_PASSWORD.
+export DATUS_TEST_ORACLE_SYS_PASSWORD='<strong-sys-password>'
+export DATUS_TEST_ORACLE_PASSWORD='<app-password-starting-with-a-letter>'
+export ORACLE_PASSWORD="$DATUS_TEST_ORACLE_PASSWORD"
 docker compose up -d
 
 # Integration tests
@@ -72,7 +75,7 @@ tables, and column comments.
 The installation is idempotent and adds a couple of seconds to the first
 container start. Set `ORACLE_SKIP_SAMPLE_SCHEMAS=1` to skip it — the HR tests
 then skip as well. `ORACLE_HR_PASSWORD` overrides the HR account password,
-which otherwise reuses `ORACLE_PASSWORD`.
+which otherwise reuses the app user's.
 
 The `sales_history` (SH) schema is deliberately **not** vendored: its data files
 total ~91 MB, which does not belong in this repository or in a CI image build.

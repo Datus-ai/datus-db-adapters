@@ -13,6 +13,11 @@ export_adapter_env() {
   export MYSQL_USER="test_user"
   export MYSQL_PASSWORD="test_password"
   export MYSQL_DATABASE="test"
+  # Container-side namespace; must match the client-side values above.
+  export DATUS_TEST_MYSQL_USER="$MYSQL_USER"
+  export DATUS_TEST_MYSQL_PASSWORD="$MYSQL_PASSWORD"
+  export DATUS_TEST_MYSQL_DATABASE="$MYSQL_DATABASE"
+  export DATUS_TEST_MYSQL_ROOT_PASSWORD="$MYSQL_PASSWORD"
 }
 
 adapter_env_summary() {

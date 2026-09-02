@@ -8,6 +8,8 @@
 services:
   tidb:
     image: pingcap/tidb:v8.5.0
+    environment:
+      TZ: UTC
     command:
       - --store=unistore
       - --host=0.0.0.0

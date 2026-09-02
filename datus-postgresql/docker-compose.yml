@@ -1,14 +1,20 @@
+# DATUS_TEST_* configures this container; the POSTGRESQL_* the tests read
+# configures the client. See docs/adapter-testing-standard.md.
 services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: test
-      POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_password
+      TZ: UTC
+      POSTGRES_DB: ${DATUS_TEST_POSTGRESQL_DATABASE:-test}
+      POSTGRES_USER: ${DATUS_TEST_POSTGRESQL_USER:-test_user}
+      POSTGRES_PASSWORD: ${DATUS_TEST_POSTGRESQL_PASSWORD:-test_password}
     ports:
       - "${POSTGRESQL_HOST_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_user -d test"]
+      # A real query, not pg_isready: pg_isready reports "accepting
+      # connections" without authenticating, so a data volume left over from
+      # different credentials would come up healthy and fail only at test time.
+      test: ["CMD-SHELL", "psql -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -c 'SELECT 1' >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5

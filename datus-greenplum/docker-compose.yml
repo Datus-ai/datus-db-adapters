@@ -8,6 +8,7 @@ services:
     ports:
       - "${GREENPLUM_HOST_PORT:-15432}:5432"
     environment:
+      TZ: UTC
       GREENPLUM_PASSWORD: pivotal
       GREENPLUM_DATABASE_NAME: test
     healthcheck:

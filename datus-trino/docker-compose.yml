@@ -1,6 +1,8 @@
 services:
   trino:
     image: trinodb/trino:479
+    environment:
+      TZ: UTC
     ports:
       - "${TRINO_HOST_PORT:-8080}:8080"  # HTTP port
     healthcheck:

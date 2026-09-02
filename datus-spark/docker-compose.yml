@@ -10,6 +10,7 @@ services:
       - "${SPARK_THRIFT_HOST_PORT:-10000}:10000"  # Thrift port
       - "${SPARK_UI_HOST_PORT:-4040}:4040"    # Spark UI
     environment:
+      - TZ=UTC
       - SPARK_NO_DAEMONIZE=true
     healthcheck:
       test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/10000) 2>/dev/null || exit 1'"]

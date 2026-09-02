@@ -14,6 +14,10 @@ export_adapter_env() {
   export POSTGRESQL_PASSWORD="test_password"
   export POSTGRESQL_DATABASE="test"
   export POSTGRESQL_SCHEMA="public"
+  # Container-side namespace; must match the client-side values above.
+  export DATUS_TEST_POSTGRESQL_USER="$POSTGRESQL_USER"
+  export DATUS_TEST_POSTGRESQL_PASSWORD="$POSTGRESQL_PASSWORD"
+  export DATUS_TEST_POSTGRESQL_DATABASE="$POSTGRESQL_DATABASE"
 }
 
 adapter_env_summary() {

@@ -23,6 +23,10 @@ export_adapter_env() {
   export ORACLE_SCHEMA="DATUS_TEST"
   export ORACLE_SYS_PASSWORD="${ORACLE_SYS_PASSWORD:-test_sys_password}"
   export ORACLE_READY_TIMEOUT="${ORACLE_READY_TIMEOUT:-1200}"
+  # Container-side namespace; must match the client-side values above.
+  export DATUS_TEST_ORACLE_USER="$ORACLE_USER"
+  export DATUS_TEST_ORACLE_PASSWORD="$ORACLE_PASSWORD"
+  export DATUS_TEST_ORACLE_SYS_PASSWORD="$ORACLE_SYS_PASSWORD"
   # Key the preserved data volume by image so bumping ORACLE_IMAGE starts from
   # a fresh volume (Oracle 19c and 23ai data files are not compatible).
   local oracle_image="${ORACLE_IMAGE:-gvenzl/oracle-free:23-slim}"

@@ -39,9 +39,12 @@ services:
     ports:
       - "${GAUSSDB_HOST_PORT:-25434}:5432"
     environment:
-      GS_PASSWORD: ${GAUSSDB_PASSWORD:-Datus@123}
-      GAUSSDB_USER: ${GAUSSDB_USER:-datus}
-      GAUSSDB_PASSWORD: ${GAUSSDB_PASSWORD:-Datus@123}
+      TZ: UTC
+      # DATUS_TEST_* configures this container; the GAUSSDB_* the tests read
+      # configures the client. See docs/adapter-testing-standard.md.
+      GS_PASSWORD: ${DATUS_TEST_GAUSSDB_PASSWORD:-Datus@123}
+      GAUSSDB_USER: ${DATUS_TEST_GAUSSDB_USER:-datus}
+      GAUSSDB_PASSWORD: ${DATUS_TEST_GAUSSDB_PASSWORD:-Datus@123}
       GAUSSLOG: /gausslog
     volumes:
       - ./scripts/docker-entrypoint-wrapper.sh:/docker-entrypoint-wrapper.sh:ro

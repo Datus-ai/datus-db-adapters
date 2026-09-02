@@ -13,6 +13,9 @@ export_adapter_env() {
   export GAUSSDB_USER="datus"
   export GAUSSDB_PASSWORD="Datus@123"
   export GAUSSDB_DATABASE="postgres"
+  # Container-side namespace; must match the client-side values above.
+  export DATUS_TEST_GAUSSDB_USER="$GAUSSDB_USER"
+  export DATUS_TEST_GAUSSDB_PASSWORD="$GAUSSDB_PASSWORD"
 }
 
 adapter_env_summary() {
