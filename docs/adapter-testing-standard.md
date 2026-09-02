@@ -388,10 +388,15 @@ Marker semantics:
 - Any marker used but undeclared produces `PytestUnknownMarkWarning` and breaks under
   `--strict-markers`.
 
-Aim for ≥80% line coverage on the adapter package. `ci/run-unit-tests.sh` measures and prints it
-on every run but enforces no threshold: 13 of 21 packages are below the target today, so a gate
-would block work rather than direct it. The number is there to be watched — and to be improved
-before it is enforced. Check locally when touching an adapter:
+**Diff coverage of a PR must reach 80%** — the share of the lines it changed that its tests
+execute. `.github/workflows/pr-coverage.yml` posts both numbers as a PR comment and fails the check
+when the diff falls short.
+
+The gate is on the diff rather than the total on purpose: 13 of 21 packages sit below 80% overall
+today, so a total-coverage gate would block every PR regardless of what it touched, while a diff
+gate asks only that new code arrives tested. Overall coverage is reported for information.
+
+Check locally when touching an adapter:
 
 ```bash
 cd datus-<name> && python -m pytest tests/unit -m "not integration" --cov=datus_<name> --cov-report=term-missing
