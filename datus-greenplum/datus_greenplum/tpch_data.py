@@ -6,8 +6,10 @@
 
 from datus_db_core.testing.tpch import ROW_COUNTS, TPCH_TABLES, build_tpch_inserts
 
-TPCH_DDL = [
-    """
+_TPCH_DDL_ITEMS = [
+    (
+        "tpch_region",
+        """
     CREATE TABLE "tpch_region" (
         "regionkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
@@ -15,7 +17,10 @@ TPCH_DDL = [
         PRIMARY KEY ("regionkey")
     )
     """,
-    """
+    ),
+    (
+        "tpch_nation",
+        """
     CREATE TABLE "tpch_nation" (
         "nationkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
@@ -24,7 +29,10 @@ TPCH_DDL = [
         PRIMARY KEY ("nationkey")
     )
     """,
-    """
+    ),
+    (
+        "tpch_customer",
+        """
     CREATE TABLE "tpch_customer" (
         "custkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
@@ -34,7 +42,10 @@ TPCH_DDL = [
         PRIMARY KEY ("custkey")
     )
     """,
-    """
+    ),
+    (
+        "tpch_orders",
+        """
     CREATE TABLE "tpch_orders" (
         "orderkey" INTEGER NOT NULL,
         "custkey" INTEGER NOT NULL,
@@ -44,7 +55,10 @@ TPCH_DDL = [
         PRIMARY KEY ("orderkey")
     )
     """,
-    """
+    ),
+    (
+        "tpch_supplier",
+        """
     CREATE TABLE "tpch_supplier" (
         "suppkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
@@ -53,8 +67,13 @@ TPCH_DDL = [
         PRIMARY KEY ("suppkey")
     )
     """,
+    ),
 ]
 
+if [table for table, _ in _TPCH_DDL_ITEMS] != TPCH_TABLES:
+    raise ValueError("Greenplum TPC-H DDL order must match the shared TPCH_TABLES order")
+
+TPCH_DDL = [ddl for _, ddl in _TPCH_DDL_ITEMS]
 TPCH_DATA = build_tpch_inserts(lambda t: f'"{t}"')
 
 __all__ = ["TPCH_DDL", "TPCH_DATA", "TPCH_TABLES", "ROW_COUNTS"]

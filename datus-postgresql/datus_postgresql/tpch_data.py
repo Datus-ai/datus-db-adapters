@@ -2,7 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""PostgreSQL/GaussDB-dialect TPC-H test data definitions."""
+"""PostgreSQL-dialect TPC-H test data definitions.
+
+Table names are unqualified: callers set the target schema through the
+connector's ``schema_name`` (applied as ``SET search_path`` on every
+statement), matching the Greenplum and GaussDB adapters.
+"""
 
 from datus_db_core.testing.tpch import ROW_COUNTS, TPCH_TABLES, build_tpch_inserts
 
@@ -10,7 +15,7 @@ _TPCH_DDL_ITEMS = [
     (
         "tpch_region",
         """
-    CREATE TABLE "tpch_region" (
+    CREATE TABLE IF NOT EXISTS "tpch_region" (
         "regionkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
         "comment" VARCHAR(152),
@@ -21,7 +26,7 @@ _TPCH_DDL_ITEMS = [
     (
         "tpch_nation",
         """
-    CREATE TABLE "tpch_nation" (
+    CREATE TABLE IF NOT EXISTS "tpch_nation" (
         "nationkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
         "regionkey" INTEGER NOT NULL,
@@ -33,7 +38,7 @@ _TPCH_DDL_ITEMS = [
     (
         "tpch_customer",
         """
-    CREATE TABLE "tpch_customer" (
+    CREATE TABLE IF NOT EXISTS "tpch_customer" (
         "custkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
         "nationkey" INTEGER NOT NULL,
@@ -46,7 +51,7 @@ _TPCH_DDL_ITEMS = [
     (
         "tpch_orders",
         """
-    CREATE TABLE "tpch_orders" (
+    CREATE TABLE IF NOT EXISTS "tpch_orders" (
         "orderkey" INTEGER NOT NULL,
         "custkey" INTEGER NOT NULL,
         "orderstatus" CHAR(1) NOT NULL,
@@ -59,7 +64,7 @@ _TPCH_DDL_ITEMS = [
     (
         "tpch_supplier",
         """
-    CREATE TABLE "tpch_supplier" (
+    CREATE TABLE IF NOT EXISTS "tpch_supplier" (
         "suppkey" INTEGER NOT NULL,
         "name" VARCHAR(25) NOT NULL,
         "nationkey" INTEGER NOT NULL,
@@ -71,7 +76,7 @@ _TPCH_DDL_ITEMS = [
 ]
 
 if [table for table, _ in _TPCH_DDL_ITEMS] != TPCH_TABLES:
-    raise ValueError("GaussDB TPC-H DDL order must match the shared TPCH_TABLES order")
+    raise ValueError("PostgreSQL TPC-H DDL order must match the shared TPCH_TABLES order")
 
 TPCH_DDL = [ddl for _, ddl in _TPCH_DDL_ITEMS]
 TPCH_DATA = build_tpch_inserts(lambda t: f'"{t}"')
