@@ -30,7 +30,7 @@ Configuration comes from the environment (see ci/cloud/dws/README.md):
   DWS_CI_DB_PASSWORD                        cluster admin password
   DWS_CI_FLAVOR                             default dwsk2.h.xlarge.4.kc1
                                             (region-specific!)
-  DWS_CI_DATASTORE_VERSION                  default 9.1.0.227 (region-specific!)
+  DWS_CI_DATASTORE_VERSION                  default 8.2.1.258 (region-specific!)
   DWS_CI_NUM_NODE                           default 3 (the documented minimum)
   DWS_CI_NUM_CN                             coordinators, default min(nodes, 3)
   DWS_CI_DB_NAME / _DB_PORT / _DB_USER      defaults gaussdb / 8000 / dbadmin
@@ -80,7 +80,7 @@ _DEFAULT_FLAVOR = "dwsk2.h.xlarge.4.kc1"
 # DWS.5207 "Number of CN instances is invalid", which names the wrong field
 # entirely; a wrong value at least says DWS.5003. Console → create cluster lists
 # the versions a region offers.
-_DEFAULT_DATASTORE_VERSION = "9.1.0.227"
+_DEFAULT_DATASTORE_VERSION = "8.2.1.258"
 
 _CREATE_TIMEOUT_SECONDS = 2400  # cluster creation is documented at 10-15 minutes
 _DELETE_TIMEOUT_SECONDS = 900

@@ -74,10 +74,11 @@ jobs:
       # reports the others rather than masking them.
       fail-fast: false
       matrix:
-        # DWS majors differ enough to be worth covering separately. A long-lived
-        # cluster has whatever version it has, so only the first leg runs there.
+        # Kept as a list so another version is one line away, but only 8.2.1 is
+        # covered for now — 9.1 waits until the adapter is exercised on it.
+        # A long-lived cluster has whatever version it has, so only the first
+        # leg runs there.
         datastore_version:
-          - "9.1.0.227"
           - "8.2.1.258"
     steps:
       - name: Checkout code
