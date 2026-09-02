@@ -2,7 +2,8 @@ services:
   starrocks:
     image: starrocks/allin1-ubuntu:3.3-latest
     environment:
-      - TZ=Asia/Shanghai
+      # UTC so date arithmetic does not depend on where the suite runs.
+      - TZ=UTC
     ports:
       - "${STARROCKS_QUERY_HOST_PORT:-9030}:9030"  # MySQL protocol port
       - "${STARROCKS_HTTP_HOST_PORT:-8030}:8030"  # HTTP port

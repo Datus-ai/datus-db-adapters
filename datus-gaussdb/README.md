@@ -223,6 +223,10 @@ GAUSSDB_WRONG_SSLROOTCERT=/path/to/untrusted-ca.pem
 Set both CA paths to run the positive trusted-CA and negative untrusted-CA TLS
 contracts; tests that require a missing path are skipped.
 
+Those variables configure the client. To change what the container itself is
+built with, set `DATUS_TEST_GAUSSDB_USER` / `DATUS_TEST_GAUSSDB_PASSWORD`
+before `docker compose up`.
+
 Tear the environment down with `docker compose down -v`. The compose file
 documents two openGauss container quirks (the mandatory out-of-datadir
 `GAUSSLOG`, and the first post-initdb server start aborting on Docker Desktop

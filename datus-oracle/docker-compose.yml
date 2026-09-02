@@ -3,12 +3,12 @@ services:
     # Oracle Database Free 23ai; shared with osi-engine's Oracle corpus tests.
     image: ${ORACLE_IMAGE:-gvenzl/oracle-free:23-slim}
     environment:
-      # The image uses ORACLE_PASSWORD for SYS/SYSTEM, while the host-side
-      # ORACLE_PASSWORD remains the adapter test user's password.
-      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:?Set ORACLE_SYS_PASSWORD}
-      APP_USER: datus_test
-      APP_USER_PASSWORD: ${ORACLE_PASSWORD:?Set ORACLE_PASSWORD}
-      ORACLE_APP_PASSWORD: ${ORACLE_PASSWORD:?Set ORACLE_PASSWORD}
+      # DATUS_TEST_* configures this container; the ORACLE_* the tests read
+      # configures the client. The image's own ORACLE_PASSWORD is SYS/SYSTEM.
+      ORACLE_PASSWORD: ${DATUS_TEST_ORACLE_SYS_PASSWORD:?Set DATUS_TEST_ORACLE_SYS_PASSWORD}
+      APP_USER: ${DATUS_TEST_ORACLE_USER:-datus_test}
+      APP_USER_PASSWORD: ${DATUS_TEST_ORACLE_PASSWORD:?Set DATUS_TEST_ORACLE_PASSWORD}
+      ORACLE_APP_PASSWORD: ${DATUS_TEST_ORACLE_PASSWORD:?Set DATUS_TEST_ORACLE_PASSWORD}
       ORACLE_PDB: ${ORACLE_PDB:-FREEPDB1}
     ports:
       - "127.0.0.1:${ORACLE_HOST_PORT:-1521}:1521"

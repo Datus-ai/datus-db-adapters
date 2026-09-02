@@ -8,7 +8,8 @@ services:
   doris:
     image: apache/doris:all-in-one-4.1.3
     environment:
-      TZ: Asia/Shanghai
+      # UTC so date arithmetic does not depend on where the suite runs.
+      TZ: UTC
     ports:
       - "${DORIS_QUERY_HOST_PORT:-9030}:9030"
       - "${DORIS_HTTP_HOST_PORT:-8030}:8030"
