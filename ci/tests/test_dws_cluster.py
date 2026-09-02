@@ -433,7 +433,9 @@ def test_create_cluster_can_skip_the_eip_for_an_in_vpc_runner(env):
     cluster.create_cluster(client, cluster.build_spec("datus-ci-42"), now=NOW)
 
     assert client.created[0].body.cluster.public_ip.public_bind_type == "not_use"
-    assert client.created[0].body.cluster.public_ip.band_width is None
+    # The SDK only materializes the attribute when it is set, so absence and
+    # None both mean "no bandwidth requested".
+    assert getattr(client.created[0].body.cluster.public_ip, "band_width", None) is None
 
 
 def test_build_spec_rejects_an_unknown_public_ip_mode(env):

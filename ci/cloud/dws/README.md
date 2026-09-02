@@ -100,7 +100,7 @@ of a wider IAM grant and more moving parts.
 > `cn-north-7c`:
 >
 > ```bash
-> uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 \
+> uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
 >   python ci/cloud/dws/cluster.py zones
 > ```
 >
@@ -159,18 +159,18 @@ delete clusters.
 export HUAWEICLOUD_SDK_AK=... HUAWEICLOUD_SDK_SK=... HUAWEICLOUD_PROJECT_ID=... HUAWEICLOUD_REGION=cn-east-3
 
 # Read-only: proves the credentials work and prints the zone codes to choose from.
-uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py zones
-uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py flavors
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 python ci/cloud/dws/cluster.py zones
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 python ci/cloud/dws/cluster.py flavors
 
 export DWS_CI_VPC_ID=... DWS_CI_SUBNET_ID=... DWS_CI_SECURITY_GROUP_ID=... DWS_CI_AVAILABILITY_ZONE=cn-east-3a
 export DWS_CI_DB_PASSWORD=...
 
-uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py up
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 python ci/cloud/dws/cluster.py up
 # ... run tests against the printed host/port ...
-uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py down --cluster-id <id> --wait
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 python ci/cloud/dws/cluster.py down --cluster-id <id> --wait
 
 # See what the reaper would remove, without removing it:
-uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 python ci/cloud/dws/cluster.py reap --dry-run
+uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 python ci/cloud/dws/cluster.py reap --dry-run
 ```
 
 `ci/tests/test_dws_cluster.py` covers the decision logic (naming, TTL, the

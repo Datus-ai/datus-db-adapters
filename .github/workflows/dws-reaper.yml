@@ -64,5 +64,5 @@ jobs:
           HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
           HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
         run: |
-          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 \
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
             python ci/cloud/dws/cluster.py reap ${{ inputs.dry_run && '--dry-run' || '' }}

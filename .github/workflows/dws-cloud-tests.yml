@@ -142,7 +142,7 @@ jobs:
           DWS_CI_AVAILABILITY_ZONE: ${{ secrets.DWS_CI_AVAILABILITY_ZONE }}
           DWS_CI_DB_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
         run: |
-          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 \
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
             python ci/cloud/dws/cluster.py up
 
       - name: Materialize CA certificate
@@ -192,5 +192,5 @@ jobs:
           HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
           DWS_CI_CLUSTER_ID: ${{ steps.provision.outputs.cluster_id }}
         run: |
-          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.161 \
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
             python ci/cloud/dws/cluster.py down --wait
