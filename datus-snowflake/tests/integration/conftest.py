@@ -149,11 +149,12 @@ def setup_connector() -> Generator[SnowflakeConnector, None, None]:
     if not config.schema_name:
         pytest.skip("SNOWFLAKE_SCHEMA not provided")
 
-    try:
-        conn = SnowflakeConnector(config)
-    except Exception as e:
-        pytest.skip(f"Snowflake is unavailable for metadata setup: {e}")
-
+    # No try/except around the connect: the module-level skipif already
+    # established that credentials are present, so a failure here is a real one
+    # (wrong password, locked account, missing grant) and must surface. Skipping
+    # it would let a misconfigured secret produce a green run that tested
+    # nothing — the same failure mode this suite was just rewritten to avoid.
+    conn = SnowflakeConnector(config)
     try:
         yield conn
     finally:
