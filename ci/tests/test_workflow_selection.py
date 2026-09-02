@@ -67,7 +67,10 @@ def _passed_secrets(caller_source: str, job_name: str) -> set[str]:
     for line in block.splitlines():
         if not line.startswith("      "):
             break
-        names.add(line.strip().partition(":")[0])
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        names.add(stripped.partition(":")[0])
     return names
 
 

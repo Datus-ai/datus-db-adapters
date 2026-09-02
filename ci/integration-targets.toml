@@ -63,9 +63,12 @@ kind = "cloud"
 [targets.dws]
 package = "datus-dws"
 kind = "cloud"
-# Verified against a live DWS 9.1.0 cluster during development. Enable once the
-# DWS_* repository secrets point at a long-lived cluster; a DWS cluster is
-# billed per hour, so keeping one online is a standing cost decision.
+# Verified against a live DWS 9.1.0 cluster during development. A DWS cluster is
+# billed per hour and has no self-service serverless tier, so the workflow can
+# create one per run and delete it afterwards (ci/cloud/dws/README.md) instead of
+# keeping one online. Enable once either set of secrets is configured:
+# HUAWEICLOUD_* + DWS_CI_* for ephemeral clusters, or DWS_HOST/_DATABASE/
+# _USERNAME/_PASSWORD for a long-lived one.
 enabled = false
 
 [selection]

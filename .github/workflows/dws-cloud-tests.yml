@@ -5,19 +5,28 @@ on:
     # Declared explicitly rather than relying on `secrets: inherit`, which would
     # hand this workflow every secret the caller can reach — including the
     # BigQuery, Hologres and MaxCompute credentials it has no business seeing.
+    #
+    # Two modes, chosen by whether DWS_HOST is set:
+    #   long-lived  DWS_HOST/_USERNAME/_PASSWORD and the three DWS_DATABASE_*
+    #               names point at a cluster somebody keeps online.
+    #   ephemeral   HUAWEICLOUD_* + DWS_CI_* let the job create a cluster for
+    #               this run, provision the three compatibility databases in it,
+    #               and delete the whole thing afterwards. A DWS cluster bills
+    #               per hour with no self-service serverless tier, so this is
+    #               the default for scheduled runs.
     secrets:
       DWS_HOST:
-        required: true
+        required: false
       DWS_DATABASE_ORA:
-        required: true
+        required: false
       DWS_DATABASE_TD:
-        required: true
+        required: false
       DWS_DATABASE_MYSQL:
-        required: true
+        required: false
       DWS_USERNAME:
-        required: true
+        required: false
       DWS_PASSWORD:
-        required: true
+        required: false
       DWS_PORT:
         required: false
       DWS_SCHEMA:
@@ -25,6 +34,24 @@ on:
       DWS_SSLMODE:
         required: false
       DWS_SSLROOTCERT_PEM:
+        required: false
+      HUAWEICLOUD_SDK_AK:
+        required: false
+      HUAWEICLOUD_SDK_SK:
+        required: false
+      HUAWEICLOUD_PROJECT_ID:
+        required: false
+      HUAWEICLOUD_REGION:
+        required: false
+      DWS_CI_VPC_ID:
+        required: false
+      DWS_CI_SUBNET_ID:
+        required: false
+      DWS_CI_SECURITY_GROUP_ID:
+        required: false
+      DWS_CI_AVAILABILITY_ZONE:
+        required: false
+      DWS_CI_DB_PASSWORD:
         required: false
   workflow_dispatch:
 
@@ -37,22 +64,22 @@ concurrency:
 
 jobs:
   integration:
-    name: DWS integration (${{ matrix.mode }})
+    name: DWS integration (v${{ matrix.datastore_version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Cluster creation alone takes 10-15 minutes, then three compatibility
+    # modes run against it.
+    timeout-minutes: 90
     strategy:
+      # Each leg provisions its own cluster, so one failing version still
+      # reports the others rather than masking them.
       fail-fast: false
       matrix:
-        include:
-          - mode: ora
-            expected: ORA
-            database_env: DWS_DATABASE_ORA
-          - mode: td
-            expected: TD
-            database_env: DWS_DATABASE_TD
-          - mode: mysql
-            expected: MYSQL
-            database_env: DWS_DATABASE_MYSQL
+        # Kept as a list so another version is one line away, but only 8.2.1 is
+        # covered for now — 9.1 waits until the adapter is exercised on it.
+        # A long-lived cluster has whatever version it has, so only the first
+        # leg runs there.
+        datastore_version:
+          - "8.2.1.258"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,7 +99,8 @@ jobs:
       # Credentials start here rather than at job level: the three steps above
       # are third-party actions, and a job-level env would put the connection
       # secrets in their process environment for no reason.
-      - name: Verify cloud test configuration
+      - name: Resolve cluster mode
+        id: mode
         shell: bash
         env:
           DWS_HOST: ${{ secrets.DWS_HOST }}
@@ -81,25 +109,67 @@ jobs:
           DWS_DATABASE_MYSQL: ${{ secrets.DWS_DATABASE_MYSQL }}
           DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
           DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
         run: |
-          required=(
-            DWS_HOST
-            DWS_USERNAME
-            DWS_PASSWORD
-            "${{ matrix.database_env }}"
-          )
-          for name in "${required[@]}"; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required repository secret: ${name}"
-              exit 1
+          if [ -n "${DWS_HOST:-}" ]; then
+            # A long-lived cluster has a fixed version: run once and let the
+            # remaining matrix legs skip.
+            if [ "${{ strategy.job-index }}" != "0" ]; then
+              echo "mode=skip" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Long-lived cluster mode covers one version; skipping ${{ matrix.datastore_version }}"
+              exit 0
             fi
-          done
-          database_env="${{ matrix.database_env }}"
-          database="${!database_env}"
-          echo "::add-mask::${database}"
-          echo "DWS_DATABASE=${database}" >> "${GITHUB_ENV}"
+            for name in DWS_USERNAME DWS_PASSWORD DWS_DATABASE_ORA DWS_DATABASE_TD DWS_DATABASE_MYSQL; do
+              if [ -z "${!name:-}" ]; then
+                echo "::error::DWS_HOST is set, so ${name} is required too"
+                exit 1
+              fi
+            done
+            echo "mode=long-lived" >> "${GITHUB_OUTPUT}"
+          elif [ -n "${HUAWEICLOUD_SDK_AK:-}" ]; then
+            echo "mode=ephemeral" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::error::Configure either DWS_HOST (long-lived cluster) or HUAWEICLOUD_SDK_AK (ephemeral cluster)"
+            exit 1
+          fi
+
+      # Runs before the tests and is torn down by the always() step at the end.
+      - name: Create ephemeral cluster
+        id: provision
+        if: steps.mode.outputs.mode == 'ephemeral'
+        env:
+          DWS_CI_DATASTORE_VERSION: ${{ matrix.datastore_version }}
+          DWS_CI_NAME_SUFFIX: ${{ matrix.datastore_version }}
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
+          HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
+          DWS_CI_VPC_ID: ${{ secrets.DWS_CI_VPC_ID }}
+          DWS_CI_SUBNET_ID: ${{ secrets.DWS_CI_SUBNET_ID }}
+          DWS_CI_SECURITY_GROUP_ID: ${{ secrets.DWS_CI_SECURITY_GROUP_ID }}
+          DWS_CI_AVAILABILITY_ZONE: ${{ secrets.DWS_CI_AVAILABILITY_ZONE }}
+          DWS_CI_DB_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
+        run: |
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
+            python ci/cloud/dws/cluster.py up
+
+      # A fresh cluster holds only the default ORA database, so the TD and MYSQL
+      # ones have to be created before their modes can be exercised. On a
+      # long-lived cluster these already exist and are named by secrets.
+      - name: Create compatibility databases
+        if: steps.mode.outputs.mode == 'ephemeral'
+        env:
+          DWS_HOST: ${{ steps.provision.outputs.host }}
+          DWS_PORT: ${{ steps.provision.outputs.port }}
+          DWS_DATABASE: ${{ steps.provision.outputs.database }}
+          DWS_USERNAME: ${{ steps.provision.outputs.username }}
+          DWS_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
+        run: |
+          uv run --no-project --isolated --with psycopg2-binary==2.9.10 \
+            python ci/cloud/dws/databases.py create
 
       - name: Materialize CA certificate
+        if: steps.mode.outputs.mode != 'skip'
         shell: bash
         env:
           DWS_SSLROOTCERT_PEM: ${{ secrets.DWS_SSLROOTCERT_PEM }}
@@ -114,17 +184,69 @@ jobs:
             echo "::notice::DWS_SSLROOTCERT_PEM is unset; verify-ca assertions will be skipped"
           fi
 
+      # One pytest run per compatibility mode against the same cluster: three
+      # clusters would triple the bill for what three databases give.
+      # DWS_SSLROOTCERT is not listed here: the step above exports it through
+      # GITHUB_ENV as a path, since the certificate arrives as PEM content.
       - name: Run DWS integration tests
-        # DWS_SSLROOTCERT is not listed here: the step above exports it through
-        # GITHUB_ENV as a path, since the certificate arrives as PEM content.
+        if: steps.mode.outputs.mode != 'skip'
         env:
-          DWS_HOST: ${{ secrets.DWS_HOST }}
-          DWS_PORT: ${{ secrets.DWS_PORT }}
+          DWS_HOST: ${{ steps.provision.outputs.host || secrets.DWS_HOST }}
+          DWS_PORT: ${{ steps.provision.outputs.port || secrets.DWS_PORT }}
           DWS_SCHEMA: ${{ secrets.DWS_SCHEMA }}
-          DWS_USERNAME: ${{ secrets.DWS_USERNAME }}
-          DWS_PASSWORD: ${{ secrets.DWS_PASSWORD }}
+          DWS_USERNAME: ${{ steps.provision.outputs.username || secrets.DWS_USERNAME }}
+          DWS_PASSWORD: ${{ steps.mode.outputs.mode == 'ephemeral' && secrets.DWS_CI_DB_PASSWORD || secrets.DWS_PASSWORD }}
           DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
-          DWS_EXPECTED_MODE: ${{ matrix.expected }}
+          EPHEMERAL: ${{ steps.mode.outputs.mode == 'ephemeral' }}
+          DWS_DATABASE_ORA: ${{ secrets.DWS_DATABASE_ORA }}
+          DWS_DATABASE_TD: ${{ secrets.DWS_DATABASE_TD }}
+          DWS_DATABASE_MYSQL: ${{ secrets.DWS_DATABASE_MYSQL }}
+          EPHEMERAL_DATABASE_ORA: ${{ steps.provision.outputs.database }}
         run: |
-          uv run --all-packages --with pytest \
-            pytest datus-dws/tests/integration -m integration --verbose
+          set -u
+          failures=()
+          for mode in ORA TD MYSQL; do
+            if [ "${EPHEMERAL}" = "true" ]; then
+              if [ "${mode}" = "ORA" ]; then
+                database="${EPHEMERAL_DATABASE_ORA}"
+              else
+                # Matches the names ci/cloud/dws/databases.py creates.
+                database="datus_ci_$(echo "${mode}" | tr '[:upper:]' '[:lower:]')"
+              fi
+            else
+              database_env="DWS_DATABASE_${mode}"
+              database="${!database_env}"
+              echo "::add-mask::${database}"
+            fi
+
+            echo "::group::${mode} compatibility mode"
+            if DWS_DATABASE="${database}" DWS_EXPECTED_MODE="${mode}" \
+              uv run --all-packages --with pytest \
+                pytest datus-dws/tests/integration -m integration --verbose; then
+              echo "${mode}: passed"
+            else
+              failures+=("${mode}")
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ ${#failures[@]} -gt 0 ]; then
+            echo "::error::Failed compatibility modes: ${failures[*]}"
+            exit 1
+          fi
+
+      # always(): an ephemeral cluster bills until it is deleted, so this must
+      # run after a failed test step, a cancelled job, or a failed provision
+      # that still left a cluster behind. `reap` is the backstop for the cases
+      # where this step never runs at all.
+      - name: Delete ephemeral cluster
+        if: always() && steps.provision.outputs.cluster_id != ''
+        env:
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
+          HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
+          DWS_CI_CLUSTER_ID: ${{ steps.provision.outputs.cluster_id }}
+        run: |
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
+            python ci/cloud/dws/cluster.py down --wait

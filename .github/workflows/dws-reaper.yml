@@ -1,0 +1,68 @@
+name: DWS Cluster Reaper
+
+# The integration job deletes its cluster in an always() step, but a cancelled
+# runner or a lost network can still leave one billing indefinitely. This is the
+# backstop: it deletes CI clusters whose TTL tag has passed, and touches nothing
+# that lacks both the owner tag and the datus-ci- name prefix.
+
+on:
+  schedule:
+    # Hourly; a leaked cluster costs money for every hour it survives.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would be deleted without deleting it"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dws-reaper
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Skip when the cloud credentials are absent
+        id: creds
+        shell: bash
+        env:
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+        run: |
+          if [ -z "${HUAWEICLOUD_SDK_AK:-}" ]; then
+            echo "::notice::HUAWEICLOUD_SDK_AK is unset; nothing to reap"
+            echo "configured=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "configured=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Reap expired CI clusters
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          HUAWEICLOUD_PROJECT_ID: ${{ secrets.HUAWEICLOUD_PROJECT_ID }}
+          HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
+        run: |
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
+            python ci/cloud/dws/cluster.py reap ${{ inputs.dry_run && '--dry-run' || '' }}
