@@ -388,8 +388,10 @@ Marker semantics:
 - Any marker used but undeclared produces `PytestUnknownMarkWarning` and breaks under
   `--strict-markers`.
 
-Aim for ≥80% line coverage on the adapter package. CI does not currently measure coverage, so
-check locally when touching an adapter:
+Aim for ≥80% line coverage on the adapter package. `ci/run-unit-tests.sh` measures and prints it
+on every run but enforces no threshold: 13 of 21 packages are below the target today, so a gate
+would block work rather than direct it. The number is there to be watched — and to be improved
+before it is enforced. Check locally when touching an adapter:
 
 ```bash
 cd datus-<name> && python -m pytest tests/unit -m "not integration" --cov=datus_<name> --cov-report=term-missing
