@@ -138,7 +138,9 @@ if [ "${#selected_packages[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
   exit 0
 fi
 
-for package in "${selected_packages[@]}"; do
+# ${arr[@]+"${arr[@]}"} expands to nothing for an empty array instead of
+# tripping `set -u`, which bash 3.2 — still the system bash on macOS — does.
+for package in ${selected_packages[@]+"${selected_packages[@]}"}; do
   if ! is_known_package "$package"; then
     echo "Unknown package '$package'. Use --list to see valid package names." >&2
     exit 2
@@ -152,7 +154,7 @@ should_run_package() {
   fi
 
   local requested
-  for requested in "${selected_packages[@]}"; do
+  for requested in ${selected_packages[@]+"${selected_packages[@]}"}; do
     if [ "$requested" = "$package" ]; then
       return 0
     fi
@@ -177,10 +179,26 @@ for spec in "${PACKAGE_SPECS[@]}"; do
 
   echo ""
   echo "=== Unit tests: $package ==="
+  # datus-db-core -> datus_db_core, datus-mysql -> datus_mysql
+  coverage_package="${package//-/_}"
+  if [ ! -d "${package}/${coverage_package}" ]; then
+    coverage_package=""
+  fi
   if [ "$dry_run" -eq 1 ]; then
     echo "pytest target: $test_path"
     continue
   fi
 
-  uv run --all-packages --with pytest --with pandas --with pyarrow pytest "$test_path" -m "not integration" --tb=short --verbose
+  # --strict-markers turns an undeclared marker into an error instead of a
+  # warning, so a typo cannot silently deselect a test. Coverage is measured and
+  # printed but not enforced: the number is there to be watched before anyone
+  # argues about a threshold.
+  coverage_args=()
+  if [ -n "$coverage_package" ]; then
+    coverage_args=(--cov="$coverage_package" --cov-report=term-missing:skip-covered)
+  fi
+
+  uv run --all-packages --with pytest --with pytest-cov --with pandas --with pyarrow \
+    pytest "$test_path" -m "not integration" --strict-markers --tb=short --verbose \
+      ${coverage_args[@]+"${coverage_args[@]}"}
 done
