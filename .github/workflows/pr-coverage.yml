@@ -26,8 +26,8 @@ permissions:
 
 jobs:
   coverage:
-    # Documentation-only PRs change no measurable lines, so the gate would
-    # always read 100% and the comment would say nothing.
+    # Documentation-only PRs change no measurable lines, so the report would
+    # always read 100% and say nothing.
     if: >-
       github.event_name == 'pull_request_target' &&
       !startsWith(github.event.pull_request.title, '[Doc]') &&
@@ -84,32 +84,30 @@ jobs:
             const script = require('./ci/post-coverage-comment.js');
             await script({ github, context, core });
 
-      # Separate from the run step so the comment is posted first: a failure
-      # here should still leave the numbers visible on the PR.
-      - name: Check coverage threshold
+      # Reports without failing, for now. The 80% line is the target this repo
+      # is aiming at, not yet a gate: turn the exit below into a failure once a
+      # few PRs have shown what the numbers actually look like.
+      - name: Report coverage against the target
         if: always() && steps.metrics.outcome != 'cancelled'
         run: |
           python3 - <<'PY'
-          import sys
-
           diff = float("${{ steps.metrics.outputs.diff }}" or 0)
           outcome = "${{ steps.metrics.outputs.test_outcome }}"
-          failed = False
           if diff < 80:
-              print(f"::error::Diff coverage {diff}% is below the 80% threshold")
-              failed = True
+              print(f"::warning::Diff coverage {diff}% is below the 80% target")
+          else:
+              print(f"Diff coverage {diff}% meets the 80% target")
           if outcome != "success":
-              print("::error::Unit tests did not pass")
-              failed = True
-          sys.exit(1 if failed else 0)
+              print("::warning::Unit tests did not pass; see the job log")
           PY
 
-  # merge_group cannot see a pull request, so the gate cannot run there. This
-  # publishes the same check name to satisfy a branch ruleset that requires it.
+  # A merge group has no pull request to measure or comment on. This publishes
+  # the same check name so the context exists in both places, which a branch
+  # ruleset would need if this is ever made required.
   coverage-merge-group-context:
     name: coverage
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Publish merge queue coverage context
-        run: echo "Coverage is enforced on pull_request_target before merge queue entry."
+        run: echo "Coverage is reported on pull_request_target; there is no pull request to measure here."

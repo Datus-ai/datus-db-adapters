@@ -388,13 +388,14 @@ Marker semantics:
 - Any marker used but undeclared produces `PytestUnknownMarkWarning` and breaks under
   `--strict-markers`.
 
-**Diff coverage of a PR must reach 80%** — the share of the lines it changed that its tests
-execute. `.github/workflows/pr-coverage.yml` posts both numbers as a PR comment and fails the check
-when the diff falls short.
+**Aim for 80% diff coverage** — the share of the lines a PR changed that its tests execute.
+`.github/workflows/pr-coverage.yml` posts that number, alongside overall coverage, as a comment on
+every PR. It reports without blocking today; the intent is to enforce it once a few PRs have shown
+what the numbers look like in practice.
 
-The gate is on the diff rather than the total on purpose: 13 of 21 packages sit below 80% overall
-today, so a total-coverage gate would block every PR regardless of what it touched, while a diff
-gate asks only that new code arrives tested. Overall coverage is reported for information.
+The target is on the diff rather than the total on purpose: 13 of 21 packages sit below 80%
+overall, so a total-coverage gate would block every PR regardless of what it touched, while a diff
+target asks only that new code arrives tested.
 
 Check locally when touching an adapter:
 

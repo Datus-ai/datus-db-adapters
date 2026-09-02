@@ -179,26 +179,15 @@ for spec in "${PACKAGE_SPECS[@]}"; do
 
   echo ""
   echo "=== Unit tests: $package ==="
-  # datus-db-core -> datus_db_core, datus-mysql -> datus_mysql
-  coverage_package="${package//-/_}"
-  if [ ! -d "${package}/${coverage_package}" ]; then
-    coverage_package=""
-  fi
   if [ "$dry_run" -eq 1 ]; then
     echo "pytest target: $test_path"
     continue
   fi
 
   # --strict-markers turns an undeclared marker into an error instead of a
-  # warning, so a typo cannot silently deselect a test. Coverage is measured and
-  # printed but not enforced: the number is there to be watched before anyone
-  # argues about a threshold.
-  coverage_args=()
-  if [ -n "$coverage_package" ]; then
-    coverage_args=(--cov="$coverage_package" --cov-report=term-missing:skip-covered)
-  fi
-
-  uv run --all-packages --with pytest --with pytest-cov --with pandas --with pyarrow \
-    pytest "$test_path" -m "not integration" --strict-markers --tb=short --verbose \
-      ${coverage_args[@]+"${coverage_args[@]}"}
+  # warning, so a typo cannot silently deselect a test. Coverage is deliberately
+  # not measured here: ci/run_pr_coverage.py does that once, for the whole
+  # workspace, and reports it on the pull request.
+  uv run --all-packages --with pytest --with pandas --with pyarrow \
+    pytest "$test_path" -m "not integration" --strict-markers --tb=short --verbose
 done
