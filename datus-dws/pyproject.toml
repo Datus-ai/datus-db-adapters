@@ -1,6 +1,6 @@
 [project]
 name = "datus-dws"
-version = "0.1.0"
+version = "0.1.1"
 description = "Huawei Cloud GaussDB(DWS) database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
