@@ -70,7 +70,8 @@ that can silently produce wrong results:
 - `'a' || NULL` is `'a'`; concatenation absorbs NULL.
 - `DATE` is `timestamp(0)` and `DATE - DATE` yields an `interval`.
 
-TD and MySQL modes are not verified by this adapter's test suite.
+The cloud integration suite runs the same contract and TPC-H tests in ORA, TD
+and MySQL modes.
 
 ## Table DDL
 
@@ -95,6 +96,21 @@ python -m pytest tests/integration/ -v
 
 Integration tests skip automatically when `DWS_HOST` is unset. They create
 objects in a run-scoped schema and drop it on teardown.
+
+### Initialize persistent TPC-H sample data
+
+The integration suite loads a deterministic five-table TPC-H fixture into its
+temporary schema. To initialize the same dataset in a schema kept for Agent
+testing, run from the `datus-dws` directory:
+
+```bash
+export DWS_HOST=... DWS_PORT=8000 DWS_DATABASE=gaussdb \
+       DWS_USERNAME=dbadmin DWS_PASSWORD=... DWS_SCHEMA=main
+python scripts/init_tpch_data.py --drop
+```
+
+The command reuses `datus_dws.tpch_data`, verifies every row count, and only
+drops the five `tpch_*` tables when `--drop` is explicitly provided.
 
 ## Verified against
 
