@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "cryptography>=41.0.0",
-    "datus-db-core>=0.1.6",
+    "datus-db-core>=0.1.7",
     "snowflake-connector-python>=3.6.0",
     "pandas>=2.1.2,<2.2.0",
     "pyarrow>=14.0.1",
