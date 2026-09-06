@@ -7,10 +7,14 @@ than keeping one online. `cluster.py` implements that lifecycle, and
 `DBCOMPATIBILITY` is fixed at creation, so the TD and MYSQL modes need their own
 databases while ORA reuses the cluster's default one.
 
-`databases.py` sends the admin password to the cluster's EIP, across the public
-internet, so it will not open an unencrypted connection: `sslmode` defaults to
-`require`, and to `verify-ca` once `DWS_SSLROOTCERT` is set. The workflow
-therefore materializes the CA before this step, not after.
+`databases.py` sends the cluster admin password to the EIP, across the public
+internet, so it verifies the server: `sslmode` defaults to `verify-ca` and it
+refuses to connect without a CA. `prefer` would accept plaintext and `require`
+would encrypt toward whoever answers, neither of which is a safe default for an
+administrative credential on a public route. **`DWS_SSLROOTCERT_PEM` is
+therefore required for ephemeral clusters**; the workflow materializes it before
+this step and fails early when it is absent. `DWS_SSLMODE` can lower this
+deliberately for a private endpoint.
 
 Deleting is the only operation Huawei Cloud documents as stopping billing
 outright: a *stopped* cluster still bills its disks, and for single-tier
@@ -44,6 +48,7 @@ Ephemeral runs cost roughly one cluster-hour per run (creation alone takes
 | `DWS_CI_SECURITY_GROUP_ID` | `sg-...` | Must allow the DB port from wherever the job runs |
 | `DWS_CI_AVAILABILITY_ZONE` | `cn-east-3a` | AZ inside the region |
 | `DWS_CI_DB_PASSWORD` | — | Cluster admin password; must satisfy the DWS complexity rules |
+| `DWS_SSLROOTCERT_PEM` | PEM content | DWS CA; **required** — the admin password travels over the public EIP and the server is verified |
 
 Optional, with defaults: `DWS_CI_FLAVOR` (`dwsk2.h.xlarge.4.kc1`), `DWS_CI_NUM_NODE`
 (`3` — the documented minimum for cluster mode), `DWS_CI_DB_NAME` (`gaussdb`),

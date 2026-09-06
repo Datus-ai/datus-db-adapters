@@ -54,23 +54,31 @@ def _int_env(name: str, default: int) -> int:
 
 
 def ssl_settings() -> dict[str, str]:
-    """TLS options for the connection, defaulting to an encrypted channel.
+    """TLS options for the connection. Verifies the server by default.
 
-    An ephemeral cluster is reached over its EIP, so the password crosses the
-    public internet. libpq's own default, `prefer`, silently accepts plaintext
-    when the server does not offer TLS, which is not a suitable default for
-    sending one. `require` encrypts without proving who is on the other end;
-    supplying DWS_SSLROOTCERT raises that to `verify-ca`, matching what the
-    integration tests use.
+    This carries the cluster admin password to an ephemeral cluster's EIP,
+    across the public internet, so both weaker libpq modes are wrong here:
+    `prefer` accepts plaintext when the server offers no TLS, and `require`
+    encrypts without establishing who terminated the connection — anyone able
+    to intercept the route can present their own certificate and receive the
+    password. Hence `verify-ca` and a CA to check against.
+
+    DWS_SSLMODE can still lower it, for a private endpoint or local debugging,
+    but that takes someone deciding to; the default does not quietly give up
+    server identity.
     """
 
     sslrootcert = os.getenv("DWS_SSLROOTCERT", "").strip()
-    sslmode = os.getenv("DWS_SSLMODE", "").strip() or ("verify-ca" if sslrootcert else "require")
+    sslmode = os.getenv("DWS_SSLMODE", "").strip() or "verify-ca"
+    if sslmode.startswith("verify") and not sslrootcert:
+        raise DatabaseError(
+            f"DWS_SSLMODE={sslmode} needs DWS_SSLROOTCERT: the server cannot be verified without a CA. "
+            f"Set DWS_SSLROOTCERT_PEM in the repository secrets so the workflow can materialize it, "
+            f"or set DWS_SSLMODE explicitly to accept an unverified server."
+        )
     settings = {"sslmode": sslmode}
     if sslrootcert:
         settings["sslrootcert"] = sslrootcert
-    elif sslmode.startswith("verify"):
-        raise DatabaseError(f"DWS_SSLMODE={sslmode} needs DWS_SSLROOTCERT to verify the server certificate")
     return settings
 
 
