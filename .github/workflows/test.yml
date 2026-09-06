@@ -76,6 +76,7 @@ jobs:
             --with packaging \
             --with pytest \
             --with huaweicloudsdkdws==3.1.212 \
+            --with huaweicloudsdkeip==3.1.212 \
             python -m pytest ci/tests --verbose
 
   select-integration-tests:

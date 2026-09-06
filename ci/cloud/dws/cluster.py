@@ -241,6 +241,94 @@ def build_client():
     return DwsClient.new_builder().with_credentials(credentials).with_region(region).build()
 
 
+def build_eip_client():
+    """Construct the EIP client, used only to release auto-assigned addresses."""
+
+    from huaweicloudsdkcore.auth.credentials import BasicCredentials
+    from huaweicloudsdkeip.v2 import EipClient
+    from huaweicloudsdkeip.v2.region.eip_region import EipRegion
+
+    credentials = BasicCredentials(
+        ak=_require_env("HUAWEICLOUD_SDK_AK"),
+        sk=_require_env("HUAWEICLOUD_SDK_SK"),
+        project_id=_require_env("HUAWEICLOUD_PROJECT_ID"),
+    )
+    region = EipRegion.value_of(_require_env("HUAWEICLOUD_REGION"))
+    return EipClient.new_builder().with_credentials(credentials).with_region(region).build()
+
+
+def cluster_eip_address(detail: Any) -> str | None:
+    """The EIP bound to a cluster, or None when it has no public address."""
+
+    public_ip = getattr(detail, "public_ip", None)
+    address = getattr(public_ip, "eip_address", None) if public_ip else None
+    return str(address) if address else None
+
+
+def release_eip(address: str, *, client=None) -> bool:
+    """Delete the EIP with this exact address once it is detached.
+
+    DWS's own `release_eip_type=RELEASE_BINDING` only unbinds: the address
+    survives the cluster, unattached and still billing. Deleting it needs the
+    EIP API.
+
+    Matching is by exact address rather than "any unattached EIP" so this can
+    never reach an address belonging to something else in the account.
+    """
+
+    from huaweicloudsdkeip.v2 import DeletePublicipRequest, ListPublicipsRequest
+
+    client = client or build_eip_client()
+    for publicip in client.list_publicips(ListPublicipsRequest()).publicips or []:
+        if getattr(publicip, "public_ip_address", None) != address:
+            continue
+        if getattr(publicip, "port_id", None):
+            # Still attached: either the cluster outlived the delete call or the
+            # address was reassigned. Deleting it now would cut a live resource.
+            print(f"::warning::EIP {address} is still attached; not releasing it", flush=True)
+            return False
+        client.delete_publicip(DeletePublicipRequest(publicip_id=publicip.id))
+        print(f"released EIP {address}", flush=True)
+        return True
+    # Already gone, which is the desired end state.
+    return False
+
+
+def release_unbound_eips(*, client=None, dry_run: bool = False) -> int:
+    """Delete every EIP that is attached to nothing. Returns how many.
+
+    This account exists for these tests: it holds one VPC — the pre-created CI
+    one — and no compute, so every EIP in it came from a cluster this tool
+    built. An unattached one is therefore always a leftover, whatever produced
+    it: a cancelled teardown, a cluster deleted from the console, or a run that
+    predates the release step.
+
+    That premise is what makes an unattached-means-delete sweep safe here, and
+    it is the only thing that does. Should the account ever host anything else,
+    this has to go back to matching by address.
+    """
+
+    from huaweicloudsdkeip.v2 import DeletePublicipRequest, ListPublicipsRequest
+
+    client = client or build_eip_client()
+    released = 0
+    for publicip in client.list_publicips(ListPublicipsRequest()).publicips or []:
+        if getattr(publicip, "port_id", None):
+            continue
+        address = getattr(publicip, "public_ip_address", None)
+        if dry_run:
+            print(f"would release unbound EIP {address}", flush=True)
+            released += 1
+            continue
+        client.delete_publicip(DeletePublicipRequest(publicip_id=publicip.id))
+        # Name every address deleted: this is the audit trail if the premise
+        # above ever stops holding.
+        print(f"released unbound EIP {address}", flush=True)
+        released += 1
+    return released
+    return False
+
+
 def create_cluster(client, spec: ClusterSpec, *, now: datetime | None = None) -> str:
     """Create the cluster and return its id."""
 
@@ -440,29 +528,48 @@ def cmd_down(args: argparse.Namespace) -> int:
         return 0
 
     client = build_client()
-    if not args.force:
-        # Refuse to delete anything this tool did not create: a mistyped or
-        # stale id must not take out someone's warehouse.
-        from huaweicloudsdkcore.exceptions.exceptions import ServiceResponseException
+    from huaweicloudsdkcore.exceptions.exceptions import ServiceResponseException
 
-        try:
-            detail = describe(client, cluster_id)
-        except ServiceResponseException as exc:
-            if getattr(exc, "status_code", None) != 404:
-                # A permission, network or API error is not evidence that the
-                # cluster is gone. Swallowing it here would skip the delete and
-                # leave a billing cluster behind with a success exit code.
-                raise
+    # Read the cluster before deleting it: the EIP address is only discoverable
+    # here, and a forced delete leaks it just as easily as a checked one.
+    detail = None
+    try:
+        detail = describe(client, cluster_id)
+    except ServiceResponseException as exc:
+        if getattr(exc, "status_code", None) == 404:
             print(f"::notice::Cluster {cluster_id} no longer exists", flush=True)
             return 0
-        if not is_ci_cluster(detail):
-            raise ClusterError(
-                f"Refusing to delete {cluster_id}: it lacks the {OWNER_TAG_KEY} tag "
-                f"or the {CLUSTER_NAME_PREFIX} name prefix. Pass --force to override."
-            )
+        if not args.force:
+            # A permission, network or API error is not evidence that the
+            # cluster is gone. Swallowing it here would skip the delete and
+            # leave a billing cluster behind with a success exit code.
+            raise
+        # --force exists for exactly this case: delete even when the cluster
+        # cannot be read. The EIP stays undiscoverable, so say so rather than
+        # reporting a clean teardown.
+        print(
+            f"::warning::Could not read cluster {cluster_id} ({exc}); "
+            f"deleting anyway, but its EIP cannot be released automatically",
+            flush=True,
+        )
 
-    if delete_cluster(client, cluster_id) and args.wait:
-        wait_deleted(client, cluster_id)
+    if detail is not None and not args.force and not is_ci_cluster(detail):
+        # Refuse to delete anything this tool did not create: a mistyped or
+        # stale id must not take out someone's warehouse.
+        raise ClusterError(
+            f"Refusing to delete {cluster_id}: it lacks the {OWNER_TAG_KEY} tag "
+            f"or the {CLUSTER_NAME_PREFIX} name prefix. Pass --force to override."
+        )
+
+    eip_address = cluster_eip_address(detail) if detail is not None else None
+
+    if delete_cluster(client, cluster_id):
+        # The EIP stays bound until the cluster is actually gone, so releasing
+        # it means waiting even when the caller did not ask to.
+        if args.wait or eip_address:
+            wait_deleted(client, cluster_id)
+        if eip_address:
+            release_eip(eip_address)
     return 0
 
 
@@ -538,9 +645,25 @@ def cmd_reap(args: argparse.Namespace) -> int:
             print(f"would delete expired cluster {name} ({cluster_id}, expires_at={expires_at})", flush=True)
             continue
         print(f"deleting expired cluster {name} ({cluster_id}, expires_at={expires_at})", flush=True)
-        delete_cluster(client, cluster_id)
-        reaped += 1
-    print(f"reaped {reaped} cluster(s)", flush=True)
+        # The listing carries no public_ip, so read the cluster for its address
+        # before it stops being readable.
+        eip_address = cluster_eip_address(describe(client, cluster_id))
+        if delete_cluster(client, cluster_id):
+            reaped += 1
+            if eip_address:
+                # An abandoned cluster's EIP is exactly the kind of thing this
+                # backstop exists for, and it outlives the cluster unless
+                # deleted explicitly.
+                wait_deleted(client, cluster_id)
+                release_eip(eip_address)
+
+    # Then everything still unattached, whoever left it: a cluster removed from
+    # the console, a run that predates the release step, a teardown killed
+    # between deleting the cluster and its address. Those have no owner tag to
+    # match on, so nothing else would ever collect them.
+    released = release_unbound_eips(dry_run=args.dry_run)
+    verb = "would release" if args.dry_run else "released"
+    print(f"reaped {reaped} cluster(s), {verb} {released} unbound EIP(s)", flush=True)
     return 0
 
 

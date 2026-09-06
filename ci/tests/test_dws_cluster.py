@@ -35,6 +35,14 @@ requires_sdk = pytest.mark.skipif(
     reason="huaweicloudsdkdws is not installed",
 )
 
+# Releasing an EIP is a separate service client. CI installs it alongside the
+# DWS SDK (see .github/workflows/test.yml); without it these skip rather than
+# error, the same bargain requires_sdk makes.
+requires_eip_sdk = pytest.mark.skipif(
+    importlib.util.find_spec("huaweicloudsdkeip") is None,
+    reason="huaweicloudsdkeip is not installed",
+)
+
 
 @pytest.fixture
 def env(monkeypatch):
@@ -293,8 +301,11 @@ def test_reap_deletes_only_expired_ci_clusters(env, monkeypatch):
         ],
     )
     foreign = SimpleNamespace(id="prod-1", name="production-warehouse", tags=[])
-    client = FakeClient(clusters=[expired, live, foreign])
+    # reap reads each doomed cluster for its EIP address; only the expired one
+    # gets that far, so one scripted state is enough.
+    client = FakeClient(clusters=[expired, live, foreign], details=[detail("AVAILABLE", public_ip=None)])
     monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "build_eip_client", lambda: FakeEipClient())
     monkeypatch.setattr(cluster, "delete_cluster", lambda c, cid: c.delete_dws_cluster(SimpleNamespace(cluster_id=cid)))
 
     exit_code = cluster.main(["reap"])
@@ -314,10 +325,14 @@ def test_reap_dry_run_deletes_nothing(env, monkeypatch):
         ],
     )
     client = FakeClient(clusters=[expired])
+    eip_client = FakeEipClient([publicip("1.2.3.4", ip_id="eip-a")])
     monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "build_eip_client", lambda: eip_client)
 
     assert cluster.main(["reap", "--dry-run"]) == 0
     assert client.deleted == []
+    # The unbound sweep is part of reap, so --dry-run has to hold it back too.
+    assert eip_client.deleted == []
 
 
 # ==================== command wiring ====================
@@ -555,7 +570,10 @@ def test_down_deletes_its_own_cluster(env, monkeypatch):
 
 @requires_sdk
 def test_down_force_skips_the_ownership_check(env, monkeypatch):
-    client = FakeClient()
+    # A cluster carrying neither the owner tag nor the name prefix: refused
+    # without --force, deleted with it.
+    foreign = detail("AVAILABLE", id="anything", name="production-warehouse", tags=[], public_ip=None)
+    client = FakeClient(details=[foreign])
     monkeypatch.setattr(cluster, "build_client", lambda: client)
 
     assert cluster.main(["down", "--cluster-id", "anything", "--force"]) == 0
@@ -580,4 +598,188 @@ def test_down_propagates_a_non_404_inspection_failure(env, monkeypatch):
 
     with pytest.raises(ServiceResponseException):
         cluster.main(["down", "--cluster-id", "cluster-1"])
+    assert client.deleted == []
+
+
+# ==================== EIP release ====================
+#
+# DWS's own release_eip_type=RELEASE_BINDING only detaches the address: the EIP
+# survives its cluster, unattached and still billing. Two of them accumulated
+# unnoticed before this was covered, so every branch that decides whether an
+# address gets deleted is exercised below.
+
+
+class FakeEipClient:
+    """Serves an EIP inventory and records deletions.
+
+    A deleted address leaves the inventory, as it does on the real API — a fake
+    that kept serving it would let a double delete pass unnoticed.
+    """
+
+    def __init__(self, publicips=()):
+        self._publicips = list(publicips)
+        self.deleted = []
+
+    def list_publicips(self, request):
+        return SimpleNamespace(publicips=list(self._publicips))
+
+    def delete_publicip(self, request):
+        self._publicips = [p for p in self._publicips if p.id != request.publicip_id]
+        self.deleted.append(request.publicip_id)
+        return SimpleNamespace()
+
+
+def publicip(address, *, ip_id="eip-1", port_id=None):
+    return SimpleNamespace(id=ip_id, public_ip_address=address, port_id=port_id)
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_release_eip_deletes_the_detached_address(monkeypatch):
+    client = FakeEipClient([publicip("1.2.3.4", ip_id="eip-a")])
+
+    assert cluster.release_eip("1.2.3.4", client=client) is True
+    assert client.deleted == ["eip-a"]
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_release_eip_leaves_addresses_belonging_to_others(monkeypatch):
+    """Matching is by exact address, never "any unattached EIP".
+
+    The account holds unattached addresses for reasons of its own; a broader
+    filter here would delete them.
+    """
+    client = FakeEipClient([publicip("9.9.9.9", ip_id="someone-else")])
+
+    assert cluster.release_eip("1.2.3.4", client=client) is False
+    assert client.deleted == []
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_release_eip_refuses_an_address_still_attached(monkeypatch):
+    """A bound EIP means the cluster outlived the delete call; cutting it here
+    would take out a live resource."""
+    client = FakeEipClient([publicip("1.2.3.4", ip_id="eip-a", port_id="port-7")])
+
+    assert cluster.release_eip("1.2.3.4", client=client) is False
+    assert client.deleted == []
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_down_releases_the_clusters_eip(env, monkeypatch):
+    eip_client = FakeEipClient([publicip("1.2.3.4", ip_id="eip-a")])
+    owned = detail(
+        "AVAILABLE",
+        id="cluster-1",
+        name="datus-ci-run",
+        tags=[tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE)],
+        public_ip=SimpleNamespace(eip_address="1.2.3.4"),
+    )
+    client = FakeClient(details=[owned])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "build_eip_client", lambda: eip_client)
+    monkeypatch.setattr(cluster, "wait_deleted", lambda *a, **k: None)
+
+    assert cluster.main(["down", "--cluster-id", "cluster-1"]) == 0
+    assert client.deleted == ["cluster-1"]
+    assert eip_client.deleted == ["eip-a"]
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_down_without_an_eip_deletes_nothing_extra(env, monkeypatch):
+    eip_client = FakeEipClient([publicip("1.2.3.4", ip_id="eip-a")])
+    owned = detail(
+        "AVAILABLE",
+        id="cluster-1",
+        name="datus-ci-run",
+        tags=[tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE)],
+        public_ip=None,
+    )
+    client = FakeClient(details=[owned])
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "build_eip_client", lambda: eip_client)
+
+    assert cluster.main(["down", "--cluster-id", "cluster-1"]) == 0
+    assert client.deleted == ["cluster-1"]
+    assert eip_client.deleted == []
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_reap_releases_the_eip_of_an_abandoned_cluster(env, monkeypatch):
+    """An abandoned cluster's EIP is what this backstop exists for."""
+    expired = SimpleNamespace(
+        id="expired-1",
+        name="datus-ci-old",
+        tags=[
+            tag(cluster.OWNER_TAG_KEY, cluster.OWNER_TAG_VALUE),
+            tag(cluster.EXPIRES_TAG_KEY, (NOW - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+        ],
+    )
+    eip_client = FakeEipClient([publicip("5.6.7.8", ip_id="eip-old")])
+    client = FakeClient(
+        clusters=[expired],
+        details=[detail("AVAILABLE", public_ip=SimpleNamespace(eip_address="5.6.7.8"))],
+    )
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+    monkeypatch.setattr(cluster, "build_eip_client", lambda: eip_client)
+    monkeypatch.setattr(cluster, "wait_deleted", lambda *a, **k: None)
+
+    assert cluster.main(["reap"]) == 0
+    assert client.deleted == ["expired-1"]
+    assert eip_client.deleted == ["eip-old"]
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_down_force_deletes_when_the_cluster_cannot_be_read(env, monkeypatch):
+    """--force means delete despite not being able to inspect the cluster.
+
+    The EIP is undiscoverable then, which the warning says out loud rather than
+    reporting a clean teardown.
+    """
+    from huaweicloudsdkcore.exceptions.exceptions import SdkError, ServiceResponseException
+
+    class Forbidden(FakeClient):
+        def list_cluster_details(self, request):
+            raise ServiceResponseException(403, SdkError(error_msg="permission denied"))
+
+    client = Forbidden()
+    monkeypatch.setattr(cluster, "build_client", lambda: client)
+
+    assert cluster.main(["down", "--cluster-id", "cluster-1", "--force"]) == 0
+    assert client.deleted == ["cluster-1"]
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_release_unbound_eips_sweeps_leftovers_but_spares_attached_ones():
+    """The sweep is what collects addresses no cluster points at any more.
+
+    They carry no owner tag — DWS creates them — so nothing narrower could find
+    them. What keeps this safe is the account holding only these tests'
+    resources; an attached address is still off limits.
+    """
+    client = FakeEipClient(
+        [
+            publicip("1.1.1.1", ip_id="leftover-a"),
+            publicip("2.2.2.2", ip_id="in-use", port_id="port-1"),
+            publicip("3.3.3.3", ip_id="leftover-b"),
+        ]
+    )
+
+    assert cluster.release_unbound_eips(client=client) == 2
+    assert sorted(client.deleted) == ["leftover-a", "leftover-b"]
+
+
+@requires_sdk
+@requires_eip_sdk
+def test_release_unbound_eips_dry_run_reports_without_deleting():
+    client = FakeEipClient([publicip("1.1.1.1", ip_id="leftover-a")])
+
+    assert cluster.release_unbound_eips(client=client, dry_run=True) == 1
     assert client.deleted == []

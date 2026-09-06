@@ -248,5 +248,5 @@ jobs:
           HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
           DWS_CI_CLUSTER_ID: ${{ steps.provision.outputs.cluster_id }}
         run: |
-          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 --with huaweicloudsdkeip==3.1.212 \
             python ci/cloud/dws/cluster.py down --wait
