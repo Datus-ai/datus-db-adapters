@@ -54,27 +54,28 @@ def _int_env(name: str, default: int) -> int:
 
 
 def ssl_settings() -> dict[str, str]:
-    """TLS options for the connection. Verifies the server by default.
+    """TLS options for the connection: encrypted always, verified when possible.
 
     This carries the cluster admin password to an ephemeral cluster's EIP,
-    across the public internet, so both weaker libpq modes are wrong here:
-    `prefer` accepts plaintext when the server offers no TLS, and `require`
-    encrypts without establishing who terminated the connection — anyone able
-    to intercept the route can present their own certificate and receive the
-    password. Hence `verify-ca` and a CA to check against.
+    across the public internet, so libpq's own default is unusable: `prefer`
+    falls back to plaintext when the server offers no TLS, and an attacker can
+    provoke that fallback by stripping it. `require` never falls back and needs
+    no configuration, which is why it is the default here.
 
-    DWS_SSLMODE can still lower it, for a private endpoint or local debugging,
-    but that takes someone deciding to; the default does not quietly give up
-    server identity.
+    It does not establish *who* answered, so a CA is still worth having: set
+    DWS_SSLROOTCERT (the workflow writes it from DWS_SSLROOTCERT_PEM) and this
+    rises to `verify-ca` on its own. That is the stronger setting, and the
+    trade-off — an unattended cluster holding nothing but freshly loaded test
+    fixtures, versus a certificate to distribute and rotate — is a deliberate
+    one, not an oversight.
     """
 
     sslrootcert = os.getenv("DWS_SSLROOTCERT", "").strip()
-    sslmode = os.getenv("DWS_SSLMODE", "").strip() or "verify-ca"
+    sslmode = os.getenv("DWS_SSLMODE", "").strip() or ("verify-ca" if sslrootcert else "require")
     if sslmode.startswith("verify") and not sslrootcert:
         raise DatabaseError(
             f"DWS_SSLMODE={sslmode} needs DWS_SSLROOTCERT: the server cannot be verified without a CA. "
-            f"Set DWS_SSLROOTCERT_PEM in the repository secrets so the workflow can materialize it, "
-            f"or set DWS_SSLMODE explicitly to accept an unverified server."
+            f"Set DWS_SSLROOTCERT_PEM in the repository secrets so the workflow can materialize it."
         )
     settings = {"sslmode": sslmode}
     if sslrootcert:

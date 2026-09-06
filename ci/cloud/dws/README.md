@@ -8,13 +8,16 @@ than keeping one online. `cluster.py` implements that lifecycle, and
 databases while ORA reuses the cluster's default one.
 
 `databases.py` sends the cluster admin password to the EIP, across the public
-internet, so it verifies the server: `sslmode` defaults to `verify-ca` and it
-refuses to connect without a CA. `prefer` would accept plaintext and `require`
-would encrypt toward whoever answers, neither of which is a safe default for an
-administrative credential on a public route. **`DWS_SSLROOTCERT_PEM` is
-therefore required for ephemeral clusters**; the workflow materializes it before
-this step and fails early when it is absent. `DWS_SSLMODE` can lower this
-deliberately for a private endpoint.
+internet, so it will not open an unencrypted connection: `sslmode` defaults to
+`require`, never libpq's `prefer`, which falls back to plaintext when the server
+offers no TLS — a fallback an attacker can provoke by stripping it.
+
+`require` encrypts but does not establish who answered. Setting
+`DWS_SSLROOTCERT_PEM` raises this to `verify-ca` automatically and closes that
+gap; it is left optional because the cluster is unattended, short-lived and
+holds nothing but freshly loaded fixtures, so the certificate to distribute and
+rotate costs more than it buys here. That is a judgement about this cluster, not
+a general one — for anything holding real data, configure the CA.
 
 Deleting is the only operation Huawei Cloud documents as stopping billing
 outright: a *stopped* cluster still bills its disks, and for single-tier
@@ -48,12 +51,13 @@ Ephemeral runs cost roughly one cluster-hour per run (creation alone takes
 | `DWS_CI_SECURITY_GROUP_ID` | `sg-...` | Must allow the DB port from wherever the job runs |
 | `DWS_CI_AVAILABILITY_ZONE` | `cn-east-3a` | AZ inside the region |
 | `DWS_CI_DB_PASSWORD` | — | Cluster admin password; must satisfy the DWS complexity rules |
-| `DWS_SSLROOTCERT_PEM` | PEM content | DWS CA; **required** — the admin password travels over the public EIP and the server is verified |
 
 Optional, with defaults: `DWS_CI_FLAVOR` (`dwsk2.h.xlarge.4.kc1`), `DWS_CI_NUM_NODE`
 (`3` — the documented minimum for cluster mode), `DWS_CI_DB_NAME` (`gaussdb`),
 `DWS_CI_DB_USER` (`dbadmin`), `DWS_CI_DB_PORT` (`8000`), `DWS_CI_TTL_MINUTES`
-(`180`), `DWS_CI_PUBLIC_IP` (`auto_assign`), `DWS_CI_EIP_BANDWIDTH` (`5` Mbit/s).
+(`180`), `DWS_CI_PUBLIC_IP` (`auto_assign`), `DWS_CI_EIP_BANDWIDTH` (`5` Mbit/s),
+`DWS_SSLROOTCERT_PEM` (unset — see the TLS note above and the security-group
+section; supplying it upgrades every connection to `verify-ca`).
 
 ## What costs money, and what to keep
 

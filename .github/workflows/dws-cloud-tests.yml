@@ -168,12 +168,6 @@ jobs:
             umask 077
             printf '%s' "${DWS_SSLROOTCERT_PEM}" > "${RUNNER_TEMP}/dws-ca.pem"
             echo "DWS_SSLROOTCERT=${RUNNER_TEMP}/dws-ca.pem" >> "${GITHUB_ENV}"
-          elif [ "${{ steps.mode.outputs.mode }}" = "ephemeral" ]; then
-            # An ephemeral cluster is administered over its public EIP, so the
-            # next step declines to send the password to a server it cannot
-            # identify. Say why here rather than let it fail further down.
-            echo "::error::DWS_SSLROOTCERT_PEM is required for ephemeral clusters: the admin password crosses the public internet and the server must be verifiable"
-            exit 1
           else
             echo "::notice::DWS_SSLROOTCERT_PEM is unset; verify-ca assertions will be skipped"
           fi

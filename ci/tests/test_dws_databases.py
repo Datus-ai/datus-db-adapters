@@ -66,28 +66,31 @@ class FakeConnection:
 # ==================== TLS ====================
 
 
-def test_ssl_verifies_the_server_by_default(env):
+def test_ssl_never_falls_back_to_plaintext(env):
+    """libpq's `prefer` would, and an attacker can provoke that fallback."""
+    assert databases.ssl_settings() == {"sslmode": "require"}
+
+
+def test_ssl_verifies_the_server_once_a_ca_is_available(env):
+    """Configuring the CA is all it takes; no second switch to remember."""
     env.setenv("DWS_SSLROOTCERT", "/tmp/ca.pem")
 
     assert databases.ssl_settings() == {"sslmode": "verify-ca", "sslrootcert": "/tmp/ca.pem"}
 
 
-def test_ssl_refuses_to_connect_without_a_ca(env):
-    """The admin password crosses the public internet to reach the EIP.
+def test_ssl_rejects_verification_it_cannot_perform(env):
+    """verify-ca with no CA must fail loudly, not silently drop to require."""
+    env.setenv("DWS_SSLMODE", "verify-ca")
 
-    `require` would encrypt it while letting anyone who can intercept the route
-    terminate the TLS and read it, so an absent CA is a hard stop rather than a
-    quiet downgrade.
-    """
-    with pytest.raises(databases.DatabaseError, match="DWS_SSLROOTCERT_PEM"):
+    with pytest.raises(databases.DatabaseError, match="DWS_SSLROOTCERT"):
         databases.ssl_settings()
 
 
-def test_ssl_mode_can_be_lowered_deliberately(env):
-    """A private endpoint or local debugging can opt out — explicitly."""
+def test_ssl_mode_can_be_overridden(env):
     env.setenv("DWS_SSLMODE", "require")
+    env.setenv("DWS_SSLROOTCERT", "/tmp/ca.pem")
 
-    assert databases.ssl_settings() == {"sslmode": "require"}
+    assert databases.ssl_settings()["sslmode"] == "require"
 
 
 # ==================== configuration ====================
