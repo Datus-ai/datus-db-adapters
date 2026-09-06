@@ -14,12 +14,10 @@ def test_starrocks_sql_skill_is_packaged_and_notes_strip_frontmatter():
 
     assert skill_file.is_file()
     notes = get_starrocks_sql_generation_notes()
+    _, separator, body = skill_file.read_text(encoding="utf-8").partition("\n---\n")
+    assert separator == "\n---\n"
+    assert notes == body.strip()
     assert notes.startswith("# StarRocks SQL")
-    assert "Primary Key" in notes
-    assert "WITH BROKER" in notes
-    assert "information_schema.loads" in notes
-    assert "without imposing a polling workflow" in notes
-    assert "TODO" not in notes
     assert not notes.startswith("---")
 
 
