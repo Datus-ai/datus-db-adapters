@@ -2,21 +2,9 @@
 
 """Create the compatibility databases a fresh DWS cluster does not ship with.
 
-DWS picks a SQL dialect per database through `DBCOMPATIBILITY`, fixed at
-creation time and not alterable afterwards. A new cluster holds only its default
-database, which is ORA, so the TD and MYSQL modes have no target until this runs.
-
-The names match what `.github/workflows/dws-cloud-tests.yml` derives for its
-non-ORA legs (`datus_ci_<mode>`); ORA reuses the cluster's own default database
-rather than a fourth one, since it would be an identical copy.
-
-Configuration comes from the environment, the same variables the tests use:
-
-  DWS_HOST / DWS_PORT / DWS_DATABASE / DWS_USERNAME / DWS_PASSWORD
-
-Existing databases are left alone, but their `datcompatibility` is verified —
-a database that exists in the wrong mode would otherwise make the tests report
-a dialect mismatch far from its cause.
+`DBCOMPATIBILITY` is fixed at creation, so TD and MYSQL need databases of their
+own; ORA reuses the cluster's default. Names match what dws-cloud-tests.yml
+derives. Reads DWS_HOST / _PORT / _DATABASE / _USERNAME / _PASSWORD.
 """
 
 from __future__ import annotations
@@ -54,20 +42,12 @@ def _int_env(name: str, default: int) -> int:
 
 
 def ssl_settings() -> dict[str, str]:
-    """TLS options for the connection: encrypted always, verified when possible.
+    """TLS for the admin password's trip to the cluster's public EIP.
 
-    This carries the cluster admin password to an ephemeral cluster's EIP,
-    across the public internet, so libpq's own default is unusable: `prefer`
-    falls back to plaintext when the server offers no TLS, and an attacker can
-    provoke that fallback by stripping it. `require` never falls back and needs
-    no configuration, which is why it is the default here.
-
-    It does not establish *who* answered, so a CA is still worth having: set
-    DWS_SSLROOTCERT (the workflow writes it from DWS_SSLROOTCERT_PEM) and this
-    rises to `verify-ca` on its own. That is the stronger setting, and the
-    trade-off — an unattended cluster holding nothing but freshly loaded test
-    fixtures, versus a certificate to distribute and rotate — is a deliberate
-    one, not an oversight.
+    `require`, not libpq's `prefer`, which falls back to plaintext when the
+    server offers no TLS — a fallback an attacker can provoke. Setting
+    DWS_SSLROOTCERT upgrades this to `verify-ca`; see the README for why that
+    is left optional here.
     """
 
     sslrootcert = os.getenv("DWS_SSLROOTCERT", "").strip()
@@ -84,10 +64,10 @@ def ssl_settings() -> dict[str, str]:
 
 
 def connect():
-    """Open an autocommit connection to the cluster's default database.
+    """Autocommit connection to the cluster's default database.
 
-    Validated before importing psycopg2 so a missing variable names itself
-    instead of surfacing as an import error.
+    Config is validated before psycopg2 is imported, so a missing variable
+    names itself rather than surfacing as an import error.
     """
 
     host = _require_env("DWS_HOST")
@@ -111,8 +91,7 @@ def connect():
             **ssl,
         )
     except psycopg2.Error as exc:
-        # Surfaces as ::error:: with the sslmode named, since a TLS refusal and
-        # a wrong password look nothing alike but fail at the same call.
+        # Name the sslmode: a TLS refusal and a wrong password fail identically.
         raise DatabaseError(f"Cannot connect to {host}:{port}/{database} with sslmode={ssl['sslmode']}: {exc}") from exc
     # CREATE DATABASE cannot run inside a transaction block.
     connection.autocommit = True
@@ -148,13 +127,9 @@ def create_databases(connection) -> int:
                 print(f"{name}: already present ({mode})", flush=True)
                 continue
             try:
-                # The name is a module constant, never user input, so
-                # interpolating it is safe — and DDL cannot take a bound
-                # parameter here anyway.
+                # Module constant, never user input; DDL takes no bound params.
                 cursor.execute(f"CREATE DATABASE \"{name}\" DBCOMPATIBILITY '{mode}'")
             except psycopg2.Error as exc:
-                # A quota, permission or unsupported-mode rejection should name
-                # itself, not arrive as a traceback the job log buries.
                 raise DatabaseError(f"Cannot create {name} with DBCOMPATIBILITY {mode!r}: {exc}") from exc
             print(f"{name}: created ({mode})", flush=True)
             created += 1

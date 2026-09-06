@@ -603,17 +603,15 @@ def test_down_propagates_a_non_404_inspection_failure(env, monkeypatch):
 
 # ==================== EIP release ====================
 #
-# DWS's own release_eip_type=RELEASE_BINDING only detaches the address: the EIP
-# survives its cluster, unattached and still billing. Two of them accumulated
-# unnoticed before this was covered, so every branch that decides whether an
-# address gets deleted is exercised below.
+# RELEASE_BINDING only detaches; the address keeps billing. Two accumulated
+# unnoticed before this was covered, so every delete decision is exercised.
 
 
 class FakeEipClient:
     """Serves an EIP inventory and records deletions.
 
-    A deleted address leaves the inventory, as it does on the real API — a fake
-    that kept serving it would let a double delete pass unnoticed.
+    Deleted addresses leave the inventory, as on the real API; a fake that kept
+    serving them would let a double delete pass.
     """
 
     def __init__(self, publicips=()):
@@ -645,11 +643,7 @@ def test_release_eip_deletes_the_detached_address(monkeypatch):
 @requires_sdk
 @requires_eip_sdk
 def test_release_eip_leaves_addresses_belonging_to_others(monkeypatch):
-    """Matching is by exact address, never "any unattached EIP".
-
-    The account holds unattached addresses for reasons of its own; a broader
-    filter here would delete them.
-    """
+    """Exact address, never "any unattached EIP" — the account may hold its own."""
     client = FakeEipClient([publicip("9.9.9.9", ip_id="someone-else")])
 
     assert cluster.release_eip("1.2.3.4", client=client) is False
@@ -659,8 +653,7 @@ def test_release_eip_leaves_addresses_belonging_to_others(monkeypatch):
 @requires_sdk
 @requires_eip_sdk
 def test_release_eip_refuses_an_address_still_attached(monkeypatch):
-    """A bound EIP means the cluster outlived the delete call; cutting it here
-    would take out a live resource."""
+    """A bound address means a live resource; cutting it is not ours to do."""
     client = FakeEipClient([publicip("1.2.3.4", ip_id="eip-a", port_id="port-7")])
 
     assert cluster.release_eip("1.2.3.4", client=client) is False
@@ -737,11 +730,8 @@ def test_reap_releases_the_eip_of_an_abandoned_cluster(env, monkeypatch):
 @requires_sdk
 @requires_eip_sdk
 def test_down_force_deletes_when_the_cluster_cannot_be_read(env, monkeypatch):
-    """--force means delete despite not being able to inspect the cluster.
-
-    The EIP is undiscoverable then, which the warning says out loud rather than
-    reporting a clean teardown.
-    """
+    """--force deletes despite not being able to inspect; the EIP is then
+    undiscoverable, which the warning says rather than claiming a clean run."""
     from huaweicloudsdkcore.exceptions.exceptions import SdkError, ServiceResponseException
 
     class Forbidden(FakeClient):
@@ -758,11 +748,10 @@ def test_down_force_deletes_when_the_cluster_cannot_be_read(env, monkeypatch):
 @requires_sdk
 @requires_eip_sdk
 def test_release_unbound_eips_sweeps_leftovers_but_spares_attached_ones():
-    """The sweep is what collects addresses no cluster points at any more.
+    """Collects addresses no cluster points at; they carry no owner tag.
 
-    They carry no owner tag — DWS creates them — so nothing narrower could find
-    them. What keeps this safe is the account holding only these tests'
-    resources; an attached address is still off limits.
+    Safe because the account holds only these tests' resources — but an
+    attached address is still off limits.
     """
     client = FakeEipClient(
         [

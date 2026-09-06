@@ -153,9 +153,6 @@ jobs:
           uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
             python ci/cloud/dws/cluster.py up
 
-      # A fresh cluster holds only the default ORA database, so the TD and MYSQL
-      # ones have to be created before their modes can be exercised. On a
-      # long-lived cluster these already exist and are named by secrets.
       - name: Materialize CA certificate
         if: steps.mode.outputs.mode != 'skip'
         shell: bash
@@ -172,15 +169,9 @@ jobs:
             echo "::notice::DWS_SSLROOTCERT_PEM is unset; verify-ca assertions will be skipped"
           fi
 
-      # One pytest run per compatibility mode against the same cluster: three
-      # clusters would triple the bill for what three databases give.
-      # DWS_SSLROOTCERT is not listed here: the step above exports it through
-      # GITHUB_ENV as a path, since the certificate arrives as PEM content.
-
-      # After the CA step, not before: this sends the admin password to the
-      # cluster's EIP over the public internet. databases.py refuses an
-      # unencrypted channel, and picks up DWS_SSLROOTCERT from GITHUB_ENV to
-      # verify the server when the certificate is configured.
+      # A fresh cluster holds only its default ORA database; a long-lived one
+      # already has these, named by secrets. After the CA step: this sends the
+      # admin password over the public internet.
       - name: Create compatibility databases
         if: steps.mode.outputs.mode == 'ephemeral'
         env:
@@ -194,6 +185,9 @@ jobs:
           uv run --no-project --isolated --with psycopg2-binary==2.9.10 \
             python ci/cloud/dws/databases.py create
 
+      # One pytest run per compatibility mode against the same cluster: three
+      # clusters would triple the bill. DWS_SSLROOTCERT is absent here because
+      # the CA step exports it through GITHUB_ENV as a path.
       - name: Run DWS integration tests
         if: steps.mode.outputs.mode != 'skip'
         env:

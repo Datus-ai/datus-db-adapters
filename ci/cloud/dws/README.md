@@ -7,17 +7,14 @@ than keeping one online. `cluster.py` implements that lifecycle, and
 `DBCOMPATIBILITY` is fixed at creation, so the TD and MYSQL modes need their own
 databases while ORA reuses the cluster's default one.
 
-`databases.py` sends the cluster admin password to the EIP, across the public
-internet, so it will not open an unencrypted connection: `sslmode` defaults to
-`require`, never libpq's `prefer`, which falls back to plaintext when the server
-offers no TLS — a fallback an attacker can provoke by stripping it.
+`databases.py` sends the admin password over the public internet, so `sslmode`
+defaults to `require` rather than libpq's `prefer`, which falls back to
+plaintext when the server offers no TLS — a fallback an attacker can provoke.
 
 `require` encrypts but does not establish who answered. Setting
-`DWS_SSLROOTCERT_PEM` raises this to `verify-ca` automatically and closes that
-gap; it is left optional because the cluster is unattended, short-lived and
-holds nothing but freshly loaded fixtures, so the certificate to distribute and
-rotate costs more than it buys here. That is a judgement about this cluster, not
-a general one — for anything holding real data, configure the CA.
+`DWS_SSLROOTCERT_PEM` raises it to `verify-ca` automatically; that is left
+optional because this cluster is unattended, short-lived and holds only
+fixtures. For anything holding real data, configure the CA.
 
 Deleting is the only operation Huawei Cloud documents as stopping billing
 outright: a *stopped* cluster still bills its disks, and for single-tier

@@ -1,8 +1,7 @@
 """Unit tests for the DWS compatibility-database provisioner.
 
-The script sends an admin password across the public internet to an ephemeral
-cluster's EIP, and creates databases whose dialect cannot be changed later, so
-the TLS decision and the compatibility check are both exercised here.
+It sends an admin password over the public internet and creates databases whose
+dialect cannot be changed later, so both decisions are covered here.
 """
 
 import importlib.util
@@ -17,10 +16,8 @@ databases = importlib.util.module_from_spec(_SPEC)
 sys.modules["dws_databases"] = databases
 _SPEC.loader.exec_module(databases)
 
-# create_databases catches the driver's own exception type, so it needs the
-# driver imported. CI installs it (see .github/workflows/test.yml); without it
-# these skip rather than error, matching how the cluster tests gate the cloud
-# SDKs.
+# create_databases catches the driver's own exception type. CI installs it; a
+# bare environment skips rather than errors, as the cluster tests do for the SDK.
 requires_driver = pytest.mark.skipif(
     importlib.util.find_spec("psycopg2") is None,
     reason="psycopg2 is not installed",
@@ -72,7 +69,7 @@ def test_ssl_never_falls_back_to_plaintext(env):
 
 
 def test_ssl_verifies_the_server_once_a_ca_is_available(env):
-    """Configuring the CA is all it takes; no second switch to remember."""
+    """Configuring the CA is all it takes; no second switch."""
     env.setenv("DWS_SSLROOTCERT", "/tmp/ca.pem")
 
     assert databases.ssl_settings() == {"sslmode": "verify-ca", "sslrootcert": "/tmp/ca.pem"}
@@ -139,10 +136,7 @@ def test_leaves_existing_databases_alone():
 
 @requires_driver
 def test_refuses_a_database_whose_mode_is_wrong():
-    """DBCOMPATIBILITY is fixed at creation, so a mismatch cannot be repaired.
-
-    Reported here rather than as a dialect failure deep in the test run.
-    """
+    """Fixed at creation, so report it here, not as a dialect failure later."""
     connection = FakeConnection({"datus_ci_td": "ORA"})
 
     with pytest.raises(databases.DatabaseError, match="already exists with DBCOMPATIBILITY 'ORA'"):
