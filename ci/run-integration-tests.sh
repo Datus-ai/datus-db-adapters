@@ -337,6 +337,22 @@ wait_for_service_health() {
   return 1
 }
 
+prepare_python_connector_environment() {
+  local adapter="$1"
+  local package="$2"
+  local output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-${adapter}-environment-$$.log"
+
+  echo "Preparing ${adapter} client environment"
+  if uv run --package "$package" --with pandas --with pyarrow \
+    python -c "" >"$output" 2>&1; then
+    return 0
+  fi
+
+  echo "Failed to prepare ${adapter} client environment:" >&2
+  sed 's/^/  /' "$output" >&2
+  return 1
+}
+
 wait_for_python_connector_readiness() {
   local adapter="$1"
   local package="$2"
@@ -351,6 +367,8 @@ wait_for_python_connector_readiness() {
     echo "Missing readiness probe for $adapter: $probe" >&2
     return 1
   fi
+
+  prepare_python_connector_environment "$adapter" "$package" || return 1
 
   timeout_env_name="$(echo "${adapter}_READY_TIMEOUT" | tr '[:lower:]' '[:upper:]')"
   timeout_seconds="${!timeout_env_name:-300}"
