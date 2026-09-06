@@ -156,18 +156,6 @@ jobs:
       # A fresh cluster holds only the default ORA database, so the TD and MYSQL
       # ones have to be created before their modes can be exercised. On a
       # long-lived cluster these already exist and are named by secrets.
-      - name: Create compatibility databases
-        if: steps.mode.outputs.mode == 'ephemeral'
-        env:
-          DWS_HOST: ${{ steps.provision.outputs.host }}
-          DWS_PORT: ${{ steps.provision.outputs.port }}
-          DWS_DATABASE: ${{ steps.provision.outputs.database }}
-          DWS_USERNAME: ${{ steps.provision.outputs.username }}
-          DWS_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
-        run: |
-          uv run --no-project --isolated --with psycopg2-binary==2.9.10 \
-            python ci/cloud/dws/databases.py create
-
       - name: Materialize CA certificate
         if: steps.mode.outputs.mode != 'skip'
         shell: bash
@@ -188,6 +176,24 @@ jobs:
       # clusters would triple the bill for what three databases give.
       # DWS_SSLROOTCERT is not listed here: the step above exports it through
       # GITHUB_ENV as a path, since the certificate arrives as PEM content.
+
+      # After the CA step, not before: this sends the admin password to the
+      # cluster's EIP over the public internet. databases.py refuses an
+      # unencrypted channel, and picks up DWS_SSLROOTCERT from GITHUB_ENV to
+      # verify the server when the certificate is configured.
+      - name: Create compatibility databases
+        if: steps.mode.outputs.mode == 'ephemeral'
+        env:
+          DWS_HOST: ${{ steps.provision.outputs.host }}
+          DWS_PORT: ${{ steps.provision.outputs.port }}
+          DWS_DATABASE: ${{ steps.provision.outputs.database }}
+          DWS_USERNAME: ${{ steps.provision.outputs.username }}
+          DWS_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
+          DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
+        run: |
+          uv run --no-project --isolated --with psycopg2-binary==2.9.10 \
+            python ci/cloud/dws/databases.py create
+
       - name: Run DWS integration tests
         if: steps.mode.outputs.mode != 'skip'
         env:

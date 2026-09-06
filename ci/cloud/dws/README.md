@@ -7,6 +7,11 @@ than keeping one online. `cluster.py` implements that lifecycle, and
 `DBCOMPATIBILITY` is fixed at creation, so the TD and MYSQL modes need their own
 databases while ORA reuses the cluster's default one.
 
+`databases.py` sends the admin password to the cluster's EIP, across the public
+internet, so it will not open an unencrypted connection: `sslmode` defaults to
+`require`, and to `verify-ca` once `DWS_SSLROOTCERT` is set. The workflow
+therefore materializes the CA before this step, not after.
+
 Deleting is the only operation Huawei Cloud documents as stopping billing
 outright: a *stopped* cluster still bills its disks, and for single-tier
 cloud-disk flavors (which includes the smallest one) the docs do not state

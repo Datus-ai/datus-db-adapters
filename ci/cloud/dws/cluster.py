@@ -628,6 +628,7 @@ def cmd_reap(args: argparse.Namespace) -> int:
     network can still leave a cluster billing indefinitely; this is the backstop.
     """
 
+    from huaweicloudsdkcore.exceptions.exceptions import ServiceResponseException
     from huaweicloudsdkdws.v2 import ListClustersRequest
 
     client = build_client()
@@ -646,8 +647,16 @@ def cmd_reap(args: argparse.Namespace) -> int:
             continue
         print(f"deleting expired cluster {name} ({cluster_id}, expires_at={expires_at})", flush=True)
         # The listing carries no public_ip, so read the cluster for its address
-        # before it stops being readable.
-        eip_address = cluster_eip_address(describe(client, cluster_id))
+        # before it stops being readable. It can vanish between the listing and
+        # here; that is one cluster fewer to reap, not a reason to abandon the
+        # remaining ones and the sweep below.
+        try:
+            eip_address = cluster_eip_address(describe(client, cluster_id))
+        except ServiceResponseException as exc:
+            if getattr(exc, "status_code", None) != 404:
+                raise
+            print(f"cluster {name} ({cluster_id}) is already gone", flush=True)
+            continue
         if delete_cluster(client, cluster_id):
             reaped += 1
             if eip_address:

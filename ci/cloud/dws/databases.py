@@ -43,6 +43,37 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise DatabaseError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def ssl_settings() -> dict[str, str]:
+    """TLS options for the connection, defaulting to an encrypted channel.
+
+    An ephemeral cluster is reached over its EIP, so the password crosses the
+    public internet. libpq's own default, `prefer`, silently accepts plaintext
+    when the server does not offer TLS, which is not a suitable default for
+    sending one. `require` encrypts without proving who is on the other end;
+    supplying DWS_SSLROOTCERT raises that to `verify-ca`, matching what the
+    integration tests use.
+    """
+
+    sslrootcert = os.getenv("DWS_SSLROOTCERT", "").strip()
+    sslmode = os.getenv("DWS_SSLMODE", "").strip() or ("verify-ca" if sslrootcert else "require")
+    settings = {"sslmode": sslmode}
+    if sslrootcert:
+        settings["sslrootcert"] = sslrootcert
+    elif sslmode.startswith("verify"):
+        raise DatabaseError(f"DWS_SSLMODE={sslmode} needs DWS_SSLROOTCERT to verify the server certificate")
+    return settings
+
+
 def connect():
     """Open an autocommit connection to the cluster's default database.
 
@@ -51,21 +82,29 @@ def connect():
     """
 
     host = _require_env("DWS_HOST")
-    port = int(os.getenv("DWS_PORT") or "8000")
+    port = _int_env("DWS_PORT", 8000)
     database = os.getenv("DWS_DATABASE") or "gaussdb"
     user = _require_env("DWS_USERNAME")
     password = _require_env("DWS_PASSWORD")
+    timeout = _int_env("DWS_CONNECT_TIMEOUT", 30)
+    ssl = ssl_settings()
 
     import psycopg2
 
-    connection = psycopg2.connect(
-        host=host,
-        port=port,
-        dbname=database,
-        user=user,
-        password=password,
-        connect_timeout=int(os.getenv("DWS_CONNECT_TIMEOUT") or "30"),
-    )
+    try:
+        connection = psycopg2.connect(
+            host=host,
+            port=port,
+            dbname=database,
+            user=user,
+            password=password,
+            connect_timeout=timeout,
+            **ssl,
+        )
+    except psycopg2.Error as exc:
+        # Surfaces as ::error:: with the sslmode named, since a TLS refusal and
+        # a wrong password look nothing alike but fail at the same call.
+        raise DatabaseError(f"Cannot connect to {host}:{port}/{database} with sslmode={ssl['sslmode']}: {exc}") from exc
     # CREATE DATABASE cannot run inside a transaction block.
     connection.autocommit = True
     return connection
@@ -80,10 +119,15 @@ def existing_mode(cursor, name: str) -> str | None:
 
 
 def create_databases(connection) -> int:
+    import psycopg2
+
     created = 0
     with connection.cursor() as cursor:
         for name, mode in COMPATIBILITY_MODES.items():
-            current = existing_mode(cursor, name)
+            try:
+                current = existing_mode(cursor, name)
+            except psycopg2.Error as exc:
+                raise DatabaseError(f"Cannot read pg_database: {exc}") from exc
             if current is not None:
                 if current != mode:
                     raise DatabaseError(
@@ -94,9 +138,15 @@ def create_databases(connection) -> int:
                     )
                 print(f"{name}: already present ({mode})", flush=True)
                 continue
-            # The name is a module constant, never user input, so interpolating
-            # it is safe — and DDL cannot take a bound parameter here anyway.
-            cursor.execute(f"CREATE DATABASE \"{name}\" DBCOMPATIBILITY '{mode}'")
+            try:
+                # The name is a module constant, never user input, so
+                # interpolating it is safe — and DDL cannot take a bound
+                # parameter here anyway.
+                cursor.execute(f"CREATE DATABASE \"{name}\" DBCOMPATIBILITY '{mode}'")
+            except psycopg2.Error as exc:
+                # A quota, permission or unsupported-mode rejection should name
+                # itself, not arrive as a traceback the job log buries.
+                raise DatabaseError(f"Cannot create {name} with DBCOMPATIBILITY {mode!r}: {exc}") from exc
             print(f"{name}: created ({mode})", flush=True)
             created += 1
     return created
