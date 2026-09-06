@@ -153,21 +153,6 @@ jobs:
           uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
             python ci/cloud/dws/cluster.py up
 
-      # A fresh cluster holds only the default ORA database, so the TD and MYSQL
-      # ones have to be created before their modes can be exercised. On a
-      # long-lived cluster these already exist and are named by secrets.
-      - name: Create compatibility databases
-        if: steps.mode.outputs.mode == 'ephemeral'
-        env:
-          DWS_HOST: ${{ steps.provision.outputs.host }}
-          DWS_PORT: ${{ steps.provision.outputs.port }}
-          DWS_DATABASE: ${{ steps.provision.outputs.database }}
-          DWS_USERNAME: ${{ steps.provision.outputs.username }}
-          DWS_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
-        run: |
-          uv run --no-project --isolated --with psycopg2-binary==2.9.10 \
-            python ci/cloud/dws/databases.py create
-
       - name: Materialize CA certificate
         if: steps.mode.outputs.mode != 'skip'
         shell: bash
@@ -184,10 +169,25 @@ jobs:
             echo "::notice::DWS_SSLROOTCERT_PEM is unset; verify-ca assertions will be skipped"
           fi
 
+      # A fresh cluster holds only its default ORA database; a long-lived one
+      # already has these, named by secrets. After the CA step: this sends the
+      # admin password over the public internet.
+      - name: Create compatibility databases
+        if: steps.mode.outputs.mode == 'ephemeral'
+        env:
+          DWS_HOST: ${{ steps.provision.outputs.host }}
+          DWS_PORT: ${{ steps.provision.outputs.port }}
+          DWS_DATABASE: ${{ steps.provision.outputs.database }}
+          DWS_USERNAME: ${{ steps.provision.outputs.username }}
+          DWS_PASSWORD: ${{ secrets.DWS_CI_DB_PASSWORD }}
+          DWS_SSLMODE: ${{ secrets.DWS_SSLMODE }}
+        run: |
+          uv run --no-project --isolated --with psycopg2-binary==2.9.10 \
+            python ci/cloud/dws/databases.py create
+
       # One pytest run per compatibility mode against the same cluster: three
-      # clusters would triple the bill for what three databases give.
-      # DWS_SSLROOTCERT is not listed here: the step above exports it through
-      # GITHUB_ENV as a path, since the certificate arrives as PEM content.
+      # clusters would triple the bill. DWS_SSLROOTCERT is absent here because
+      # the CA step exports it through GITHUB_ENV as a path.
       - name: Run DWS integration tests
         if: steps.mode.outputs.mode != 'skip'
         env:
@@ -248,5 +248,5 @@ jobs:
           HUAWEICLOUD_REGION: ${{ secrets.HUAWEICLOUD_REGION }}
           DWS_CI_CLUSTER_ID: ${{ steps.provision.outputs.cluster_id }}
         run: |
-          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 \
+          uv run --no-project --isolated --with huaweicloudsdkdws==3.1.212 --with huaweicloudsdkeip==3.1.212 \
             python ci/cloud/dws/cluster.py down --wait

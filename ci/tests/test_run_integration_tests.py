@@ -1,4 +1,6 @@
+import os
 import re
+import shlex
 import subprocess
 import tomllib
 from pathlib import Path
@@ -95,3 +97,91 @@ def test_readiness_probes_run_as_modules_to_avoid_driver_shadowing() -> None:
         if probe.stem == "_common":
             continue
         assert "from ._common import require_connection" in probe.read_text(encoding="utf-8")
+
+
+def _shell_functions(*names: str) -> str:
+    source = RUNNER.read_text(encoding="utf-8")
+    chunks = []
+    for name in names:
+        match = re.search(rf"^{re.escape(name)}\(\) \{{\n.*?^\}}\n", source, flags=re.MULTILINE | re.DOTALL)
+        assert match is not None, f"Missing shell function {name}"
+        chunks.append(match.group(0))
+    return "\n".join(chunks)
+
+
+def _run_readiness_wait(tmp_path: Path, fake_uv: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    uv = fake_bin / "uv"
+    uv.write_text(fake_uv, encoding="utf-8")
+    uv.chmod(0o755)
+    calls = tmp_path / "uv-calls"
+
+    harness = "\n".join(
+        [
+            "set -euo pipefail",
+            f"ROOT_DIR={shlex.quote(str(REPO_ROOT))}",
+            "sleep() { :; }",
+            _shell_functions("prepare_python_connector_environment", "wait_for_python_connector_readiness"),
+            "wait_for_python_connector_readiness spark datus-spark",
+        ]
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "RUNNER_TEMP": str(tmp_path),
+        "SPARK_READY_TIMEOUT": "300",
+        "UV_CALLS": str(calls),
+    }
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+    return result, recorded
+
+
+def test_readiness_wait_fails_fast_when_the_client_environment_cannot_be_prepared(tmp_path: Path) -> None:
+    result, calls = _run_readiness_wait(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >>"$UV_CALLS"\n'
+        "echo '  × Failed to download and build `pyhive==0.7.0`' >&2\n"
+        "exit 1\n",
+    )
+
+    assert result.returncode == 1
+    assert "Failed to prepare spark client environment:" in result.stderr
+    assert "Failed to download and build `pyhive==0.7.0`" in result.stderr
+    assert "Timed out" not in result.stderr
+    assert "Waiting for spark client readiness" not in result.stdout
+    assert len(calls) == 1
+    assert calls[0] == "run --package datus-spark --with pandas --with pyarrow python -c "
+
+
+def test_readiness_wait_still_retries_the_probe_after_the_environment_is_ready(tmp_path: Path) -> None:
+    result, calls = _run_readiness_wait(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >>"$UV_CALLS"\n'
+        'case "$*" in *"python -c"*) exit 0 ;; esac\n'
+        'if [ "$(grep -c "python -m" "$UV_CALLS")" -lt 2 ]; then\n'
+        "  echo 'spark connector readiness test returned false' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Preparing spark client environment" in result.stdout
+    assert "spark client readiness probe succeeded" in result.stdout
+    assert calls == [
+        "run --package datus-spark --with pandas --with pyarrow python -c ",
+        "run --package datus-spark --with pandas --with pyarrow python -m ci.integration.readiness.spark",
+        "run --package datus-spark --with pandas --with pyarrow python -m ci.integration.readiness.spark",
+    ]

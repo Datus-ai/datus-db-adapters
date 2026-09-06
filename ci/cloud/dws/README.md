@@ -2,7 +2,19 @@
 
 GaussDB(DWS) bills per hour and has no self-service serverless tier, so the
 integration job creates a cluster for the run and deletes it afterwards rather
-than keeping one online. `cluster.py` implements that lifecycle.
+than keeping one online. `cluster.py` implements that lifecycle, and
+`databases.py` adds the compatibility databases a fresh cluster lacks — its
+`DBCOMPATIBILITY` is fixed at creation, so the TD and MYSQL modes need their own
+databases while ORA reuses the cluster's default one.
+
+`databases.py` sends the admin password over the public internet, so `sslmode`
+defaults to `require` rather than libpq's `prefer`, which falls back to
+plaintext when the server offers no TLS — a fallback an attacker can provoke.
+
+`require` encrypts but does not establish who answered. Setting
+`DWS_SSLROOTCERT_PEM` raises it to `verify-ca` automatically; that is left
+optional because this cluster is unattended, short-lived and holds only
+fixtures. For anything holding real data, configure the CA.
 
 Deleting is the only operation Huawei Cloud documents as stopping billing
 outright: a *stopped* cluster still bills its disks, and for single-tier
@@ -40,7 +52,9 @@ Ephemeral runs cost roughly one cluster-hour per run (creation alone takes
 Optional, with defaults: `DWS_CI_FLAVOR` (`dwsk2.h.xlarge.4.kc1`), `DWS_CI_NUM_NODE`
 (`3` — the documented minimum for cluster mode), `DWS_CI_DB_NAME` (`gaussdb`),
 `DWS_CI_DB_USER` (`dbadmin`), `DWS_CI_DB_PORT` (`8000`), `DWS_CI_TTL_MINUTES`
-(`180`), `DWS_CI_PUBLIC_IP` (`auto_assign`), `DWS_CI_EIP_BANDWIDTH` (`5` Mbit/s).
+(`180`), `DWS_CI_PUBLIC_IP` (`auto_assign`), `DWS_CI_EIP_BANDWIDTH` (`5` Mbit/s),
+`DWS_SSLROOTCERT_PEM` (unset — see the TLS note above and the security-group
+section; supplying it upgrades every connection to `verify-ca`).
 
 ## What costs money, and what to keep
 
@@ -53,12 +67,31 @@ Create them once, put their IDs in secrets, leave them alone.
 **These are billed and so are created and destroyed per run:** the cluster
 itself, and its EIP when one is assigned.
 
-The EIP needs care. `DWS_CI_PUBLIC_IP` defaults to `auto_assign` because the
-cloud job runs on `ubuntu-latest`, a GitHub-hosted runner on the public
-internet, which has no route to a VPC-private address. The delete call therefore
-passes `release_eip_type=RELEASE_BINDING`: the API's own default is
-`NO_RELEASE`, which would leave the EIP behind, unattached and still billing,
-after its cluster was gone.
+The EIP needs care, and deleting the cluster is not enough to be rid of it.
+`DWS_CI_PUBLIC_IP` defaults to `auto_assign` because the cloud job runs on
+`ubuntu-latest`, a GitHub-hosted runner on the public internet, which has no
+route to a VPC-private address.
+
+Neither value of `release_eip_type` deletes that address. The API's default,
+`NO_RELEASE`, leaves it bound to nothing; `RELEASE_BINDING` — which this tool
+passes — detaches it, and the address still exists and still bills. Only the EIP
+API deletes it, so `down` and `reap` read the cluster's address before deleting
+it and then call `DeletePublicipRequest` once the cluster is gone (the address
+stays attached until then). The lookup matches that exact address, never "any
+unattached EIP", so it cannot reach an address belonging to something else.
+
+This is not hypothetical: two EIPs accumulated this way, one of them unnoticed
+for five days, before the deletion step existed.
+
+An address can still be orphaned by something the delete path never sees — a
+cluster removed from the console, a teardown killed between the two calls, a run
+older than this code. Those carry no owner tag, so `reap` sweeps **every**
+unattached EIP rather than trying to recognise its own. That is safe only
+because this account exists for these tests: it holds the one pre-created CI
+VPC and no compute, so an unattached address is always a leftover. If the
+account ever hosts anything else, that sweep must go back to matching by
+address. Each deleted address is printed, and `--dry-run` lists them without
+deleting.
 
 (If this job ever moves to a self-hosted runner inside the VPC, set
 `DWS_CI_PUBLIC_IP=not_use`: no EIP, private endpoint, security group closed to
