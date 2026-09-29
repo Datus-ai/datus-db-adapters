@@ -37,6 +37,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          # Without a glob the key is static, and a GitHub cache key can never be
+          # overwritten: one pruned snapshot (sdists without sources) was restored
+          # by every run and broke any sdist build. Key it on the dependency set.
+          cache-dependency-glob: "**/pyproject.toml"
 
       - name: Resolve changed test base
         id: changed-base
@@ -152,6 +156,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          # Without a glob the key is static, and a GitHub cache key can never be
+          # overwritten: one pruned snapshot (sdists without sources) was restored
+          # by every run and broke any sdist build. Key it on the dependency set.
+          cache-dependency-glob: "**/pyproject.toml"
 
       - name: Run ${{ matrix.adapter }} integration tests
         run: ci/run-integration-tests.sh "${{ matrix.adapter }}"
@@ -187,6 +195,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          # Without a glob the key is static, and a GitHub cache key can never be
+          # overwritten: one pruned snapshot (sdists without sources) was restored
+          # by every run and broke any sdist build. Key it on the dependency set.
+          cache-dependency-glob: "**/pyproject.toml"
 
       - name: Run Oracle integration tests without parallel Compose load
         run: ci/run-integration-tests.sh oracle
