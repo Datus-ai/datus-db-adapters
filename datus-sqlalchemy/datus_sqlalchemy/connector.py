@@ -217,6 +217,22 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         if isinstance(e, NoSuchTableError):
             return DatusDbException(ErrorCode.DB_TABLE_NOT_EXISTS, message_args={"table_name": str(e)})
 
+        # Driver query deadlines can surface under different DBAPI exception
+        # wrappers. Classify their reason before the generic connection-timeout
+        # branch, without changing the message.
+        if isinstance(e, DatabaseError) and any(
+            marker in error_msg_lower
+            for marker in (
+                "query reached its timeout",
+                "query timed out",
+                "query execution timed out",
+                "statement timeout",
+                "maximum statement execution time exceeded",
+                "maximum execution time exceeded",
+            )
+        ):
+            return DatusDbException(ErrorCode.DB_EXECUTION_TIMEOUT, message_args=message_args)
+
         # Connection and operational errors
         if isinstance(e, (OperationalError, InterfaceError)):
             # Transaction rollback errors

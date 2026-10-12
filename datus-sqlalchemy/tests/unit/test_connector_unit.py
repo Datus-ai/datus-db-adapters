@@ -338,3 +338,33 @@ def test_ensure_engine_concurrent_access():
     # All threads should get the same engine instance
     engines = list(results.values())
     assert all(e is engines[0] for e in engines)
+
+
+@pytest.mark.parametrize(
+    "driver_message",
+    [
+        "Query reached its timeout of 300 seconds, please increase the 'query_timeout' session variable and retry",
+        "canceling statement due to statement timeout",
+        "Query execution was interrupted, maximum statement execution time exceeded",
+        "Query timed out after 30 seconds",
+    ],
+)
+@pytest.mark.parametrize("exception_class", [sa_exc.OperationalError, sa_exc.ProgrammingError])
+def test_query_deadline_is_execution_timeout_and_preserves_driver_reason(driver_message, exception_class):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    exception = exception_class("SELECT 1", {}, Exception(driver_message))
+
+    classified = connector._handle_exception(exception, "SELECT 1", "query")
+
+    assert classified.code == ErrorCode.DB_EXECUTION_TIMEOUT
+    assert driver_message in str(classified)
+
+
+def test_timeout_keyword_in_sql_does_not_relabel_a_connection_failure():
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    sql = "SELECT query_timeout FROM settings"
+    exception = sa_exc.OperationalError(sql, {}, Exception("connection refused by server"))
+
+    classified = connector._handle_exception(exception, sql, "query")
+
+    assert classified.code == ErrorCode.DB_CONNECTION_FAILED
