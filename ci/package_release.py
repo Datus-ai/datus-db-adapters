@@ -236,20 +236,23 @@ def single_artifact(output_dir: Path, pattern: str, label: str, package: Package
 
 def validate_skill_resources(package: PackageInfo, wheel: Path) -> None:
     """Check packaged entrypoints and Markdown references against their source bytes."""
-    skill_files = sorted(package.path.glob("*/skills/*/SKILL.md"))
-    if not skill_files:
-        return
+    resources = {
+        resource.relative_to(package.path).as_posix(): resource.read_bytes()
+        for skill in package.path.glob("*/skills/*/SKILL.md")
+        for resource in [skill, *skill.parent.glob("references/**/*.md")]
+    }
     with zipfile.ZipFile(wheel) as archive:
-        for skill in skill_files:
-            resources = [skill, *sorted(skill.parent.glob("references/**/*.md"))]
-            for resource in resources:
-                name = resource.relative_to(package.path).as_posix()
-                try:
-                    packaged = archive.read(name)
-                except KeyError as exc:
-                    raise ValueError(f"Wheel {wheel.name} is missing skill resource {name}") from exc
-                if packaged != resource.read_bytes():
-                    raise ValueError(f"Wheel {wheel.name} has stale skill resource {name}")
+        packaged = {
+            name
+            for name in archive.namelist()
+            if re.fullmatch(r"[^/]+/skills/[^/]+/(SKILL\.md|references/.+\.md)", name)
+        }
+        for reason, names in (("missing", resources.keys() - packaged), ("extra", packaged - resources.keys())):
+            if names:
+                raise ValueError(f"Wheel {wheel.name} has {reason} skill resource {sorted(names)[0]}")
+        for name, content in resources.items():
+            if archive.read(name) != content:
+                raise ValueError(f"Wheel {wheel.name} has stale skill resource {name}")
 
 
 def build_package_wheels(

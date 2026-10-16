@@ -30,7 +30,7 @@ Generate GaussDB-compatible SQL from metadata-provided object and column names. 
 - Use PostgreSQL-style `LIMIT` and `OFFSET`, ANSI joins, window functions, and CTEs.
 - Prefer `TEXT` for unbounded strings and `VARCHAR(n)` only when a length bound is meaningful.
 - Use GaussDB-supported PostgreSQL types such as `SMALLINT`, `INTEGER`, `BIGINT`, `NUMERIC`, `REAL`, `DOUBLE PRECISION`, `BOOLEAN`, `TEXT`, `BYTEA`, `DATE`, `TIMESTAMP`, and `TIMESTAMPTZ` according to metadata.
-- Treat PostgreSQL features newer than 9.2 as version-dependent: `to_regclass`, `FILTER` aggregate clauses, `LATERAL`, and `ON CONFLICT` are not universally available. Confirm support before generating them.
+- Treat PostgreSQL features newer than 9.2 as version-dependent: `to_regclass`, `FILTER` aggregate clauses, `LATERAL`, and `ON CONFLICT` are not universally available. `ON CONFLICT` additionally requires PG compatibility. Confirm support before generating them.
 
 ## Avoid common dialect leaks
 

@@ -8,6 +8,6 @@
 
 ## Writes and transactions
 
-- Use `INSERT`, `UPDATE`, and `DELETE` with PostgreSQL syntax. For upserts, prefer `INSERT ... ON DUPLICATE KEY UPDATE` or `MERGE INTO` — `ON CONFLICT` support is version-dependent. `ON DUPLICATE KEY UPDATE` is a GaussDB extension accepted in every compatibility mode despite queries otherwise using PostgreSQL-style syntax.
+- Use `INSERT`, `UPDATE`, and `DELETE` with PostgreSQL syntax. For upserts, prefer `INSERT ... ON DUPLICATE KEY UPDATE` or `MERGE INTO`. Use `ON CONFLICT` only in a PG-compatible database after confirming support in the target version; a version check alone is insufficient. In other compatibility modes, use the supported alternatives. `ON DUPLICATE KEY UPDATE` is a GaussDB extension accepted in every compatibility mode despite queries otherwise using PostgreSQL-style syntax. See the [GaussDB INSERT reference](https://support.huaweicloud.com/intl/en-us/centralized-ref-v10-gaussdb/gaussdb-38-0365.html).
 - In `A` mode, inserting an empty string stores NULL; source data containing empty strings will not round-trip.
 - Do not mix DDL and DML in one multi-statement transaction; some DDL is restricted inside explicit transactions, especially on distributed deployments.
