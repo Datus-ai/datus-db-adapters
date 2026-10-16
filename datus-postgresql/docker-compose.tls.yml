@@ -1,0 +1,13 @@
+# Overlay: docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+services:
+  postgres:
+    volumes:
+      - ${DATUS_TEST_TLS_DIR:?Generate disposable certificates first}:/tls:ro
+    command:
+      - bash
+      - -ec
+      - |
+        cp /tls/server.key /tmp/datus-server.key
+        chown postgres:postgres /tmp/datus-server.key
+        chmod 0600 /tmp/datus-server.key
+        exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tls/server.crt -c ssl_key_file=/tmp/datus-server.key -c ssl_ca_file=/tls/ca.crt

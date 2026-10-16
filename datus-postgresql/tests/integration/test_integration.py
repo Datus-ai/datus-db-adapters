@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import os
 import uuid
 
 import pytest
@@ -16,30 +15,15 @@ from datus_postgresql import PostgreSQLConfig, PostgreSQLConnector
 @pytest.mark.acceptance
 def test_connection_with_config_object(config: PostgreSQLConfig):
     """Test connection using config object."""
-    try:
-        conn = PostgreSQLConnector(config)
+    with PostgreSQLConnector(config) as conn:
         assert conn.test_connection()
-        conn.close()
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
 
 
 @pytest.mark.integration
-def test_connection_with_dict():
+def test_connection_with_dict(config: PostgreSQLConfig):
     """Test connection using dict config."""
-    try:
-        conn = PostgreSQLConnector(
-            {
-                "host": os.getenv("POSTGRESQL_HOST", "localhost"),
-                "port": int(os.getenv("POSTGRESQL_PORT", "5432")),
-                "username": os.getenv("POSTGRESQL_USER", "test_user"),
-                "password": os.getenv("POSTGRESQL_PASSWORD", "test_password"),
-            }
-        )
+    with PostgreSQLConnector(config.model_dump()) as conn:
         assert conn.test_connection()
-        conn.close()
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
 
 
 # ==================== Database Tests ====================

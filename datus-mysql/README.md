@@ -2,6 +2,38 @@
 
 MySQL database adapter for Datus.
 
+## Amazon Aurora MySQL
+
+Aurora uses this adapter with the MySQL dialect. Set `aurora=True` and provide
+`ssl_ca` to require certificate and hostname verification. Password authentication
+needs no AWS SDK. Install `pip install 'datus-mysql[aws]'` for IAM or Secrets Manager.
+
+```python
+import os
+from datus_mysql import MySQLConnector
+
+connector = MySQLConnector({
+    "host": os.environ["AURORA_MYSQL_ENDPOINT"],
+    "username": os.environ["AURORA_DB_USER"],
+    "database": os.environ["AURORA_DATABASE"],
+    "aurora": True,
+    "auth_mode": "iam",
+    "aws": {"region": os.environ["AWS_REGION"]},
+    "ssl_ca": os.environ["AURORA_CA_BUNDLE"],
+})
+try:
+    result = connector.execute_query("SELECT 1", result_format="list")
+    assert result.success, result.error
+finally:
+    connector.close()
+```
+
+See [Aurora authentication and lifecycle](../docs/aurora.md) for the full config
+contract, IAM permissions/user setup, Role profiles, Secret rotation, writer/reader
+endpoints and pending real-cloud acceptance. From the workspace root,
+`uv run --no-project python -m ci.run_tls_integration_tests mysql` runs the isolated
+TLS container regression, including wrong-CA/hostname rejection.
+
 ## Installation
 
 ```bash

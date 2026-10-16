@@ -2,6 +2,39 @@
 
 PostgreSQL database adapter for [Datus](https://github.com/Datus-ai/datus-agent).
 
+## Amazon Aurora PostgreSQL
+
+Aurora uses this adapter with the PostgreSQL dialect. Set `aurora=True` and provide
+`sslrootcert`; the adapter requires `sslmode=verify-full`. Password authentication
+needs no AWS SDK. Install `pip install 'datus-postgresql[aws]'` for IAM or Secrets Manager.
+
+```python
+import os
+from datus_postgresql import PostgreSQLConnector
+
+connector = PostgreSQLConnector({
+    "host": os.environ["AURORA_POSTGRESQL_ENDPOINT"],
+    "username": os.environ["AURORA_DB_USER"],
+    "database": os.environ["AURORA_DATABASE"],
+    "aurora": True,
+    "auth_mode": "iam",
+    "aws": {"region": os.environ["AWS_REGION"]},
+    "sslrootcert": os.environ["AURORA_CA_BUNDLE"],
+})
+try:
+    result = connector.execute_query("SELECT 1", result_format="list")
+    assert result.success, result.error
+finally:
+    connector.close()
+```
+
+TLS and dynamic credentials apply to the base engine and every cached database
+engine. See [Aurora authentication and lifecycle](../docs/aurora.md) for the full
+contract, IAM permissions/user setup, Role profiles, Secret rotation and pending
+cloud acceptance. From the workspace root,
+`uv run --no-project python -m ci.run_tls_integration_tests postgresql` runs verified
+TLS, multiple databases, shared contracts and wrong-CA/hostname rejection.
+
 ## Overview
 
 This adapter provides PostgreSQL connectivity for Datus, supporting full SQL operations, metadata discovery, schema management, and materialized views via the standard PostgreSQL protocol.

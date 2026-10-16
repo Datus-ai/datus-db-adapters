@@ -420,7 +420,7 @@ def _make_connector():
 def test_get_engine_returns_same_engine_for_same_db():
     """Requesting the same database twice returns the cached engine."""
     connector = _make_connector()
-    with patch("datus_postgresql.connector.create_engine", return_value=MagicMock()) as mock_ce:
+    with patch("datus_sqlalchemy.connector.create_engine", return_value=MagicMock()) as mock_ce:
         e1 = connector._get_engine("db1")
         e2 = connector._get_engine("db1")
 
@@ -432,7 +432,7 @@ def test_get_engine_creates_different_engines_per_db():
     """Different databases get different engines."""
     connector = _make_connector()
     engines = [MagicMock(), MagicMock()]
-    with patch("datus_postgresql.connector.create_engine", side_effect=engines):
+    with patch("datus_sqlalchemy.connector.create_engine", side_effect=engines):
         e1 = connector._get_engine("db1")
         e2 = connector._get_engine("db2")
 
@@ -451,7 +451,7 @@ def test_get_engine_evicts_lru_when_over_max():
         created_engines.append(e)
         return e
 
-    with patch("datus_postgresql.connector.create_engine", side_effect=make_engine):
+    with patch("datus_sqlalchemy.connector.create_engine", side_effect=make_engine):
         connector._get_engine("db1")
         connector._get_engine("db2")
         connector._get_engine("db3")
@@ -478,7 +478,7 @@ def test_get_engine_lru_access_refreshes_order():
         created_engines[len(created_engines)] = e
         return e
 
-    with patch("datus_postgresql.connector.create_engine", side_effect=make_engine):
+    with patch("datus_sqlalchemy.connector.create_engine", side_effect=make_engine):
         connector._get_engine("db1")  # engines[0]
         connector._get_engine("db2")  # engines[1]
         connector._get_engine("db3")  # engines[2]
@@ -501,7 +501,7 @@ def test_close_disposes_all_cached_engines():
     connector = _make_connector()
 
     mock_engines = [MagicMock(), MagicMock()]
-    with patch("datus_postgresql.connector.create_engine", side_effect=mock_engines):
+    with patch("datus_sqlalchemy.connector.create_engine", side_effect=mock_engines):
         connector._get_engine("db1")
         connector._get_engine("db2")
 

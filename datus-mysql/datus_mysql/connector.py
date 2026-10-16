@@ -17,6 +17,7 @@ from datus_db_core import (
     list_to_in_str,
 )
 from datus_sqlalchemy import SQLAlchemyConnector
+from datus_sqlalchemy.auth import configure_database_connection
 
 from .config import MySQLConfig
 
@@ -91,11 +92,23 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             f"{database}?charset={config.charset}&autocommit={'true' if config.autocommit else 'false'}"
         )
 
-        super().__init__(connection_string, dialect="mysql")
+        super().__init__(connection_string, dialect="mysql", timeout_seconds=config.timeout_seconds)
         # Set after super().__init__() so BaseSqlConnector doesn't overwrite
         # with a plain ConnectionConfig (which lacks charset, autocommit, etc.)
         self.config = config
         self._default_database = database
+        connect_args = {
+            key: getattr(config, key)
+            for key in ("ssl_ca", "ssl_cert", "ssl_key", "ssl_verify_cert", "ssl_verify_identity")
+            if getattr(config, key) is not None
+        }
+        if config.auth_mode == "iam":
+            connect_args["auth_plugin_map"] = {"mysql_clear_password": None}
+        for key in ("read_timeout", "write_timeout"):
+            value = getattr(config, f"{key}_seconds")
+            if value is not None:
+                connect_args[key] = value
+        configure_database_connection(self, config, connect_args, dialect="mysql")
 
     # ==================== System Resources ====================
 

@@ -3,11 +3,12 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from collections import OrderedDict
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Set, Union, override
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -18,6 +19,7 @@ from datus_db_core import (
     list_to_in_str,
 )
 from datus_sqlalchemy import SQLAlchemyConnector
+from datus_sqlalchemy.auth import configure_database_connection
 
 from .config import PostgreSQLConfig
 
@@ -97,6 +99,12 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         self._default_schema = config.schema_name or "public"
         self._engines: OrderedDict = OrderedDict()  # LRU cache: database_name -> engine
         self._max_engines = 8
+        connect_args = {
+            key: getattr(config, key)
+            for key in ("sslrootcert", "sslcert", "sslkey")
+            if getattr(config, key) is not None
+        }
+        configure_database_connection(self, config, connect_args, dialect="postgresql")
 
     # ==================== System Resources ====================
 
@@ -651,12 +659,13 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         Uses LRU eviction (max 8 engines) to avoid holding too many connections.
         """
         db = database_name or self.database_name
+        self._prepare_connection()
         with self._engine_lock:
             if db in self._engines:
                 self._engines.move_to_end(db)
                 return self._engines[db]
             conn_str = self._build_connection_string(db)
-            engine = create_engine(
+            engine = self._create_engine(
                 conn_str,
                 pool_size=5,
                 max_overflow=10,
@@ -706,12 +715,15 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
     @override
     def close(self):
         """Dispose all engines (per-database pool + parent engine)."""
-        for engine in self._engines.values():
+        with getattr(self, "_engine_lock", nullcontext()):
+            engines = list(getattr(self, "_engines", {}).values())
+            if hasattr(self, "_engines"):
+                self._engines.clear()
+        for engine in engines:
             try:
                 engine.dispose()
             except Exception as e:
                 logger.warning(f"Error disposing engine: {e}")
-        self._engines.clear()
         # Dispose parent engine that may have been created via connect()/_ensure_engine()
         super().close()
 
