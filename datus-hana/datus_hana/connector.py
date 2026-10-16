@@ -281,7 +281,7 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
         return result.sql_return
 
     def _sys_schemas(self) -> set[str]:
-        return {"SYS", "SYSTEM", "PUBLIC", "_SYS_BIC", "_SYS_BI", "_SYS_REPO", "_SYS_STATISTICS", "_SYS_TASK"}
+        return {"SYS", "SYSTEM", "PUBLIC"}
 
     def _effective_schema(self, schema_name: str = "") -> str:
         if schema_name or self.schema_name:
@@ -298,7 +298,12 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
     def get_schemas(self, catalog_name="", database_name="", include_sys=False):
         self._validate_context(catalog_name, database_name)
         rows = self._metadata_rows("SELECT SCHEMA_NAME FROM SYS.SCHEMAS ORDER BY SCHEMA_NAME")
-        return [row["SCHEMA_NAME"] for row in rows if include_sys or row["SCHEMA_NAME"] not in self._sys_schemas()]
+        return [
+            row["SCHEMA_NAME"]
+            for row in rows
+            if include_sys
+            or (row["SCHEMA_NAME"] not in self._sys_schemas() and not row["SCHEMA_NAME"].startswith("_SYS_"))
+        ]
 
     def _objects(self, kind, catalog_name="", database_name="", schema_name=""):
         self._validate_context(catalog_name, database_name)

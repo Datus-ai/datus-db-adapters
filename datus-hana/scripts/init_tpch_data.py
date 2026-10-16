@@ -17,11 +17,10 @@ def main():
     parser.add_argument("--database")
     parser.add_argument("--drop", action="store_true", help="Drop existing TPC-H tables in the dedicated target schema")
     args = parser.parse_args()
-    config = config_from_env()
     changes = {key: value for key, value in vars(args).items() if value is not None and key not in {"drop", "schema"}}
     if args.schema:
         changes["schema_name"] = args.schema
-    config = type(config)(**(config.model_dump() | changes))
+    config = config_from_env(**changes)
     if not config.schema_name:
         raise ValueError("An explicit dedicated --schema / HANA_SCHEMA is required")
     with HanaConnector(config) as connector:
