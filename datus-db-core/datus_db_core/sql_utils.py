@@ -378,6 +378,13 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     if not sql or not isinstance(sql, str):
         return SQLType.UNKNOWN
 
+    from datus_db_core.registry import connector_registry
+
+    analyzer = connector_registry.get_sql_analyzer(dialect)
+    if analyzer is not None:
+        analysis = analyzer(sql)
+        return analysis.sql_type if analysis.status == "complete" else SQLType.UNKNOWN
+
     stripped_sql = sql.strip()
     if not stripped_sql:
         return SQLType.UNKNOWN

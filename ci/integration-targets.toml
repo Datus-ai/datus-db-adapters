@@ -71,6 +71,13 @@ kind = "cloud"
 # _USERNAME/_PASSWORD for a long-lived one.
 enabled = false
 
+[targets.hana]
+package = "datus-hana"
+kind = "compose"
+# VERIFY-01.5: provision Express, confirm capacity/TLS/readiness, then enable.
+# Manual 20-case Express trial passed; provision CI storage/credentials/sysctl profile before enabling.
+enabled = false
+
 [selection]
 packages_without_live_targets = [
     "datus-clickzetta",

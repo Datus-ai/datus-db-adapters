@@ -233,7 +233,7 @@ def test_workspace_dependency_graph_contains_transitive_starrocks_edge() -> None
 def test_integration_target_manifest_covers_runner_targets() -> None:
     targets = load_integration_targets()
 
-    assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS
+    assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS | {"hana"}
     assert {name for name, target in targets.items() if target.kind == "cloud"} == {
         "bigquery",
         "hologres",
@@ -244,7 +244,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
         "bigquery",
         "hologres",
     }
-    assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute", "dws"}
+    assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute", "dws", "hana"}
 
 
 def test_packages_without_live_targets_are_explicitly_registered() -> None:

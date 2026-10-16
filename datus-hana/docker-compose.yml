@@ -1,0 +1,33 @@
+services:
+  hana:
+    image: saplabs/hanaexpress:2.00.088.00.20251110.1
+    platform: linux/amd64
+    hostname: hana
+    command: ["--passwords-url", "file:///hana/mounts/passwords.json", "--agree-to-sap-license"]
+    environment:
+      TZ: UTC
+      DATUS_TEST_HANA_PASSWORD: ${DATUS_TEST_HANA_PASSWORD:?Set DATUS_TEST_HANA_PASSWORD}
+    ports:
+      - "127.0.0.1:${HANA_HOST_PORT:-23941}:39041"
+    volumes:
+      - ./.express:/hana/mounts
+    shm_size: 2gb
+    # Server-only functional tests start at SAP's 8 GB minimum; measure the peak.
+    mem_limit: ${HANA_MEMORY_LIMIT_GIB:-8}g
+    memswap_limit: ${HANA_MEMORY_LIMIT_GIB:-8}g
+    cpus: ${HANA_CPU_LIMIT:-2.0}
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    sysctls:
+      kernel.shmmax: 1073741824
+      kernel.shmmni: 524288
+      kernel.shmall: 8388608
+      net.ipv4.ip_local_port_range: "40000 60999"
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/sap/HXE/HDB90/exe/hdbsql -n localhost:39041 -u SYSTEM -p \"$${DATUS_TEST_HANA_PASSWORD}\" -A -x 'SELECT 1 FROM DUMMY' >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 80
+      start_period: 120s
