@@ -507,7 +507,7 @@ hook returns the short entrypoint body; reference-aware Agents read supporting f
 Coordinate the Agent update before deploying split adapter skills to consumers that need the
 full operational guidance. Verify that every local reference is readable via package resources
 and included in the built wheel; an editable checkout alone does not verify distribution contents.
-The shared package smoke and release build reject wheels that omit or carry stale versions of
+The shared package smoke and release build reject wheels that omit, add obsolete resources to, or carry stale versions of
 skill entrypoints or Markdown reference files.
 
 ## Getting Help

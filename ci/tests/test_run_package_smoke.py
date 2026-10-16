@@ -37,7 +37,9 @@ def test_ordered_build_packages_deduplicates_shared_workspace_dependencies() -> 
     ]
 
 
-@pytest.mark.parametrize("defect", [None, "missing_entrypoint", "missing_reference", "stale_reference"])
+@pytest.mark.parametrize(
+    "defect", [None, "missing_entrypoint", "missing_reference", "stale_reference", "extra_reference", "removed_skill"]
+)
 def test_wheel_skill_resources_are_complete_and_current(tmp_path: Path, defect: str | None) -> None:
     target = replace(package("datus-example"), path=tmp_path)
     bundle = tmp_path / "datus_example/skills/db-example-sql"
@@ -57,10 +59,21 @@ def test_wheel_skill_resources_are_complete_and_current(tmp_path: Path, defect: 
                 continue
             packaged = "Old reference" if name == "references/writes.md" and defect == "stale_reference" else content
             archive.writestr(resource.relative_to(tmp_path).as_posix(), packaged)
+        if defect == "extra_reference":
+            archive.writestr("datus_example/skills/db-example-sql/references/removed.md", "Removed guidance")
+    if defect == "removed_skill":
+        for name in source_files:
+            (bundle / name).unlink()
 
     if defect is None:
         assert validate_skill_resources(target, wheel) is None
     else:
-        reason = "stale" if defect == "stale_reference" else "missing"
+        reason = (
+            "stale"
+            if defect == "stale_reference"
+            else "extra"
+            if defect in {"extra_reference", "removed_skill"}
+            else "missing"
+        )
         with pytest.raises(ValueError, match=f"{reason} skill resource"):
             validate_skill_resources(target, wheel)
