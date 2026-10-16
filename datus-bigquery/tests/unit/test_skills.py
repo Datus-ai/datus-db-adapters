@@ -1,4 +1,6 @@
+import re
 from importlib.metadata import entry_points
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -10,11 +12,18 @@ def test_bigquery_sql_skill_is_packaged_and_notes_strip_frontmatter():
     skill_file = Path(get_skills_dir()) / "db-bigquery-sql" / "SKILL.md"
 
     assert skill_file.is_file()
+    references = re.findall(r"\]\((references/[^)]+)\)", skill_file.read_text())
+    assert references
+    for reference in references:
+        resource = files("datus_bigquery").joinpath("skills", "db-bigquery-sql", reference)
+        assert resource.is_file() and resource.read_text().strip()
     notes = get_bigquery_sql_generation_notes()
+    reference_body = (skill_file.parent / "references/table-design-and-writes.md").read_text()
     assert notes.startswith("# Google BigQuery SQL")
-    for marker in ("QUALIFY", "UNNEST", "SAFE_CAST", "PARTITION BY", "NOT ENFORCED"):
+    for marker in ("QUALIFY", "UNNEST", "SAFE_CAST", "NOT ENFORCED"):
         assert marker in notes
-    assert "AUTO_INCREMENT" in notes
+    assert "PARTITION BY" in reference_body
+    assert "AUTO_INCREMENT" in reference_body
     assert "TODO" not in notes
     assert not notes.startswith("---")
 

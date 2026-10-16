@@ -1,4 +1,6 @@
+import re
 from importlib.metadata import entry_points
+from importlib.resources import files
 from pathlib import Path
 
 from datus_db_core import connector_registry
@@ -10,11 +12,17 @@ def test_snowflake_sql_skill_is_packaged_and_notes_strip_frontmatter():
     skill_file = Path(get_skills_dir()) / "db-snowflake-sql" / "SKILL.md"
 
     assert skill_file.is_file()
+    references = re.findall(r"\]\((references/[^)]+)\)", skill_file.read_text())
+    assert references
+    for reference in references:
+        resource = files("datus_snowflake").joinpath("skills", "db-snowflake-sql", reference)
+        assert resource.is_file() and resource.read_text().strip()
     notes = get_snowflake_sql_generation_notes()
+    reference_body = (skill_file.parent / "references/data-loading.md").read_text()
     assert notes.startswith("# Snowflake SQL")
     assert "QUALIFY" in notes
     assert "LATERAL FLATTEN" in notes
-    assert "COPY INTO table" in notes
+    assert "COPY INTO table" in reference_body
     assert "TODO" not in notes
     assert not notes.startswith("---")
 
