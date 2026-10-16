@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Minimal pay-per-query Athena adapter test environment (no provisioned compute).
+
+Parameters:
+  RunId:
+    Type: String
+    AllowedPattern: '[a-z0-9-]{1,20}'
+  DatabaseName:
+    Type: String
+    AllowedPattern: 'datus_athena_[a-z0-9_]{1,40}'
+
+Resources:
+  TestBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'datus-athena-${AWS::AccountId}-${AWS::Region}-${RunId}'
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireQueryResults
+            Status: Enabled
+            Prefix: query-results/
+            ExpirationInDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+          - Id: ExpireFixtures
+            Status: Enabled
+            Prefix: fixtures/
+            ExpirationInDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  TestDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref DatabaseName
+        Description: !Sub 'Disposable Datus Athena fixtures, run ${RunId}'
+
+  TestWorkgroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub 'datus-athena-test-${RunId}'
+      Description: Minimal SQL adapter acceptance environment; no capacity reservation.
+      RecursiveDeleteOption: true
+      State: ENABLED
+      WorkGroupConfiguration:
+        BytesScannedCutoffPerQuery: 10485760
+        EnforceWorkGroupConfiguration: false
+        PublishCloudWatchMetricsEnabled: false
+        RequesterPaysEnabled: false
+        EngineVersion:
+          SelectedEngineVersion: Athena engine version 3
+        ResultConfiguration:
+          OutputLocation: !Sub 's3://${TestBucket}/query-results/'
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+
+Outputs:
+  BucketName:
+    Value: !Ref TestBucket
+  Workgroup:
+    Value: !Ref TestWorkgroup
+  Database:
+    Value: !Ref TestDatabase
+  DataLocation:
+    Value: !Sub 's3://${TestBucket}/fixtures/'
+  OutputLocation:
+    Value: !Sub 's3://${TestBucket}/query-results/'
