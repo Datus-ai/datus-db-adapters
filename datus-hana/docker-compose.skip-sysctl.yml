@@ -1,0 +1,11 @@
+# Explicit test-only opt-in; actual host limits still apply.
+services:
+  hana:
+    # Inherit the host's namespaced defaults as well as skipping image checks.
+    # Requires Docker Compose >= 2.24 (the CI fallback is >= 2.32).
+    sysctls: !reset {}
+    command:
+      - --passwords-url
+      - file:///hana/mounts/passwords.json
+      - --agree-to-sap-license
+      - --dont-check-system

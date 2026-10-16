@@ -24,6 +24,7 @@ PACKAGE_SPECS=(
   "datus-maxcompute:datus-maxcompute/tests/unit"
   "datus-hologres:datus-hologres/tests/unit"
   "datus-oracle:datus-oracle/tests/unit"
+  "datus-hana:datus-hana/tests/unit"
   "datus-gaussdb:datus-gaussdb/tests/unit"
   "datus-bigquery:datus-bigquery/tests/unit"
   "datus-dws:datus-dws/tests/unit"
