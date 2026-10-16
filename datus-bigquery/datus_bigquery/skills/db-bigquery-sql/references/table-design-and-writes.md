@@ -1,7 +1,5 @@
 # BigQuery DDL and migration
 
-## DDL and migration
-
 - Use BigQuery types such as `INT64`, `FLOAT64`, `NUMERIC`, `BIGNUMERIC`, `BOOL`, `STRING`, `BYTES`, `JSON`, `ARRAY`, and `STRUCT`.
 - BigQuery has no `AUTO_INCREMENT`, `SERIAL`, storage `ENGINE`, `DISTRIBUTED BY`, or `BUCKETS` clause.
 - Declare primary and foreign keys as `NOT ENFORCED`.

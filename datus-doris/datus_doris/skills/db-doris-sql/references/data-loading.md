@@ -2,9 +2,7 @@
 
 The target tables used in these examples are defined in [table design and writes](table-design-and-writes.md). Adapt their schemas and paths to the actual target.
 
-## Data loading
-
-### Stream Load — synchronous HTTP ingestion
+## Stream Load — synchronous HTTP ingestion
 
 ```shell
 curl --location-trusted -u <user>:<password> \
@@ -37,7 +35,7 @@ curl --location-trusted -u <user>:<password> \
 - A Stream Load cannot be cancelled by the user; it ends on success, error, or timeout. History is not recorded unless `enable_stream_load_record=true` is set in `be.conf`, after which `SHOW STREAM LOAD FROM <db>` lists finished jobs.
 - Keep a single file under about 10 GB (`streaming_load_max_mb` on the BE, 10240 MB default); split larger inputs.
 
-### INSERT INTO SELECT — synchronous SQL ingestion
+## INSERT INTO SELECT — synchronous SQL ingestion
 
 Use it for in-Doris ETL, for pulling from an external catalog, and for importing files through a TVF.
 
@@ -84,7 +82,7 @@ FROM s3 (
 - Timeouts: FE `insert_load_default_timeout_second` and the session variable `insert_timeout`, both 4 hours by default. Size them as at least data volume divided by expected throughput.
 - Inspect finished jobs with `SHOW LOAD FROM <db>` (`Type = INSERT`), and filtered rows with `SHOW LOAD WARNINGS ON "<url>"`. Wrap the statement in a `JOB` to run it asynchronously.
 
-### Routine Load — continuous Kafka ingestion
+## Routine Load — continuous Kafka ingestion
 
 ```sql
 CREATE ROUTINE LOAD demo.orders_stream ON dwd_orders

@@ -9,13 +9,11 @@
 - Distinguish key columns from sort keys. Use `ORDER BY` for a separately supported sort key and account for version-specific behavior when both `ORDER BY` and a key clause are present.
 - Use StarRocks `PROPERTIES (...)` only for documented table properties; do not copy Doris property names or version defaults without verification.
 
-
 ## Writes and materialized views
 
 - Interpret writes through the table type: Duplicate Key appends rows, Primary Key upserts the latest row, Aggregate Key merges declared aggregate values, and Unique Key replaces rows by key.
 - Use partial updates and conditional updates only with a supported Primary Key configuration and the required load or DML options.
 - Distinguish synchronous rollup materialized views from asynchronous materialized views. Use the correct refresh, partition, distribution, and query restrictions for the intended kind.
-
 
 ## Avoid common dialect leaks
 
