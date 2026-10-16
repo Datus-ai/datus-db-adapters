@@ -1,0 +1,35 @@
+[project]
+name = "datus-hana"
+version = "0.1.0"
+description = "SAP HANA database adapter for Datus using the official Python client"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+dependencies = ["datus-db-core>=0.1.8", "hdbcli>=2.30.27,<3", "sqlglot>=27.27.0,<31", "pandas>=2.1.4", "pyarrow>=14.0.0"]
+
+[project.entry-points."datus.adapters"]
+hana = "datus_hana:register"
+
+[tool.uv.sources]
+datus-db-core = {workspace = true}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["datus_hana"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "acceptance: marks tests as acceptance tests for CI/CD (core functionality validation)",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["datus_hana"]
+omit = ["tests/*", "**/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "def __repr__", "raise AssertionError", "raise NotImplementedError", "if __name__ == .__main__.:", "if TYPE_CHECKING:", "class .*\\bProtocol\\):", "@(abc\\.)?abstractmethod"]

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER_DEFINITION_DIR="$ROOT_DIR/ci/integration/adapters"
 cd "$ROOT_DIR"
 
-ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris tidb trino greenplum hive spark oracle gaussdb)
+ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris tidb trino greenplum hive spark oracle gaussdb hana)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 CURRENT_ADAPTER=""
@@ -30,7 +30,7 @@ Options:
   --changed REF    Select impacted adapters from git diff REF...HEAD.
   --list           List configured adapter targets.
   --dry-run        Print selected adapters without starting Docker.
-  --cleanup-only   Stop the requested adapters, or every adapter when none are given.
+  --cleanup-only   Stop requested adapters, or all enabled adapters when none are given.
   -h, --help       Show this help.
 
 Environment:
@@ -232,11 +232,18 @@ compose_down() {
   cleanup_adapter_stale_volumes
 }
 
+enabled_adapters() {
+  python3 "$ROOT_DIR/ci/select_affected.py" --all --suite integration --kind compose
+}
+
 cleanup_all() {
   local adapter
-  for adapter in "${ALL_ADAPTERS[@]}"; do
-    compose_down "$adapter"
-  done
+  local enabled
+  enabled="$(enabled_adapters)" || return
+  while IFS= read -r adapter; do
+    [ -n "$adapter" ] && compose_down "$adapter"
+  done <<< "$enabled"
+  return 0
 }
 
 cleanup_started() {
@@ -475,7 +482,15 @@ if [ "${#selected_adapters[@]}" -eq 0 ] && [ "$changed_mode" -eq 1 ]; then
 fi
 
 if [ "${#selected_adapters[@]}" -eq 0 ]; then
-  selected_adapters=("${ALL_ADAPTERS[@]}")
+  enabled="$(enabled_adapters)" || exit 1
+  while IFS= read -r adapter; do
+    [ -n "$adapter" ] && selected_adapters+=("$adapter")
+  done <<< "$enabled"
+fi
+
+if [ "${#selected_adapters[@]}" -eq 0 ]; then
+  echo "No enabled compose-backed adapters; skipping integration tests."
+  exit 0
 fi
 
 for adapter in "${selected_adapters[@]}"; do
