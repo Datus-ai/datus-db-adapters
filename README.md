@@ -6,6 +6,18 @@ Independent database adapter packages for Datus Agent.
 
 This repository contains database adapter implementations for Datus Agent, using a plugin architecture where each database is an independent package that can be installed on demand.
 
+## Database SQL guidance
+
+Adapters with a `datus.skills` entry point bundle a `db-<dialect>-sql` skill. Its
+`SKILL.md` contains query and existing-data semantics; linked `references/` files
+provide task-specific DDL, writes, loading and procedural guidance on demand.
+
+Use an Agent with `skill_location` and skill-bundle reference reading support for
+the complete guidance. The legacy SQL-notes hook returns only the short entrypoint
+body; custom hosts can resolve its reference links relative to the skill directory
+under `get_skills_dir()`. Coordinate Agent support before deploying these adapter
+updates to hosts that need the operational references.
+
 ## Architecture
 
 ```

@@ -1,7 +1,9 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
+import re
 from importlib.metadata import entry_points
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -15,24 +17,31 @@ def test_doris_sql_skill_is_packaged_and_notes_strip_frontmatter():
     skill_file = Path(get_skills_dir()) / "db-doris-sql" / "SKILL.md"
 
     assert skill_file.is_file()
+    references = re.findall(r"\]\((references/[^)]+)\)", skill_file.read_text())
+    assert references
+    for reference in references:
+        resource = files("datus_doris").joinpath("skills", "db-doris-sql", reference)
+        assert resource.is_file() and resource.read_text().strip()
     notes = get_doris_sql_generation_notes()
     assert notes.startswith("# Apache Doris SQL")
     assert "DUPLICATE KEY" in notes
+    loading = (skill_file.parent / "references/data-loading.md").read_text()
+    materialized_views = (skill_file.parent / "references/materialized-views.md").read_text()
     # The three loading paths the skill documents, each with a runnable example.
-    assert "_stream_load" in notes
-    assert "INSERT INTO SELECT" in notes
-    assert "CREATE ROUTINE LOAD" in notes
+    assert "_stream_load" in loading
+    assert "INSERT INTO SELECT" in loading
+    assert "CREATE ROUTINE LOAD" in loading
     # Broker Load was deliberately dropped in favour of TVF-based file import.
     # One marker per assertion: a single "WITH S3|HDFS|BROKER" literal is not an
     # alternation, so it matches nothing and passes whatever the file says.
-    upper = notes.upper()
+    upper = loading.upper()
     for marker in ("LOAD LABEL", "BROKER LOAD", "WITH BROKER", "WITH HDFS"):
         assert marker not in upper, f"Broker Load marker {marker!r} is back in the skill"
     # Both materialized view kinds, plus the state check that gates rewrite.
-    assert "CREATE MATERIALIZED VIEW" in notes
-    assert "SHOW CREATE MATERIALIZED VIEW sync_agg_mv ON app_log" in notes
-    assert "mv_infos(" in notes
-    assert "MaterializedViewRewriteSuccessAndChose" in notes
+    assert "CREATE MATERIALIZED VIEW" in materialized_views
+    assert "SHOW CREATE MATERIALIZED VIEW sync_agg_mv ON app_log" in materialized_views
+    assert "mv_infos(" in materialized_views
+    assert "MaterializedViewRewriteSuccessAndChose" in materialized_views
     assert "TODO" not in notes
     assert not notes.startswith("---")
 

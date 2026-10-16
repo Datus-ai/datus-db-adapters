@@ -1,6 +1,6 @@
 ---
 name: db-bigquery-sql
-description: Generate or review Google BigQuery Standard SQL, especially when project.dataset qualification, nested data, time semantics, partition pruning, or BigQuery-specific DDL affect correctness or cost.
+description: Generate and review BigQuery GoogleSQL with project/dataset names, nested data, time zones and partition pruning. Read the DDL reference for table creation and migration.
 ---
 
 # Google BigQuery SQL
@@ -27,20 +27,13 @@ Generate GoogleSQL, not PostgreSQL or MySQL syntax.
 - Use `TABLESAMPLE SYSTEM` only for approximate exploration; `LIMIT` alone does not guarantee fewer bytes scanned.
 - When querying `INFORMATION_SCHEMA`, qualify it with the matching dataset or `region-REGION`; job metadata queries must run in that same region.
 
-## DDL and migration
+## Types and existing constraints
 
-- Use BigQuery types such as `INT64`, `FLOAT64`, `NUMERIC`, `BIGNUMERIC`, `BOOL`, `STRING`, `BYTES`, `JSON`, `ARRAY`, and `STRUCT`.
-- BigQuery has no `AUTO_INCREMENT`, `SERIAL`, storage `ENGINE`, `DISTRIBUTED BY`, or `BUCKETS` clause.
-- Declare primary and foreign keys as `NOT ENFORCED`.
-- Put `PARTITION BY` and then `CLUSTER BY` after the column list:
+- Use GoogleSQL type names such as INT64, NUMERIC, BOOL and STRING, including ARRAY and STRUCT.
+- Primary and foreign keys are NOT ENFORCED. Their presence in DDL does not prove the existing rows satisfy them; preserve that distinction in relationship and cardinality reasoning.
 
-```sql
-CREATE TABLE `my-project.analytics.events` (
-  event_id INT64 NOT NULL,
-  event_ts TIMESTAMP,
-  attributes JSON,
-  PRIMARY KEY (event_id) NOT ENFORCED
-)
-PARTITION BY DATE(event_ts)
-CLUSTER BY event_id;
-```
+## Task references
+
+- [BigQuery DDL and migration](references/table-design-and-writes.md): physical table creation, partitioning, clustering and declared constraints.
+
+Read these for the requested operation, including SQL-only authoring. Supplied ETL is evidence; follow the user's task.

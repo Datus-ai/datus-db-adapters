@@ -1,6 +1,6 @@
 ---
 name: db-snowflake-sql
-description: Generate, review, and understand Snowflake SQL. Use for Snowflake queries, DDL, DML, MERGE, semi-structured data, stages, COPY operations, materialized views, profiling, transfers, and rewrites where identifiers, namespaces, data types, functions, constraints, or loading syntax differ from other dialects.
+description: Generate and interpret Snowflake SQL with case-sensitive names, time semantics, semi-structured data and standard/hybrid-table constraints. Task references cover DDL, MERGE, stages and COPY.
 ---
 
 # Snowflake SQL
@@ -30,22 +30,17 @@ Generate Snowflake-compatible SQL from metadata-provided object and column names
 - Access semi-structured paths with Snowflake path syntax and cast scalar results to the required SQL type.
 - Use `LATERAL FLATTEN(INPUT => expression)` to expand `VARIANT`, `OBJECT`, or `ARRAY` values into rows.
 
-## DDL and writes
-
-- Use `CREATE OR REPLACE` only when replacing the object and its dependent behavior is acceptable; otherwise use `IF NOT EXISTS` or inspect metadata.
-- Use `CLUSTER BY` for clustering where justified. Do not generate traditional indexes for ordinary Snowflake tables.
-- Treat primary-key, unique, and foreign-key constraints on standard tables primarily as metadata; do not rely on them to enforce integrity. Account for enforced `NOT NULL` and supported `CHECK` constraints, and distinguish hybrid-table enforcement.
-- Account for DDL transaction boundaries; do not assume DDL participates in a surrounding DML transaction.
-- Use `MERGE` for matched update/delete and unmatched insert logic. Preserve the possibility of multiple source rows matching one target row when reasoning about correctness.
-
-## Data loading and unloading
-
-- Use `COPY INTO table` to load from named, user, or table stages and `COPY INTO location` to unload query or table data.
-- Use existing stages and file formats from metadata when available. Otherwise make the required stage, path, file format, pattern, column mapping, and copy options explicit.
-- Use a `SELECT` transform inside `COPY INTO table` when files require column reordering, casting, or semi-structured extraction.
-- Treat `VALIDATION_MODE`, `ON_ERROR`, `MATCH_BY_COLUMN_NAME`, `PURGE`, and `FORCE` as explicit capabilities with data-quality and idempotency consequences; do not enable them implicitly.
-- Never place secrets directly in generated SQL when a storage integration, external stage, or configured credential is available.
-
 ## Avoid common dialect leaks
 
 Before returning SQL, reject backticks, PostgreSQL/MySQL upsert syntax, Oracle `FROM DUAL`, SQL Server `TOP`, traditional index DDL, and unqualified objects whose database and schema cannot be inferred.
+
+## Existing constraints
+
+Treat primary-key, unique and foreign-key constraints on standard tables primarily as metadata; they do not establish enforced integrity. Distinguish the enforced constraints of hybrid tables and the target version. Keep declared keys separate from demonstrated row uniqueness.
+
+## Task references
+
+- [Snowflake DDL and writes](references/table-design-and-writes.md): object replacement, table design, MERGE and transaction boundaries.
+- [Snowflake loading and unloading](references/data-loading.md): COPY, stages, file formats, storage authentication and load options.
+
+Read these for the requested operation, including SQL-only authoring. Supplied ETL is evidence; follow the user's task.

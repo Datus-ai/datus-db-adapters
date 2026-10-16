@@ -490,6 +490,26 @@ members = [
    - All review comments must be resolved before merging
    - Respond to feedback and make necessary changes
 
+## Database SQL skills
+
+Keep each `db-<dialect>-sql/SKILL.md` focused on queries and interpreting existing data:
+namespaces, expressions, type and time semantics, compatibility modes, and what declared
+keys or stored aggregate states mean. Preserve dialect-specific correctness constraints.
+
+Put substantial physical table design, write, loading and procedural guidance in the same
+skill's `references/` directory. Link each reference from the entrypoint and say which task
+needs it, including SQL-generation-only requests. Statements in supplied ETL are evidence;
+the user's task determines which operational references to read. Create only the references
+the adapter actually needs.
+
+Keep skill names, `datus.skills` entry points and SQL-notes hook signatures stable. The notes
+hook returns the short entrypoint body; reference-aware Agents read supporting files on demand.
+Coordinate the Agent update before deploying split adapter skills to consumers that need the
+full operational guidance. Verify that every local reference is readable via package resources
+and included in the built wheel; an editable checkout alone does not verify distribution contents.
+The shared package smoke and release build reject wheels that omit or carry stale versions of
+skill entrypoints or Markdown reference files.
+
 ## Getting Help
 
 If you have questions or need help:
