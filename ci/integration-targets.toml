@@ -1,3 +1,9 @@
+[targets.athena]
+package = "datus-athena"
+kind = "cloud"
+# Local AWS acceptance passed; CI-specific credentials and workflow remain unconfigured.
+enabled = false
+
 [targets.postgresql]
 package = "datus-postgresql"
 kind = "compose"

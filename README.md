@@ -24,6 +24,7 @@ Plugin Adapters (Independent packages, install as needed)
 │   └── datus-dws
 │
 └── Native SDK Adapters
+    ├── datus-athena
     ├── datus-snowflake
     ├── datus-clickzetta
     ├── datus-maxcompute
@@ -232,6 +233,27 @@ pip install datus-dws
 - DWS system schema filtering (`cstore`, `sys`, `pg_recyclebin`, `dbms_*`, `utl_*`)
 - Adapter-packaged DWS SQL skill covering the silently-wrong ORA-mode constructs
 - Independent ORA/TD/MySQL cloud integration jobs on a real DWS cluster
+
+---
+
+### 13. datus-athena
+Amazon Athena adapter using the official AWS boto3 SDK.
+
+**Installation**:
+```bash
+pip install datus-athena
+```
+
+**Features**:
+- Glue Catalog, database, table, view and partition-column metadata
+- Workgroup-aware S3 and managed result handling
+- Query polling, idempotent submission, native cancellation and execution diagnostics
+- Bounded API pagination with list, CSV, pandas and Arrow results
+- Offline SDK Stubber coverage and opt-in real AWS acceptance tests
+
+See [configuration, permissions and testing](datus-athena/README.md).
+Real AWS acceptance passed in S3 and managed-results modes; see the
+[validation record](datus-athena/AWS_TESTING.md#validation-record-2026-10-16).
 
 ---
 
