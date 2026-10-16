@@ -2,6 +2,17 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+"""PostgreSQL integration environment.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| POSTGRESQL_HOST/PORT | localhost/5432 | Database endpoint |
+| POSTGRESQL_USER/PASSWORD | test_user/test_password | Test identity |
+| POSTGRESQL_DATABASE/SCHEMA | test/public | Isolated test namespace |
+| POSTGRESQL_SSLROOTCERT | unset | CA path; enables verify-full Aurora-style TLS |
+| DATUS_TEST_TLS_DIR | unset | Disposable certificates for negative TLS tests |
+"""
+
 import os
 from typing import Generator
 
@@ -18,9 +29,7 @@ __all__ = ["ROW_COUNTS", "TPCH_DATA", "TPCH_DDL", "TPCH_TABLES"]
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def config() -> PostgreSQLConfig:
-    """Create PostgreSQL configuration for integration tests from environment or defaults."""
+def _build_config() -> PostgreSQLConfig:
     return PostgreSQLConfig(
         host=os.getenv("POSTGRESQL_HOST", "localhost"),
         port=int(os.getenv("POSTGRESQL_PORT", "5432")),
@@ -28,7 +37,14 @@ def config() -> PostgreSQLConfig:
         password=os.getenv("POSTGRESQL_PASSWORD", "test_password"),
         database=os.getenv("POSTGRESQL_DATABASE", "test"),
         schema_name=os.getenv("POSTGRESQL_SCHEMA", "public"),
+        sslrootcert=os.getenv("POSTGRESQL_SSLROOTCERT"),
+        aurora=bool(os.getenv("POSTGRESQL_SSLROOTCERT")),
     )
+
+
+@pytest.fixture
+def config() -> PostgreSQLConfig:
+    return _build_config()
 
 
 @pytest.fixture
@@ -39,9 +55,12 @@ def connector(config: PostgreSQLConfig) -> Generator[PostgreSQLConnector, None, 
         conn = PostgreSQLConnector(config)
         if not conn.test_connection():
             pytest.skip("Database connection test failed")
-        yield conn
     except Exception as e:
+        if conn is not None:
+            conn.close()
         pytest.skip(f"Database not available: {e}")
+    try:
+        yield conn
     finally:
         if conn is not None:
             try:
@@ -57,14 +76,7 @@ def tpch_setup():
     Creates tables, inserts sample data, yields for tests, then drops tables.
     Skips all tests if the database is not available.
     """
-    cfg = PostgreSQLConfig(
-        host=os.getenv("POSTGRESQL_HOST", "localhost"),
-        port=int(os.getenv("POSTGRESQL_PORT", "5432")),
-        username=os.getenv("POSTGRESQL_USER", "test_user"),
-        password=os.getenv("POSTGRESQL_PASSWORD", "test_password"),
-        database=os.getenv("POSTGRESQL_DATABASE", "test"),
-        schema_name=os.getenv("POSTGRESQL_SCHEMA", "public"),
-    )
+    cfg = _build_config()
 
     conn = None
     try:

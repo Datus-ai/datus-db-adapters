@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import os
 import uuid
 
 import pytest
@@ -16,30 +15,15 @@ from datus_mysql import MySQLConfig, MySQLConnector
 @pytest.mark.acceptance
 def test_connection_with_config_object(config: MySQLConfig):
     """Test connection using config object."""
-    try:
-        conn = MySQLConnector(config)
+    with MySQLConnector(config) as conn:
         assert conn.test_connection()
-        conn.close()
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
 
 
 @pytest.mark.integration
-def test_connection_with_dict():
+def test_connection_with_dict(config: MySQLConfig):
     """Test connection using dict config."""
-    try:
-        conn = MySQLConnector(
-            {
-                "host": os.getenv("MYSQL_HOST", "localhost"),
-                "port": int(os.getenv("MYSQL_PORT", "3306")),
-                "username": os.getenv("MYSQL_USER", "test_user"),
-                "password": os.getenv("MYSQL_PASSWORD", "test_password"),
-            }
-        )
+    with MySQLConnector(config.model_dump()) as conn:
         assert conn.test_connection()
-        conn.close()
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
 
 
 # ==================== Database Tests ====================

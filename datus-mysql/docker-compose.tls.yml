@@ -1,0 +1,13 @@
+# Overlay: docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+services:
+  mysql:
+    volumes:
+      - ${DATUS_TEST_TLS_DIR:?Generate disposable certificates first}:/tls:ro
+    command:
+      - bash
+      - -ec
+      - |
+        cp /tls/server.key /tmp/datus-server.key
+        chown mysql:mysql /tmp/datus-server.key
+        chmod 0600 /tmp/datus-server.key
+        exec docker-entrypoint.sh mysqld --default-authentication-plugin=mysql_native_password --ssl-ca=/tls/ca.crt --ssl-cert=/tls/server.crt --ssl-key=/tmp/datus-server.key --require-secure-transport=ON

@@ -79,6 +79,13 @@ def test_unit_only_change_does_not_select_integration() -> None:
     assert selection.unit_packages == {"datus-mysql"}
 
 
+@pytest.mark.parametrize("path", ["ci/run_tls_integration_tests.py", "ci/integration/generate_tls.py"])
+def test_tls_infrastructure_selects_both_existing_database_targets(path) -> None:
+    selection = select(path)
+    assert selection.compose_targets == {"mysql", "postgresql"}
+    assert selection.unit_packages == {"datus-mysql", "datus-postgresql"}
+
+
 def test_documentation_change_does_not_select_tests() -> None:
     selection = select("datus-mysql/README.md", "docs/adapter-policy.md")
 
@@ -235,6 +242,8 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
 
     assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS
     assert {name for name, target in targets.items() if target.kind == "cloud"} == {
+        "aurora-mysql",
+        "aurora-postgresql",
         "bigquery",
         "hologres",
         "maxcompute",
@@ -244,7 +253,12 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
         "bigquery",
         "hologres",
     }
-    assert {name for name, target in targets.items() if not target.enabled} == {"maxcompute", "dws"}
+    assert {name for name, target in targets.items() if not target.enabled} == {
+        "maxcompute",
+        "dws",
+        "aurora-mysql",
+        "aurora-postgresql",
+    }
 
 
 def test_packages_without_live_targets_are_explicitly_registered() -> None:

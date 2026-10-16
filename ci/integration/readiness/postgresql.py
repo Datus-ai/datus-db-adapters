@@ -12,5 +12,7 @@ config = PostgreSQLConfig(
     database=os.getenv("POSTGRESQL_DATABASE", "test"),
     schema_name=os.getenv("POSTGRESQL_SCHEMA", "public"),
     timeout_seconds=5,
+    sslrootcert=os.getenv("POSTGRESQL_SSLROOTCERT"),
+    aurora=bool(os.getenv("POSTGRESQL_SSLROOTCERT")),
 )
 require_connection("postgresql", PostgreSQLConnector(config))
