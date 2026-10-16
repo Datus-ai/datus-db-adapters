@@ -1,10 +1,8 @@
 # Doris materialized views
 
-## Materialized views
-
 Doris has two distinct kinds. Pick deliberately; they have different syntax, different limits, and different inspection commands.
 
-### Asynchronous materialized view
+## Asynchronous materialized view
 
 An independently queryable object over one or more tables, refreshed on its own schedule, eligible for transparent rewrite.
 
@@ -32,7 +30,7 @@ DROP MATERIALIZED VIEW demo.mv_gmv_daily;
 - Useful properties: `grace_period` (seconds of staleness still allowed for rewrite), `excluded_trigger_tables`, `refresh_partition_num`, `use_for_rewrite` (set `false` for a view meant to be queried directly rather than to rewrite), `enable_nondeterministic_function`.
 - An asynchronous view accepts no manual `INSERT`/`INSERT OVERWRITE` and no schema change.
 
-### Synchronous materialized view
+## Synchronous materialized view
 
 A rollup index attached to one base table, updated in the same transaction as the base table write.
 
@@ -53,7 +51,7 @@ DROP MATERIALIZED VIEW sync_agg_mv ON app_log;
 - On a Unique Key base table a sync view can only reorder columns, not aggregate. On Unique and Aggregate base tables a `WHERE` clause may reference key columns only.
 - Many sync views on one table slow down loading, because every load writes all of them.
 
-### Checking state and transparent rewrite
+## Checking state and transparent rewrite
 
 ```sql
 -- Is the async view built, healthy, and eligible to rewrite?

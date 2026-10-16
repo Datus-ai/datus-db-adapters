@@ -507,8 +507,10 @@ hook returns the short entrypoint body; reference-aware Agents read supporting f
 Coordinate the Agent update before deploying split adapter skills to consumers that need the
 full operational guidance. Verify that every local reference is readable via package resources
 and included in the built wheel; an editable checkout alone does not verify distribution contents.
-The shared package smoke and release build reject wheels that omit, add obsolete resources to, or carry stale versions of
-skill entrypoints or Markdown reference files.
+The shared package smoke and release build compare skill entrypoints and Markdown references
+against their source files, rejecting missing, obsolete or stale wheel resources. Keep tests
+focused on resource availability, entry-point resolution and notes-hook behavior; avoid
+asserting exact prose unless it protects a specific dialect correctness rule.
 
 ## Getting Help
 

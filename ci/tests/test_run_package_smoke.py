@@ -38,9 +38,17 @@ def test_ordered_build_packages_deduplicates_shared_workspace_dependencies() -> 
 
 
 @pytest.mark.parametrize(
-    "defect", [None, "missing_entrypoint", "missing_reference", "stale_reference", "extra_reference", "removed_skill"]
+    "defect,reason",
+    [
+        (None, None),
+        ("missing_entrypoint", "missing"),
+        ("missing_reference", "missing"),
+        ("stale_reference", "stale"),
+        ("extra_reference", "extra"),
+        ("removed_skill", "extra"),
+    ],
 )
-def test_wheel_skill_resources_are_complete_and_current(tmp_path: Path, defect: str | None) -> None:
+def test_wheel_skill_resources_are_complete_and_current(tmp_path: Path, defect: str | None, reason: str | None) -> None:
     target = replace(package("datus-example"), path=tmp_path)
     bundle = tmp_path / "datus_example/skills/db-example-sql"
     (bundle / "references").mkdir(parents=True)
@@ -68,12 +76,5 @@ def test_wheel_skill_resources_are_complete_and_current(tmp_path: Path, defect: 
     if defect is None:
         assert validate_skill_resources(target, wheel) is None
     else:
-        reason = (
-            "stale"
-            if defect == "stale_reference"
-            else "extra"
-            if defect in {"extra_reference", "removed_skill"}
-            else "missing"
-        )
         with pytest.raises(ValueError, match=f"{reason} skill resource"):
             validate_skill_resources(target, wheel)
