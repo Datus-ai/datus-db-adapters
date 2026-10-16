@@ -11,5 +11,7 @@ config = MySQLConfig(
     password=os.getenv("MYSQL_PASSWORD", "test_password"),
     database=os.getenv("MYSQL_DATABASE", "test"),
     timeout_seconds=5,
+    ssl_ca=os.getenv("MYSQL_SSL_CA"),
+    aurora=bool(os.getenv("MYSQL_SSL_CA")),
 )
 require_connection("mysql", MySQLConnector(config))

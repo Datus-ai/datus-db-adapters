@@ -4,10 +4,12 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
+
+from datus_sqlalchemy.auth import DatabaseAuthConfig
 
 
-class PostgreSQLConfig(BaseModel):
+class PostgreSQLConfig(DatabaseAuthConfig):
     """PostgreSQL-specific configuration."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -17,6 +19,7 @@ class PostgreSQLConfig(BaseModel):
     username: str = Field(..., description="PostgreSQL username")
     password: str = Field(
         default="",
+        repr=False,
         description="PostgreSQL password",
         json_schema_extra={"input_type": "password"},
     )
@@ -27,3 +30,18 @@ class PostgreSQLConfig(BaseModel):
         description="SSL mode (disable, allow, prefer, require, verify-ca, verify-full)",
     )
     timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+    sslrootcert: Optional[str] = None
+    sslcert: Optional[str] = None
+    sslkey: Optional[str] = Field(default=None, repr=False)
+
+    @model_validator(mode="after")
+    def validate_tls(self):
+        if bool(self.sslcert) != bool(self.sslkey):
+            raise ValueError("sslcert and sslkey must be supplied together")
+        if self.aurora or self.auth_mode == "iam":
+            if not self.sslrootcert:
+                raise ValueError("Aurora/IAM requires sslrootcert")
+            if "sslmode" in self.model_fields_set and self.sslmode != "verify-full":
+                raise ValueError("Aurora/IAM requires sslmode=verify-full")
+            self.sslmode = "verify-full"
+        return self

@@ -36,6 +36,26 @@ class MyDatabaseConnector(SQLAlchemyConnector):
         super().__init__(connection_string, dialect="mydb")
 ```
 
+## Optional connection hooks
+
+`configure_connection(connect_args=..., connection_parameters=..., credential_version=..., connection_cleanup=..., connection_validator=...)`
+adds static driver parameters and an optional dynamic provider. Each new engine,
+including PostgreSQL's per-database engines, uses the same `_create_engine` path.
+Static parameters override the URL; the dynamic provider overrides both at every
+physical connection through `do_connect`. No new abstract methods are required.
+
+The optional `credential_version(force: bool)` callback runs before engine lookup.
+A changed version disposes owned pools; `refresh_credentials()` forces this check.
+Replacing hook configuration also disposes pools and must happen between operations.
+The optional `connection_cleanup()` callback releases provider resources when pools
+are closed or replaced. It must tolerate repeated calls and later reconnection.
+The optional `connection_validator(dbapi_connection)` runs before each checkout.
+It can raise SQLAlchemy `DisconnectionError` to reject a stale server role and use
+the pool's bounded physical-connection retries before application SQL is sent.
+This does not replay application statements.
+Existing adapters that do not configure these hooks retain their creation behavior.
+See [Aurora](../docs/aurora.md) for the MySQL/PostgreSQL implementation and tests.
+
 ## Requirements
 
 - Python >= 3.12
