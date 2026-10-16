@@ -52,5 +52,11 @@ def build_hana_uri(config) -> str:
 
 def resolve_hana_context(config, uri: str) -> tuple[str, str, str, str]:
     extra = getattr(config, "extra", None) or {}
-    schema = getattr(config, "schema_name", None) or getattr(config, "schema", None) or extra.get("schema") or ""
+    schema = (
+        getattr(config, "schema_name", None)
+        or getattr(config, "schema", None)
+        or extra.get("schema")
+        or getattr(config, "username", None)
+        or ""
+    )
     return "hana", "", "", str(schema)

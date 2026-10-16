@@ -45,3 +45,17 @@ def test_uri_and_context_exclude_auth_and_tenant_namespace():
     assert build_hana_uri(config) == "hana://[::1]:443"
     assert resolve_hana_context(config, build_hana_uri(config)) == ("hana", "", "", "CaseSensitive")
     assert quote_identifier('a"b') == '"a""b"'
+
+
+@pytest.mark.parametrize(
+    "fields,schema",
+    [
+        ({"username": "MixedUser"}, "MixedUser"),
+        ({"username": "U", "schema_name": "Explicit"}, "Explicit"),
+        ({"username": "U", "schema": "Alias"}, "Alias"),
+        ({"username": "U", "extra": {"schema": "Extra"}}, "Extra"),
+        ({"extra": {"userkey": "KEY"}}, ""),
+    ],
+)
+def test_context_schema_follows_connector_default(fields, schema):
+    assert resolve_hana_context(SimpleNamespace(**fields), "hana://h:39041") == ("hana", "", "", schema)

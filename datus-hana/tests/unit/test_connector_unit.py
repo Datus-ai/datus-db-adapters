@@ -328,3 +328,14 @@ def test_environment_config_is_strict_tls_by_default(monkeypatch):
     monkeypatch.setenv("HANA_PASSWORD", "runtime")
     config = config_from_env()
     assert config.encrypt and config.ssl_validate_certificate
+
+
+@pytest.mark.parametrize("include_sys", [False, True])
+def test_schema_discovery_filters_reserved_component_namespace(connector, sdk, include_sys):
+    schemas = ["SYS", "SYSTEM", "PUBLIC", "_SYS_BIC", "_SYS_AFL", "_SYS_AUDIT", "_SYS_RT", "_SYS_SQL_ANALYZER", "APP"]
+    cursor = sdk[2]
+    cursor.description = [("SCHEMA_NAME",)]
+    cursor.fetchmany.side_effect = [[(name,) for name in schemas], []]
+
+    assert connector.get_schemas(include_sys=include_sys) == (schemas if include_sys else ["APP"])
+    cursor.execute.assert_called_once_with("SELECT SCHEMA_NAME FROM SYS.SCHEMAS ORDER BY SCHEMA_NAME")

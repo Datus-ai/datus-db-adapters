@@ -69,6 +69,52 @@ def test_each_adapter_definition_supports_dry_run() -> None:
         assert f"package: {package_match.group(1)}" in result.stdout
 
 
+def test_default_dry_run_selects_only_enabled_compose_targets() -> None:
+    targets = tomllib.loads((CI_ROOT / "integration-targets.toml").read_text())["targets"]
+    expected = {name for name, config in targets.items() if config["kind"] == "compose" and config.get("enabled", True)}
+    result = subprocess.run([RUNNER, "--dry-run"], cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+
+    assert set(re.findall(r"=== Integration tests: (\w+) ===", result.stdout)) == expected
+
+
+def test_default_cleanup_uses_enabled_selection_and_keeps_explicit_disabled_target(tmp_path: Path) -> None:
+    runner = tmp_path / "ci/run-integration-tests.sh"
+    runner.parent.mkdir()
+    runner.write_bytes(RUNNER.read_bytes())
+    runner.chmod(0o755)
+    (runner.parent / "select_affected.py").write_text(
+        "import sys\n"
+        "assert sys.argv[1:] == ['--all', '--suite', 'integration', '--kind', 'compose']\n"
+        "print('postgresql')\n"
+    )
+    definitions = runner.parent / "integration/adapters"
+    definitions.mkdir(parents=True)
+    for adapter in ("postgresql", "hana"):
+        compose = tmp_path / f"{adapter}.yml"
+        compose.touch()
+        (definitions / f"{adapter}.sh").write_text(
+            f'ADAPTER_NAME="{adapter}"\nADAPTER_PACKAGE="datus-{adapter}"\nADAPTER_COMPOSE="{compose}"\n'
+            'ADAPTER_TEST_PATH="tests"\nADAPTER_SERVICES=(db:10)\n'
+            "export_adapter_env() { :; }\nadapter_env_summary() { :; }\nwait_for_adapter_client_readiness() { :; }\n"
+        )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    docker = binaries / "docker"
+    docker.write_text('#!/bin/bash\necho "$*" >> "$CLEANUP_CALLS"\n')
+    docker.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = os.environ | {"PATH": str(binaries) + os.pathsep + os.environ["PATH"], "CLEANUP_CALLS": str(calls)}
+
+    subprocess.run([runner, "--cleanup-only"], env=env, check=True, capture_output=True)
+    default_calls = calls.read_text()
+    assert str(tmp_path / "postgresql.yml") in default_calls
+    assert str(tmp_path / "hana.yml") not in default_calls
+
+    calls.write_text("")
+    subprocess.run([runner, "--cleanup-only", "hana"], env=env, check=True, capture_output=True)
+    assert str(tmp_path / "hana.yml") in calls.read_text()
+
+
 def test_cleanup_only_tolerates_a_missing_adapter_definition(tmp_path: Path) -> None:
     ci_root = tmp_path / "ci"
     runner = ci_root / "run-integration-tests.sh"

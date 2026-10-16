@@ -168,6 +168,14 @@ Required whenever the package has a `skills.py`. Assert the SKILL.md file ships 
 (`importlib.resources`), frontmatter is stripped from the loaded text, and the `datus.skills`
 entry point is unique and points at the right directory.
 
+### Environment helpers and setup CLIs — when shipped
+
+When an adapter ships environment configuration helpers or setup CLIs, add unit
+coverage for missing required configuration (optional-mode skip and required-mode
+failure), valid authentication modes, and CLI overrides applied before validation.
+Run the CLI entry point with explicit arguments and mock only the external driver
+boundary, so a working environment cannot hide unusable command-line options.
+
 ### Deeper unit coverage (optional but encouraged)
 
 `datus-doris/tests/unit/test_connector_contract.py` shows the next tier: branches integration

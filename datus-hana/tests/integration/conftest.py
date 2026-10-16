@@ -28,7 +28,7 @@ from datus_hana.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
 def config():
     required = os.getenv("HANA_REQUIRE_INTEGRATION") == "1"
     if not os.getenv("HANA_SCHEMA") or not (
-        os.getenv("HANA_USERKEY") or os.getenv("HANA_HOST") and os.getenv("HANA_PASSWORD")
+        os.getenv("HANA_USERKEY") or os.getenv("HANA_HOST") and os.getenv("HANA_USER") and os.getenv("HANA_PASSWORD")
     ):
         if required:
             pytest.fail("HANA integration environment is required but incomplete")
