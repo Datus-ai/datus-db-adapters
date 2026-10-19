@@ -13,7 +13,7 @@ def register():
     """Register Trino connector with Datus registry."""
     from datus_db_core import connector_registry
 
-    from .handlers import build_trino_uri, resolve_trino_context
+    from .handlers import build_trino_uri, parse_trino_identifier, resolve_trino_context
 
     connector_registry.register(
         "trino",
@@ -22,4 +22,5 @@ def register():
         capabilities={"catalog", "schema"},
         uri_builder=build_trino_uri,
         context_resolver=resolve_trino_context,
+        identifier_parser=parse_trino_identifier,
     )

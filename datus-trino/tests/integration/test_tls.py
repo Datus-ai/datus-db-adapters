@@ -23,7 +23,8 @@ def tls_config(config):
 
 def test_default_requests_trust_configuration(tls_config, monkeypatch):
     """Without ca_cert, the driver's normal Requests CA bundle setting still works."""
-    monkeypatch.setenv("REQUESTS_CA_BUNDLE", tls_config.ca_cert)
+    if tls_config.ca_cert is not None:
+        monkeypatch.setenv("REQUESTS_CA_BUNDLE", tls_config.ca_cert)
     conn = TrinoConnector(tls_config.model_copy(update={"ca_cert": None}))
     try:
         result = conn.execute({"sql_query": "SELECT 22 AS value"}, result_format="list")
