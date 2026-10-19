@@ -2,13 +2,15 @@ import datetime as dt
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
-import boto3
 import pytest
-from botocore.credentials import RefreshableCredentials
-from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from datus_db_core.aws import AWSCredentialError, AWSIdentity, AWSIdentityConfig
+
+
+@pytest.fixture
+def aws_sdk():
+    return pytest.importorskip("boto3", reason="Install datus-db-core[aws] for SDK-dependent tests")
 
 
 def test_identity_config_defaults_and_validation():
@@ -18,9 +20,9 @@ def test_identity_config_defaults_and_validation():
             AWSIdentityConfig(**kwargs)
 
 
-def test_sdk_session_and_clients_are_reused_without_extracting_credentials():
+def test_sdk_session_and_clients_are_reused_without_extracting_credentials(aws_sdk):
     config = AWSIdentityConfig(region="us-east-1", profile="cross-account-role", ca_bundle="/ca.pem")
-    with patch("boto3.Session") as session:
+    with patch.object(aws_sdk, "Session") as session:
         identity = AWSIdentity(config)
         first = identity.client("rds")
         assert identity.client("rds") is first
@@ -31,14 +33,14 @@ def test_sdk_session_and_clients_are_reused_without_extracting_credentials():
         session.return_value.get_credentials.assert_not_called()
 
 
-def test_default_identity_leaves_credential_resolution_to_sdk():
-    with patch("boto3.Session") as session:
+def test_default_identity_leaves_credential_resolution_to_sdk(aws_sdk):
+    with patch.object(aws_sdk, "Session") as session:
         AWSIdentity().client("rds")
         session.assert_called_once_with(profile_name=None, region_name=None)
 
 
 def test_sdk_client_options_and_session_survive_close_and_reopen():
-    from botocore.config import Config
+    Config = pytest.importorskip("botocore.config", reason="Install datus-db-core[aws]").Config
 
     sdk_config = Config(connect_timeout=3, read_timeout=7, retries={"mode": "standard", "total_max_attempts": 2})
     session = MagicMock()
@@ -79,6 +81,7 @@ def test_missing_sdk_has_actionable_error():
 
 
 def test_aws_errors_preserve_code_without_service_message():
+    ClientError = pytest.importorskip("botocore.exceptions", reason="Install datus-db-core[aws]").ClientError
     client = MagicMock()
     client.generate_db_auth_token.side_effect = ClientError(
         {"Error": {"Code": "AccessDenied", "Message": "sensitive signed URL"}}, "GenerateToken"
@@ -91,8 +94,9 @@ def test_aws_errors_preserve_code_without_service_message():
     assert exc.value.__suppress_context__
 
 
-def test_sdk_refreshes_temporary_credentials_used_by_cached_rds_client():
+def test_sdk_refreshes_temporary_credentials_used_by_cached_rds_client(aws_sdk):
     """Signing must observe a renewed SDK identity, even with the same client."""
+    RefreshableCredentials = pytest.importorskip("botocore.credentials").RefreshableCredentials
     now = [dt.datetime(2026, 10, 16, tzinfo=dt.timezone.utc)]
     refreshed = []
 
@@ -114,7 +118,7 @@ def test_sdk_refreshes_temporary_credentials_used_by_cached_rds_client():
         method="test",
         time_fetcher=lambda: now[0],
     )
-    session = boto3.Session(aws_access_key_id="test", aws_secret_access_key="test", region_name="us-east-1")
+    session = aws_sdk.Session(aws_access_key_id="test", aws_secret_access_key="test", region_name="us-east-1")
     client = session.client("rds")
     client._request_signer._credentials = credentials
     identity = AWSIdentity()

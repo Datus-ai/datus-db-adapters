@@ -212,11 +212,12 @@ def test_cloud_workflow_change_selects_only_enabled_cloud_target(path: str, expe
     assert selection.cloud_targets == expected_targets
 
 
-def test_disabled_cloud_target_runs_package_checks_without_live_test() -> None:
-    selection = select("datus-maxcompute/datus_maxcompute/connector.py")
+@pytest.mark.parametrize("package,module", [("datus-maxcompute", "datus_maxcompute"), ("datus-athena", "datus_athena")])
+def test_disabled_cloud_target_runs_package_checks_without_live_test(package: str, module: str) -> None:
+    selection = select(f"{package}/{module}/connector.py")
 
-    assert selection.unit_packages == {"datus-maxcompute"}
-    assert selection.smoke_packages == {"datus-maxcompute"}
+    assert selection.unit_packages == {package}
+    assert selection.smoke_packages == {package}
     assert selection.cloud_targets == set()
 
 
@@ -242,6 +243,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
 
     assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS
     assert {name for name, target in targets.items() if target.kind == "cloud"} == {
+        "athena",
         "aurora-mysql",
         "aurora-postgresql",
         "bigquery",
@@ -254,6 +256,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
         "hologres",
     }
     assert {name for name, target in targets.items() if not target.enabled} == {
+        "athena",
         "maxcompute",
         "dws",
         "aurora-mysql",
