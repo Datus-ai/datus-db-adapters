@@ -25,7 +25,8 @@ def check_host(root: Path, *, skip_sysctl_check: bool = False):
         raise ValueError("HANA_MEMORY_LIMIT_GIB must be at least 8 for the server-only test instance")
     if minimum_disk_gib < 1:
         raise ValueError("HANA_MIN_FREE_DISK_GIB must be positive")
-    free_gib = shutil.disk_usage(root).free / 1024**3
+    state = root / ".express"
+    free_gib = shutil.disk_usage(state if state.exists() else root).free / 1024**3
     available_kib = next(
         int(line.split()[1])
         for line in Path("/proc/meminfo").read_text().splitlines()

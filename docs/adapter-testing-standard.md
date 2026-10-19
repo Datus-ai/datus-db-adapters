@@ -176,6 +176,13 @@ failure), valid authentication modes, and CLI overrides applied before validatio
 Run the CLI entry point with explicit arguments and mock only the external driver
 boundary, so a working environment cannot hide unusable command-line options.
 
+### SQL analysis and bounded results
+
+SQL-analysis hooks must reject unmodeled object access and side effects, including
+sequence expressions that a compatible parser may represent as columns. Bounded
+result APIs must cover byte-like/LOB payload sizes, row and byte budget failures,
+and iterators stopping at the requested row count and closing sessions on early exit.
+
 ### Deeper unit coverage (optional but encouraged)
 
 `datus-doris/tests/unit/test_connector_contract.py` shows the next tier: branches integration

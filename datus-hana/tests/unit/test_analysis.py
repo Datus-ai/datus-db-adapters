@@ -17,6 +17,7 @@ from datus_hana.analysis import analyze_hana_sql
         ("WITH x AS (SELECT * FROM a) SELECT * FROM x UNION ALL SELECT * FROM b", ('"A"', '"B"')),
         ("WITH x AS (SELECT 1) SELECT * FROM s.x", ('"S"."X"',)),
         ('SELECT * FROM "S"."x.y"', ('"S"."x.y"',)),
+        ("SELECT 'app_seq.NEXTVAL' FROM DUMMY", ('"DUMMY"',)),
     ],
 )
 def test_common_queries(sql, tables):
@@ -38,6 +39,11 @@ def test_common_queries(sql, tables):
         "SELECT * INTO new_table FROM t",
         "SELECT * FROM t FOR UPDATE",
         "SELECT private_function() FROM DUMMY",
+        "SELECT app_seq.NEXTVAL FROM DUMMY",
+        "SELECT s.app_seq.currval FROM DUMMY",
+        'SELECT "S"."app_seq".NEXTVAL FROM DUMMY',
+        'SELECT "app_seq"."NEXTVAL" FROM DUMMY',
+        "SELECT 1 + app_seq.NEXTVAL FROM DUMMY",
         "DO BEGIN SELECT * FROM t; END",
         'SELECT * FROM "_SYS_BIC"."pkg/view"(PLACEHOLDER."$$P$$" => \'x\')',
         "WITH changed AS (DELETE FROM t RETURNING *) SELECT * FROM changed",

@@ -54,7 +54,7 @@ def test_uri_and_context_exclude_auth_and_tenant_namespace():
         ({"username": "U", "schema_name": "Explicit"}, "Explicit"),
         ({"username": "U", "schema": "Alias"}, "Alias"),
         ({"username": "U", "extra": {"schema": "Extra"}}, "Extra"),
-        ({"extra": {"userkey": "KEY"}}, ""),
+        ({"extra": {"userkey": "KEY", "schema": "APP"}}, "APP"),
     ],
 )
 def test_context_schema_follows_connector_default(fields, schema):

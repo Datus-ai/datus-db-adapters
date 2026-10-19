@@ -136,26 +136,40 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
                 pass
             self.schema_name = schema_name
 
-    def _rows(self, cursor) -> tuple[list[str], list[tuple]]:
+    @staticmethod
+    def _column_names(cursor) -> list[str]:
         names = [column[0] for column in cursor.description]
         if len(set(names)) != len(names):
             raise ValueError("Duplicate result column names require explicit SQL aliases")
-        rows = []
+        return names
+
+    def _rows(self, cursor, max_rows: int | None = None) -> Iterator[tuple]:
+        row_count = 0
         size = 0
-        while batch := cursor.fetchmany(min(512, self.config.max_result_rows + 1)):
+        while max_rows is None or row_count < max_rows:
+            batch_size = min(512, self.config.max_result_rows + 1 - row_count)
+            if max_rows is not None:
+                batch_size = min(batch_size, max_rows - row_count)
+            batch = cursor.fetchmany(batch_size)
+            if not batch:
+                break
             for row in batch:
+                row_count += 1
+                if row_count > self.config.max_result_rows:
+                    raise ValueError("HANA result row budget exceeded; narrow the query")
                 values = []
                 for value in row:
                     if hasattr(value, "read"):
                         value = value.read(self.config.max_result_bytes + 1)
-                    size += len(value) if isinstance(value, bytes) else len(str(value).encode("utf-8"))
+                    size += (
+                        memoryview(value).nbytes
+                        if isinstance(value, (bytes, bytearray, memoryview))
+                        else len(str(value).encode("utf-8"))
+                    )
                     if size > self.config.max_result_bytes:
                         raise ValueError("HANA result byte budget exceeded; narrow the query")
                     values.append(value)
-                rows.append(tuple(values))
-                if len(rows) > self.config.max_result_rows:
-                    raise ValueError("HANA result row budget exceeded; narrow the query")
-        return names, rows
+                yield tuple(values)
 
     @staticmethod
     def _format(names: list[str], rows: list[tuple], result_format: str):
@@ -172,7 +186,8 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
 
     def _cursor_result(self, cursor: Any, sql: str, result_format: str) -> ExecuteSQLResult:
         if cursor.description:
-            names, rows = self._rows(cursor)
+            names = self._column_names(cursor)
+            rows = list(self._rows(cursor))
             value = self._format(names, rows, result_format)
             if result_format == "csv" and len(value.encode("utf-8")) > self.config.max_result_bytes:
                 raise ValueError("HANA CSV result byte budget exceeded; narrow the query")
@@ -265,14 +280,24 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
         )
 
     def execute_csv_iterator(self, query: str, max_rows=100, with_header=True) -> Iterator[tuple]:
+        """Yield at most max_rows; consume or close the iterator to release its session."""
         if max_rows < 0:
             raise ValueError("max_rows must be nonnegative")
-        result = self.execute_query(query, "pandas")
-        if not result.success:
-            raise ValueError(result.error)
-        if with_header:
-            yield tuple(result.sql_return.columns)
-        yield from result.sql_return.head(max_rows).itertuples(index=False, name=None)
+        try:
+            with self._session() as connection:
+                cursor = None
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute(query)
+                    names = self._column_names(cursor) if cursor.description else []
+                    if with_header:
+                        yield tuple(names)
+                    if cursor.description:
+                        yield from self._rows(cursor, max_rows=max_rows)
+                finally:
+                    self._close(cursor)
+        except Exception as error:
+            raise ValueError(str(self._exception(error))) from None
 
     def _metadata_rows(self, sql, parameters=None, schema_name="") -> list[dict]:
         result = self.execute_query(sql, "list", schema_name=schema_name, parameters=parameters)
@@ -284,12 +309,7 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
         return {"SYS", "SYSTEM", "PUBLIC"}
 
     def _effective_schema(self, schema_name: str = "") -> str:
-        if schema_name or self.schema_name:
-            return schema_name or self.schema_name
-        rows = self._metadata_rows("SELECT CURRENT_SCHEMA AS SCHEMA_NAME FROM DUMMY")
-        if len(rows) != 1 or not rows[0]["SCHEMA_NAME"]:
-            raise ValueError("Unable to resolve HANA current schema; configure schema explicitly")
-        return rows[0]["SCHEMA_NAME"]
+        return schema_name or self.schema_name
 
     def get_databases(self, catalog_name="", include_sys=False):
         self._validate_context(catalog_name)

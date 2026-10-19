@@ -44,7 +44,13 @@ def test_config_defaults():
 )
 def test_invalid_config(kwargs):
     with pytest.raises(ValidationError):
-        HanaConfig(**kwargs)
+        HanaConfig(**({"schema": "APP"} | kwargs))
+
+
+@pytest.mark.parametrize("schema", [None, ""])
+def test_userkey_requires_explicit_schema(schema):
+    with pytest.raises(ValidationError, match="schema is required with userkey"):
+        HanaConfig(userkey="KEY", schema=schema)
 
 
 def test_userkey_and_schema_alias():

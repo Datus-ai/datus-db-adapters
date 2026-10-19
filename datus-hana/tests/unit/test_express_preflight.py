@@ -53,6 +53,25 @@ def test_disk_budget_is_configurable(host, monkeypatch, tmp_path):
         CHECK_HOST(tmp_path)
 
 
+@pytest.mark.parametrize("state_free_gib", [4, 16])
+def test_disk_budget_checks_existing_state_filesystem(host, monkeypatch, tmp_path, state_free_gib):
+    state = tmp_path / ".express"
+    state.mkdir()
+    checked = []
+
+    def disk_usage(path):
+        checked.append(path)
+        return SimpleNamespace(free=(state_free_gib if path == state else 14) * 1024**3)
+
+    monkeypatch.setattr(shutil, "disk_usage", disk_usage)
+    if state_free_gib < 12:
+        with pytest.raises(RuntimeError, match="Free disk 4.0 GiB.*trial budget 12 GiB"):
+            CHECK_HOST(tmp_path)
+    else:
+        CHECK_HOST(tmp_path)
+    assert checked == [state]
+
+
 @pytest.mark.parametrize(
     ("variable", "value", "message"),
     [

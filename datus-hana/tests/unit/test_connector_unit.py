@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from itertools import islice
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -72,13 +73,18 @@ def test_sdk_roundtrip_formats_and_cleanup(connector, sdk, fmt):
 
 def test_userkey_tls_and_tenant_properties(sdk):
     config = HanaConfig(
-        userkey="KEY", database="HXE", ssl_trust_store="ca.pem", ssl_host_name_in_certificate="hana.internal"
+        userkey="KEY",
+        schema="APP",
+        database="HXE",
+        ssl_trust_store="ca.pem",
+        ssl_host_name_in_certificate="hana.internal",
     )
     connector = HanaConnector(config)
     assert connector.execute_query("SELECT 1 FROM DUMMY").success
     args = sdk[0].call_args.kwargs
     assert args["userkey"] == "KEY"
     assert args["databaseName"] == "HXE"
+    assert args["currentSchema"] == "APP"
     assert args["sslTrustStore"] == "ca.pem"
     assert args["sslHostNameInCertificate"] == "hana.internal"
     assert not {"address", "port", "password", "user"} & args.keys()
@@ -109,16 +115,86 @@ def test_connection_error_is_sanitized(connector, sdk):
     [
         ([(1,), (2,)], 100, 1, "row budget"),
         ([("中文",)], 2, 10, "byte budget"),
+        ([(memoryview(b"x" * 100),)], 50, 10, "byte budget"),
+        ([(memoryview(b"x" * 100).cast("I"),)], 50, 10, "byte budget"),
+        ([(bytearray(b"x" * 100),)], 50, 10, "byte budget"),
     ],
 )
 def test_result_budget_is_an_error_not_truncation(sdk, rows, byte_limit, row_limit, message):
-    connector = HanaConnector(HanaConfig(userkey="KEY", max_result_rows=row_limit, max_result_bytes=byte_limit))
+    connector = HanaConnector(
+        HanaConfig(userkey="KEY", schema="APP", max_result_rows=row_limit, max_result_bytes=byte_limit)
+    )
     sdk[2].description = [("x",)]
     sdk[2].fetchmany.side_effect = [rows, []]
     result = connector.execute_query("SELECT x FROM t", "list")
     assert not result.success
     assert message in result.error
     sdk[1].rollback.assert_called_once()
+
+
+@pytest.mark.parametrize("payload", [b"abc", bytearray(b"abc"), memoryview(b"abc")])
+def test_binary_payload_at_byte_budget_is_accepted(sdk, payload):
+    connector = HanaConnector(HanaConfig(userkey="KEY", schema="APP", max_result_bytes=3))
+    sdk[2].description = [("x",)]
+    sdk[2].fetchmany.side_effect = [[(payload,)], []]
+    result = connector.execute_query("SELECT x FROM t", "list")
+    assert result.success, result.error
+    assert result.sql_return == [{"x": payload}]
+
+
+@pytest.mark.parametrize("max_rows", [0, 1, 100, 600])
+@pytest.mark.parametrize("with_header", [False, True])
+def test_csv_iterator_fetches_only_requested_rows(connector, sdk, max_rows, with_header):
+    _, connection, cursor = sdk
+    cursor.description = [("id",)]
+    rows = iter((i,) for i in range(connector.config.max_result_rows + 1))
+    cursor.fetchmany.side_effect = lambda size: list(islice(rows, size))
+
+    result = list(connector.execute_csv_iterator("SELECT id FROM t", max_rows, with_header))
+
+    assert result == ([("id",)] if with_header else []) + [(i,) for i in range(max_rows)]
+    assert [call.args[0] for call in cursor.fetchmany.call_args_list] == (
+        [512, 88] if max_rows == 600 else [max_rows] if max_rows else []
+    )
+    cursor.execute.assert_called_once_with("SELECT id FROM t")
+    connection.commit.assert_called_once()
+    cursor.close.assert_called_once()
+    connection.close.assert_called_once()
+
+
+def test_csv_iterator_close_releases_resources(connector, sdk):
+    iterator = connector.execute_csv_iterator("SELECT * FROM t", with_header=False)
+    assert next(iterator)[0] == 1
+    iterator.close()
+    sdk[2].close.assert_called_once()
+    sdk[1].close.assert_called_once()
+
+
+@pytest.mark.parametrize("budget", [{"max_result_rows": 1}, {"max_result_bytes": 1}])
+def test_csv_iterator_enforces_connector_budgets(sdk, budget):
+    connector = HanaConnector(HanaConfig(userkey="KEY", schema="APP", **budget))
+    sdk[2].description = [("x",)]
+    sdk[2].fetchmany.side_effect = [[(10,), (20,)], []]
+    with pytest.raises(ValueError, match="budget exceeded"):
+        list(connector.execute_csv_iterator("SELECT x FROM t", max_rows=10))
+    sdk[1].rollback.assert_called_once()
+    sdk[2].close.assert_called_once()
+    sdk[1].close.assert_called_once()
+
+
+def test_csv_iterator_failure_redacts_credentials_and_closes(connector, sdk):
+    sdk[2].execute.side_effect = RuntimeError("secret: query failed")
+    with pytest.raises(ValueError, match="<redacted>: query failed"):
+        list(connector.execute_csv_iterator("SELECT * FROM t"))
+    sdk[1].rollback.assert_called_once()
+    sdk[2].close.assert_called_once()
+    sdk[1].close.assert_called_once()
+
+
+def test_csv_iterator_negative_limit_stops_before_connect(connector, sdk):
+    with pytest.raises(ValueError, match="max_rows must be nonnegative"):
+        list(connector.execute_csv_iterator("SELECT * FROM t", max_rows=-1))
+    sdk[0].assert_not_called()
 
 
 def test_no_persistent_session_and_context_isolation(connector, sdk):
@@ -221,7 +297,7 @@ def test_sdk_setup_failure_still_closes_connection(connector, sdk):
 def test_context_manager_authenticates_and_closes(sdk):
     sdk[2].description = [("one",)]
     sdk[2].fetchmany.side_effect = [[(1,)], []]
-    with HanaConnector({"userkey": "KEY"}) as connector:
+    with HanaConnector({"userkey": "KEY", "schema": "APP"}) as connector:
         assert connector.get_type() == "hana"
     sdk[1].close.assert_called_once()
 
@@ -294,21 +370,6 @@ def test_metadata_objects_and_samples_use_actual_quoted_names(connector, sdk):
     assert samples[0]["sample_rows"] == "text\n中文\n"
     assert ('SELECT * FROM "CaseSensitive"."Mixed.Table" LIMIT 1', None) in executed
     assert len(connector.get_sample_rows(table_type="full")) == 2
-
-
-def test_userstore_without_schema_resolves_sdk_current_schema(sdk):
-    connector = HanaConnector({"userkey": "KEY"})
-    cursor = sdk[2]
-    descriptions = [[("SCHEMA_NAME",)], [("SCHEMA_NAME",), ("OBJECT_NAME",)]]
-    batches = [[[("Resolved",)], []], [[("Resolved", "T")], []]]
-
-    def execute(sql, parameters=None):
-        cursor.description = descriptions.pop(0)
-        cursor.fetchmany.side_effect = batches.pop(0)
-
-    cursor.execute.side_effect = execute
-    assert connector.get_tables() == ["T"]
-    assert cursor.execute.call_args.args[1] == ("Resolved",)
 
 
 def test_environment_config_is_strict_tls_by_default(monkeypatch):

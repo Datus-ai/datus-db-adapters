@@ -46,7 +46,9 @@ For an existing HANA secure user store, configure `userkey: DATUS_TEST` instead
 of username/password. The key must be available to the OS user running Python.
 Omit `host` to use the endpoint from that user store. `hdbuserstore` is an
 additional SAP client utility; installing the Python wheel alone does not
-provision a user store. `schema` and TLS settings still apply.
+provision a user store. An explicit `schema` is required with `userkey` so
+datasource registration and SDK execution use the same namespace. TLS settings
+still apply.
 
 TLS and certificate verification are enabled by default. Set a trust store and,
 when needed, `ssl_host_name_in_certificate` for the expected certificate name.
@@ -88,7 +90,7 @@ are explicitly unsupported.
 Local analysis is a separate, limited feature for ordinary SELECT, JOIN, CTE,
 aggregation, window, set operations, and LIMIT. It uses an explicitly selected
 compatible parser, never regenerates execution SQL, and preserves quoted names.
-SQLScript, table functions, Calculation View parameters, opaque statements,
+SQLScript, sequence access (NEXTVAL/CURRVAL), table functions, Calculation View parameters, opaque statements,
 multi-statement input, SELECT INTO, and locking queries are not accepted for
 local read/scope analysis. The SDK can still execute server-supported SQL via
 its direct execution methods. Datus tools must use the optional `sql_analyzer`

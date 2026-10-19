@@ -27,6 +27,9 @@ def analyze_hana_sql(sql: str) -> SQLAnalysis:
         return SQLAnalysis("unsupported", diagnostic="Query contains a write, lock, or opaque statement")
     if any(isinstance(node, (exp.Anonymous, exp.UDTF)) for node in tree.walk()):
         return SQLAnalysis("unsupported", diagnostic="Unverified scalar/table functions have unknown object access")
+    # The compatible parser treats HANA sequence access as a qualified column.
+    if any(column.table and column.name.upper() in {"NEXTVAL", "CURRVAL"} for column in tree.find_all(exp.Column)):
+        return SQLAnalysis("unsupported", diagnostic="Sequence access is outside the verified read-only subset")
     # Normalize only the analysis tree, never the SQL sent to HANA.
     for identifier in tree.find_all(exp.Identifier):
         if not identifier.args.get("quoted"):

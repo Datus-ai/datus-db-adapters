@@ -32,6 +32,8 @@ class HanaConfig(ConnectionConfig):
         if self.userkey:
             if self.username or self.password:
                 raise ValueError("userkey and username/password are mutually exclusive")
+            if not self.schema_name:
+                raise ValueError("schema is required with userkey so the datasource namespace is known")
         elif not self.host or not self.username or not self.password:
             raise ValueError("host, username and password are required without userkey")
         return self

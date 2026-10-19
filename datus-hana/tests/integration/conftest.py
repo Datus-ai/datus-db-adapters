@@ -23,6 +23,8 @@ from datus_hana import HanaConnector, register
 from datus_hana.testing import config_from_env
 from datus_hana.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(scope="session")
 def config():
