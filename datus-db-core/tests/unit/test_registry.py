@@ -106,16 +106,24 @@ class TestRegister:
     def test_register_with_optional_hooks(self):
         identifier_parser = MagicMock()
         notes = MagicMock()
+        analyzer = MagicMock()
         ConnectorRegistry.register(
             "testdb",
             DummyConnector,
             parser_dialect="hive",
             identifier_parser=identifier_parser,
             sql_generation_notes=notes,
+            sql_analyzer=analyzer,
         )
         assert ConnectorRegistry.get_parser_dialect("testdb") == "hive"
         assert ConnectorRegistry.get_identifier_parser("testdb") is identifier_parser
         assert ConnectorRegistry.get_sql_generation_notes("testdb") is notes
+        assert ConnectorRegistry.get_sql_analyzer("testdb") is analyzer
+        ConnectorRegistry.register_handlers("testdb", capabilities={"schema"})
+        assert ConnectorRegistry.get_sql_analyzer("testdb") is analyzer
+        replacement = MagicMock()
+        ConnectorRegistry.register_handlers("testdb", sql_analyzer=replacement)
+        assert ConnectorRegistry.get_sql_analyzer("testdb") is replacement
 
 
 class TestCreateConnector:

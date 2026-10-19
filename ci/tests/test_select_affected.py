@@ -241,7 +241,7 @@ def test_workspace_dependency_graph_contains_transitive_starrocks_edge() -> None
 def test_integration_target_manifest_covers_runner_targets() -> None:
     targets = load_integration_targets()
 
-    assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS
+    assert {name for name, target in targets.items() if target.kind == "compose"} == COMPOSE_TARGETS | {"hana"}
     assert {name for name, target in targets.items() if target.kind == "cloud"} == {
         "athena",
         "aurora-mysql",
@@ -257,6 +257,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
     }
     assert {name for name, target in targets.items() if not target.enabled} == {
         "athena",
+        "hana",
         "maxcompute",
         "dws",
         "aurora-mysql",

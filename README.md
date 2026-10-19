@@ -40,6 +40,7 @@ Plugin Adapters (Independent packages, install as needed)
     ├── datus-snowflake
     ├── datus-clickzetta
     ├── datus-maxcompute
+    ├── datus-hana (official Python hdbcli; limited local SQL analysis)
 ```
 
 ## Implemented Adapters

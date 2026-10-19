@@ -43,6 +43,17 @@ def test_oracle_runs_after_the_parallel_compose_matrix() -> None:
     assert "      - compose-integration-tests" in source[oracle_job:oracle_run]
 
 
+def test_hana_is_serialized_and_requires_selected_job_success() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert "target != 'oracle' and target != 'hana'" in source
+    hana_job = source.index("  hana-integration-tests:")
+    hana_run = source.index("run: ci/run-integration-tests.sh hana", hana_job)
+    assert "      - compose-integration-tests" in source[hana_job:hana_run]
+    assert "      - oracle-integration-tests" in source[hana_job:hana_run]
+    assert "HANA_REQUIRE_INTEGRATION" in source[hana_job:hana_run]
+    assert 'require_result "hana-integration-tests" "$HANA_RESULT" "success"' in source
+
+
 def _declared_secrets(workflow: Path) -> set[str]:
     """Secret names a reusable workflow declares under `on.workflow_call.secrets`."""
     block = workflow.read_text(encoding="utf-8").partition("    secrets:\n")[2]
