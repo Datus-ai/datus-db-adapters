@@ -5,10 +5,10 @@ services:
       - "${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
       - "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
     environment:
-      - TZ=UTC
-      - CLICKHOUSE_USER=default_user
-      - CLICKHOUSE_PASSWORD=default_test
-      - CLICKHOUSE_DB=default_test
+      TZ: UTC
+      CLICKHOUSE_USER: ${DATUS_TEST_CLICKHOUSE_USER:-default_user}
+      CLICKHOUSE_PASSWORD: ${DATUS_TEST_CLICKHOUSE_PASSWORD:-default_test}
+      CLICKHOUSE_DB: ${DATUS_TEST_CLICKHOUSE_DATABASE:-default_test}
     healthcheck:
       # The init server binds only loopback. Use the container's network address
       # and target database so initialization must finish before reporting healthy.

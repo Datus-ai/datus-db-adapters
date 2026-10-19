@@ -27,65 +27,61 @@ import sys
 # Suppress adapter registry warnings in workspace dev environment
 logging.getLogger("datus.tools.db_tools.registry").setLevel(logging.ERROR)
 
-from datus_clickhouse import ClickHouseConfig, ClickHouseConnector  # noqa: E402
+from datus_clickhouse import ClickHouseConnector  # noqa: E402
+from datus_clickhouse.testing import config_from_env  # noqa: E402
 from datus_clickhouse.tpch_data import ROW_COUNTS, TPCH_DATA, TPCH_DDL, TPCH_TABLES  # noqa: E402
+
+
+def _require_success(result, operation):
+    if not result.success:
+        raise RuntimeError(f"{operation} failed: {result.error}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Initialize TPC-H sample data in ClickHouse")
-    parser.add_argument("--host", default="localhost", help="ClickHouse host (default: localhost)")
-    parser.add_argument("--port", type=int, default=8123, help="ClickHouse HTTP port (default: 8123)")
-    parser.add_argument("--username", default="default_user", help="Username (default: default_user)")
-    parser.add_argument("--password", default="default_test", help="Password (default: default_test)")
-    parser.add_argument("--database", default="default_test", help="Database (default: default_test)")
+    parser.add_argument("--host", default=None, help="ClickHouse host (or CLICKHOUSE_HOST)")
+    parser.add_argument("--port", type=int, default=None, help="HTTP(S) port (defaults by protocol)")
+    parser.add_argument("--username", default=None, help="Username (or CLICKHOUSE_USER)")
+    parser.add_argument("--password", default=None, help="Password (or CLICKHOUSE_PASSWORD)")
+    parser.add_argument("--database", default=None, help="Database (or CLICKHOUSE_DATABASE)")
     parser.add_argument("--drop", action="store_true", help="Drop existing TPC-H tables before creating")
+    parser.add_argument("--protocol", choices=("http", "https"), default=None)
+    parser.add_argument("--ca-cert", default=None, help="PEM CA bundle file for HTTPS")
+    parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
+    config = config_from_env({key: value for key, value in vars(args).items() if key != "drop" and value is not None})
 
     # First ensure database exists
-    print(f"Connecting to ClickHouse at {args.host}:{args.port}...")
-    init_config = ClickHouseConfig(
-        host=args.host,
-        port=args.port,
-        username=args.username,
-        password=args.password,
-        database=None,
-    )
+    print(f"Connecting to ClickHouse at {config.host}:{config.port} ({config.protocol})...")
+    init_config = config.model_copy(update={"database": None})
     init_conn = ClickHouseConnector(init_config)
 
-    if not init_conn.test_connection():
-        print("Failed to connect to ClickHouse. Is the server running?")
-        print("  Start it with: cd datus-clickhouse && docker compose up -d")
-        sys.exit(1)
-
-    print("Connected successfully!")
-    print(f"\nEnsuring database `{args.database}` exists...")
-    init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{args.database}`")
-    init_conn.close()
+    try:
+        if not init_conn.test_connection():
+            raise RuntimeError("ClickHouse connection test failed")
+        print("Connected successfully!")
+        print(f"\nEnsuring database `{config.database}` exists...")
+        _require_success(init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{config.database}`"), "create database")
+    finally:
+        init_conn.close()
 
     # Connect to target database
-    config = ClickHouseConfig(
-        host=args.host,
-        port=args.port,
-        username=args.username,
-        password=args.password,
-        database=args.database,
-    )
     conn = ClickHouseConnector(config)
     try:
         if args.drop:
             print("\nDropping existing TPC-H tables...")
             for table in TPCH_TABLES:
-                conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`")
+                _require_success(conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`"), "drop table")
                 print(f"  Dropped {table}")
 
         print("\nCreating TPC-H tables...")
         for i, ddl in enumerate(TPCH_DDL):
-            conn.execute_ddl(ddl)
+            _require_success(conn.execute_ddl(ddl), "create TPC-H table")
             print(f"  Created {TPCH_TABLES[i]}")
 
         print("\nInserting TPC-H data...")
         for i, data in enumerate(TPCH_DATA):
-            conn.execute_insert(data)
+            _require_success(conn.execute_insert(data), "insert TPC-H rows")
             print(f"  Inserted {ROW_COUNTS[i]} rows into {TPCH_TABLES[i]}")
 
         # Verify
@@ -96,6 +92,7 @@ def main():
                 {"sql_query": f"SELECT COUNT(*) AS cnt FROM `{table}`"},
                 result_format="list",
             )
+            _require_success(result, "verify TPC-H count")
             count = result.sql_return[0]["cnt"]
             expected = ROW_COUNTS[i]
             status = "OK" if count == expected else "MISMATCH"

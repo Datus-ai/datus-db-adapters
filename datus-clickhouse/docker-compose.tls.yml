@@ -1,0 +1,17 @@
+# Isolated HTTPS overlay used by ci.run_tls_integration_tests.
+services:
+  clickhouse:
+    ports: !override
+      - "${CLICKHOUSE_HTTPS_HOST_PORT:-127.0.0.1:0}:8443"
+      - "${CLICKHOUSE_HTTP_HOST_PORT:-127.0.0.1:0}:8123"
+    volumes:
+      - ${DATUS_TEST_TLS_DIR:?Generate disposable certificates first}:/tls:ro
+      - ./local/tls.xml:/etc/clickhouse-server/config.d/datus-tls.xml:ro
+    entrypoint:
+      - bash
+      - -ec
+      - |
+        cp /tls/server.key /tmp/datus-server.key
+        chown clickhouse:clickhouse /tmp/datus-server.key
+        chmod 0600 /tmp/datus-server.key
+        exec /entrypoint.sh

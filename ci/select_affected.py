@@ -246,7 +246,7 @@ def select_impacts(
         path = PurePosixPath(raw_path)
         path_string = path.as_posix()
         if path_string in {"ci/run_tls_integration_tests.py", "ci/integration/generate_tls.py"}:
-            for name in ("mysql", "postgresql"):
+            for name in ("mysql", "postgresql", "clickhouse"):
                 package_name = targets[name].package
                 direct_integration_packages.add(package_name)
                 selection.unit_packages.add(package_name)

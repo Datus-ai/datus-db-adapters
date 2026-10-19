@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run an isolated, verified-TLS MySQL/PostgreSQL integration suite and clean up."""
+"""Run an isolated, verified-TLS database integration suite and clean up."""
 
 import argparse
 import os
@@ -17,7 +17,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run(adapter: str) -> None:
     prefix = adapter.upper()
-    service, internal_port = ("mysql", "3306") if adapter == "mysql" else ("postgres", "5432")
+    service, internal_port = {
+        "mysql": ("mysql", "3306"),
+        "postgresql": ("postgres", "5432"),
+        "clickhouse": ("clickhouse", "8443"),
+    }[adapter]
     project = f"datus-tls-{adapter}-{uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="datus-db-tls-") as directory:
         generate(Path(directory))
@@ -33,13 +37,25 @@ def run(adapter: str) -> None:
                 f"DATUS_TEST_{prefix}_USER": "test_user",
                 f"DATUS_TEST_{prefix}_PASSWORD": "test_password",
                 f"DATUS_TEST_{prefix}_DATABASE": "test",
-                f"{prefix}_SSL_CA" if adapter == "mysql" else "POSTGRESQL_SSLROOTCERT": f"{directory}/ca.crt",
             }
         )
         if adapter == "mysql":
             env["DATUS_TEST_MYSQL_ROOT_PASSWORD"] = "test_password"
-        else:
+            env["MYSQL_SSL_CA"] = f"{directory}/ca.crt"
+        elif adapter == "postgresql":
             env["POSTGRESQL_SCHEMA"] = "public"
+            env["POSTGRESQL_SSLROOTCERT"] = f"{directory}/ca.crt"
+        else:
+            env.update(
+                {
+                    "CLICKHOUSE_HTTPS_HOST_PORT": "127.0.0.1:0",
+                    "CLICKHOUSE_HTTP_HOST_PORT": "127.0.0.1:0",
+                    "CLICKHOUSE_PROTOCOL": "https",
+                    "CLICKHOUSE_VERIFY": "true",
+                    "CLICKHOUSE_CA_CERT": f"{directory}/ca.crt",
+                    "CLICKHOUSE_REQUIRED": "1",
+                }
+            )
         compose = [
             "docker",
             "compose",
@@ -58,12 +74,18 @@ def run(adapter: str) -> None:
             command([*compose, "up", "-d", "--wait", "--wait-timeout", "180"])
             address = command([*compose, "port", service, internal_port], capture_output=True, text=True).stdout.strip()
             env[f"{prefix}_PORT"] = address.rsplit(":", 1)[1]
-            command(["uv", "run", "--all-packages", "python", "-m", f"ci.integration.readiness.{adapter}"])
+            if adapter == "clickhouse":
+                plain = command([*compose, "port", service, "8123"], capture_output=True, text=True).stdout.strip()
+                env["CLICKHOUSE_PLAIN_PORT"] = plain.rsplit(":", 1)[1]
+            command(
+                ["uv", "run", "--package", f"datus-{adapter}", "python", "-m", f"ci.integration.readiness.{adapter}"]
+            )
             command(
                 [
                     "uv",
                     "run",
-                    "--all-packages",
+                    "--package",
+                    f"datus-{adapter}",
                     "--with",
                     "pytest",
                     "python",
@@ -92,7 +114,7 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("adapter", choices=("mysql", "postgresql"))
+    parser.add_argument("adapter", choices=("mysql", "postgresql", "clickhouse"))
     args = parser.parse_args()
     try:
         run(args.adapter)
