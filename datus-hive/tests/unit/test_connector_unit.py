@@ -2,11 +2,13 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from collections import namedtuple
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
+from datus_db_core.exceptions import DatusDbException
 from datus_hive import HiveConfig
 from datus_hive.connector import HiveConnector
 
@@ -173,15 +175,18 @@ def test_build_connect_args_minimal():
     assert args == {}
 
 
-@pytest.mark.parametrize("service_name", ["hive", "custom_hive"])
-def test_kerberos_arguments_reach_engine(service_name):
+@pytest.mark.parametrize(
+    "service_name, expected_service",
+    [("hive", "hive"), ("custom_hive", "custom_hive"), (" \thive\n", "hive"), ("Custom_Hive", "Custom_Hive")],
+)
+def test_kerberos_arguments_reach_engine(service_name, expected_service):
     connection = HiveConnector(HiveConfig(username="alice", auth="KERBEROS", kerberos_service_name=service_name))
     with patch("datus_hive.connector.create_engine") as factory:
         engine = connection._ensure_engine()
         assert engine is factory.return_value
         assert factory.call_args.kwargs["connect_args"] == {
             "auth": "KERBEROS",
-            "kerberos_service_name": service_name,
+            "kerberos_service_name": expected_service,
         }
     connection.close()
 
@@ -403,17 +408,54 @@ def test_get_views_parses_results(monkeypatch, connector):
     assert connector.get_views(database_name="default") == ["view_a"]
 
 
-def test_get_views_returns_empty_on_exception(monkeypatch, connector):
-    """Test that get_views returns empty list when SHOW VIEWS fails."""
-    monkeypatch.setattr(connector, "connect", lambda: None)
-    monkeypatch.setattr(
-        connector,
-        "_execute_pandas",
-        lambda sql: (_ for _ in ()).throw(Exception("SHOW VIEWS not supported")),
-    )
+@pytest.mark.parametrize("method", ["get_views", "get_tables", "get_views_with_ddl", "get_tables_with_ddl"])
+@pytest.mark.parametrize("message", ["SHOW VIEWS not supported", "Permission denied for SHOW VIEWS"])
+def test_metadata_discovery_preserves_view_lookup_errors(connector, method, message):
+    """A failed view inventory must never become a successful table/view listing."""
+    error = RuntimeError(message)
+    row = namedtuple("ListedObject", "tab_name")
+    connection = MagicMock()
+    connector.engine = MagicMock()
+    connector._owns_engine = True
+    connector.engine.connect.return_value = connection
 
-    result = connector.get_views(database_name="default")
-    assert result == []
+    def execute(statement):
+        sql = str(statement)
+        result = MagicMock()
+        if sql.startswith("SHOW VIEWS"):
+            raise error
+        if sql.startswith("SHOW TABLES"):
+            result.fetchall.return_value = [row("base_table"), row("ordinary_view")]
+        return result
+
+    connection.execute.side_effect = execute
+    with pytest.raises(DatusDbException, match=message) as raised:
+        getattr(connector, method)(database_name="default")
+    assert raised.value.__cause__ is error
+    queries = [str(call.args[0]) for call in connection.execute.call_args_list]
+    assert "SHOW VIEWS IN `default`" in queries
+    assert not any(sql.startswith("SHOW CREATE") for sql in queries)
+    connector.close()
+
+
+@pytest.mark.parametrize("method, expected", [("get_views", []), ("get_tables", ["base_table"])])
+def test_successful_empty_view_inventory(connector, method, expected):
+    """An actual empty view result remains a valid, successful inventory."""
+    row = namedtuple("ListedObject", "tab_name")
+    connection = MagicMock()
+    connector.engine = MagicMock()
+    connector._owns_engine = True
+    connector.engine.connect.return_value = connection
+
+    def execute(statement):
+        sql = str(statement)
+        result = MagicMock()
+        result.fetchall.return_value = [row("base_table")] if sql.startswith("SHOW TABLES") else []
+        return result
+
+    connection.execute.side_effect = execute
+    assert getattr(connector, method)(database_name="default") == expected
+    connector.close()
 
 
 # ==================== get_schema Tests ====================

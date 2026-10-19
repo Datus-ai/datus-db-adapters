@@ -169,6 +169,9 @@ Table listings (`get_tables` and `get_tables_with_ddl`) exclude ordinary views;
 use `get_views` and `get_views_with_ddl` for views. Column metadata is read by
 field name, preserving comments with both Apache Hive's standard `DESCRIBE`
 result and Inceptor's additional default-value and constraint fields.
+Table/view discovery requires `SHOW VIEWS` support and metadata-read permissions;
+server errors are propagated to the caller. A successful empty view inventory is
+returned as an empty list.
 
 ## Testing
 
@@ -230,7 +233,7 @@ This creates 5 TPC-H tables with sample data:
 ## Requirements
 
 - Python >= 3.10
-- Apache Hive >= 2.x (tested with 4.0.1)
+- Apache Hive with `SHOW VIEWS` support for table/view discovery (tested with 4.0.1)
 - datus-agent >= 0.3.0
 - datus-sqlalchemy >= 0.1.0
 - pyhive >= 0.7.0

@@ -11,15 +11,17 @@ from datus_hive import HiveConfig
 def test_config_defaults_and_required_fields():
     config = HiveConfig(username="hue")
 
-    assert config.host == "127.0.0.1"
-    assert config.port == 10000
-    assert config.database is None
-    assert config.username == "hue"
-    assert config.password == ""
-    assert config.auth is None
-    assert config.kerberos_service_name is None
-    assert config.configuration == {}
-    assert config.timeout_seconds == 30
+    assert config.model_dump() == {
+        "host": "127.0.0.1",
+        "port": 10000,
+        "database": None,
+        "username": "hue",
+        "password": "",
+        "auth": None,
+        "kerberos_service_name": None,
+        "configuration": {},
+        "timeout_seconds": 30,
+    }
 
 
 def test_config_custom_values():

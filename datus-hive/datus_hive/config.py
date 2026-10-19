@@ -64,6 +64,7 @@ class HiveConfig(BaseModel):
         if self.auth == "KERBEROS":
             if not self.kerberos_service_name or not self.kerberos_service_name.strip():
                 raise ValueError("kerberos_service_name is required when auth is KERBEROS")
+            self.kerberos_service_name = self.kerberos_service_name.strip()
             if self.password:
                 raise ValueError("KERBEROS uses a ticket cache obtained with kinit; do not supply password")
         elif self.kerberos_service_name is not None:

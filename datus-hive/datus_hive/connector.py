@@ -167,11 +167,7 @@ class HiveConnector(SQLAlchemyConnector):
             sql = f"SHOW VIEWS IN {self.quote_identifier(database_name)}"
         else:
             sql = "SHOW VIEWS"
-        try:
-            result = self._execute_pandas(sql)
-        except Exception as exc:
-            logger.warning("Failed to get Hive views: %s", exc)
-            return []
+        result = self._execute_pandas(sql)
         return [self._qualify(name, database_name, "", arg_db, "") for name in self._extract_table_names(result)]
 
     @override
