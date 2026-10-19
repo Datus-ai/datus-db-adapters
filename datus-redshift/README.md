@@ -9,7 +9,7 @@ pip install datus-redshift
 ```
 
 This will automatically install the required dependencies:
-- `datus-agent`
+- `datus-db-core`
 - `redshift_connector`
 
 ## Usage
@@ -74,7 +74,7 @@ connector.close()
 ```python
 config = RedshiftConfig(
     host="your-cluster.xxx.us-west-2.redshift.amazonaws.com",
-    username="your_iam_user",
+    username="your_database_user",
     database="dev",
     iam=True,
     cluster_identifier="your-cluster-identifier",
@@ -159,6 +159,15 @@ Integration tests require a running Redshift cluster. Set these environment vari
 | `REDSHIFT_DATABASE` | No | `dev` | Database name |
 | `REDSHIFT_PORT` | No | `5439` | Port |
 | `REDSHIFT_SCHEMA` | No | `public` | Schema |
+| `REDSHIFT_TPCH_SCHEMA` | No | `REDSHIFT_SCHEMA` | Existing schema for TPC-H fixtures |
+| `REDSHIFT_IAM` | No | `false` | Set to `true` for IAM authentication |
+| `REDSHIFT_CLUSTER_IDENTIFIER` | With IAM | - | Provisioned Redshift cluster ID |
+| `REDSHIFT_REGION` | With IAM | - | AWS region |
+
+`REDSHIFT_PASSWORD` is optional when `REDSHIFT_IAM=true`. IAM tests use the
+SDK's default AWS credential provider chain, including an AWS CLI profile or an
+instance role. The configured username is the Redshift database user passed as
+the driver's `db_user` parameter.
 
 ```bash
 # Set credentials
@@ -179,6 +188,57 @@ uv run pytest tests/integration/test_tpch.py -v
 uv run pytest tests/ -m acceptance -v
 ```
 
+Run the same suite with IAM credentials:
+
+```bash
+export REDSHIFT_IAM=true
+export REDSHIFT_CLUSTER_IDENTIFIER="my-cluster"
+export REDSHIFT_REGION="us-east-1"
+uv run pytest tests/integration -m integration --strict-markers -v
+```
+
+Missing required environment variables skip cloud tests. Once credentials are
+configured, connection, authentication, fixture loading, and cleanup failures
+fail the run. Successful runs therefore exercise a live database.
+
+### Connecting from a local machine
+
+The AWS CLI connects to AWS HTTPS APIs; the adapter opens a separate database TCP
+connection. An HTTP proxy that makes `aws sts get-caller-identity` work does not
+automatically forward the database connection. Check the endpoint's database
+port, subnet route, network ACL, and security-group rule. For a public endpoint,
+restrict ingress to the actual database client's public egress IP, which may
+differ from the HTTP proxy's IP.
+
+For a private endpoint, use an existing Systems Manager managed host that can
+reach the database, and install the official
+[Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html).
+Allow ingress on the cluster's database port from that host's security group or
+private IP. Start a tunnel in a separate terminal:
+
+```bash
+aws ssm start-session --region us-east-1 \
+  --target "$REDSHIFT_SSM_TARGET" \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters "{\"host\":[\"$REDSHIFT_PRIVATE_IP\"],\"portNumber\":[\"$REDSHIFT_REMOTE_PORT\"],\"localPortNumber\":[\"15439\"]}"
+```
+
+Keep `REDSHIFT_HOST` set to the original Redshift endpoint for TLS certificate
+verification. While the tunnel is open, use a temporary local DNS or hosts-file
+entry mapping that endpoint to `127.0.0.1`, and set `REDSHIFT_PORT=15439`. Remove
+the local name override and close the session after testing. The private IP is
+the cluster endpoint's network-interface address, available in
+`aws redshift describe-clusters`; it must be reachable from the managed host.
+Set `REDSHIFT_REMOTE_PORT` to that response's `Endpoint.Port` (usually `5439`).
+
+### Driver SSL warnings
+
+`redshift_connector` 2.2.0 constructs an SSL context without an explicit protocol,
+which emits Python `DeprecationWarning` messages. This originates in the AWS
+driver, independently of the adapter's `ssl=True` setting. Keep TLS enabled and
+use an official driver release containing the explicit client-protocol fix when
+available. These warnings do not indicate a failed database query.
+
 ### TPC-H Test Data
 
 Integration tests include TPC-H benchmark data for realistic query testing. The `tpch_setup` fixture (session-scoped) automatically creates 5 tables with sample data:
@@ -192,6 +252,13 @@ Integration tests include TPC-H benchmark data for realistic query testing. The 
 | `tpch_supplier` | 5 | Simplified supplier data |
 
 Tables are created at the start of the test session and dropped after all tests complete.
+
+The data values and row counts come from `datus_db_core.testing.tpch`, shared
+with the other adapters; `datus_redshift.tpch_data` supplies only Redshift DDL
+and schema qualification. Tests check every table's row count, column metadata,
+joins, aggregations, and CSV/Arrow/pandas output. The shared adapter contract also
+checks quoted identifiers and typed NULL, DATE, TIMESTAMP, DECIMAL, and BOOLEAN
+values against a temporary table.
 
 #### Initialize TPC-H Data Manually
 
@@ -214,12 +281,7 @@ uv run python scripts/init_tpch_data.py \
 uv run python scripts/init_tpch_data.py --schema my_test_schema
 ```
 
-### Test Statistics
-
-- **Unit Tests**: 53 tests (config validation, connector logic, exception handling, identifiers)
-- **Integration Tests**: 11 tests (connection, metadata, SQL execution, output formats)
-- **TPC-H Tests**: 11 tests (metadata queries, joins, aggregations, multiple formats)
-- **Total**: 75 tests
+Use `uv run pytest tests --collect-only -q` to list the current tests.
 
 ### Test Markers
 
@@ -298,11 +360,11 @@ Redshift is based on PostgreSQL but has some differences:
 
 ## Requirements
 
-- Python >= 3.8
-- datus-agent >= 0.2.1
+- Python >= 3.12
+- datus-db-core >= 0.1.7
 - redshift_connector >= 2.0.0
-- pyarrow (installed with datus-agent)
-- pandas (installed with datus-agent)
+- pyarrow >= 14.0.0
+- pandas >= 2.1.4
 
 ## License
 

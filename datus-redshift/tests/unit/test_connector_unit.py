@@ -175,7 +175,8 @@ def test_connector_connect_params_basic():
         assert call_kwargs["timeout"] == 30
 
 
-def test_connector_connect_params_iam():
+@pytest.mark.parametrize("explicit_credentials", [False, True])
+def test_connector_connect_params_iam(explicit_credentials):
     """Test that IAM parameters are passed when iam=True."""
     config = RedshiftConfig(
         host="cluster.example.com",
@@ -183,8 +184,8 @@ def test_connector_connect_params_iam():
         iam=True,
         cluster_identifier="my-cluster",
         region="us-west-2",
-        access_key_id="AKID",
-        secret_access_key="SECRET",
+        access_key_id="AKID" if explicit_credentials else None,
+        secret_access_key="SECRET" if explicit_credentials else None,
     )
 
     p_base, p_connect = _make_patches()
@@ -194,10 +195,13 @@ def test_connector_connect_params_iam():
 
         call_kwargs = mock_connect.call_args[1]
         assert call_kwargs["iam"] is True
+        assert call_kwargs["db_user"] == "user"
+        assert call_kwargs["user"] == "user"
+        assert call_kwargs["password"] is None
         assert call_kwargs["cluster_identifier"] == "my-cluster"
         assert call_kwargs["region"] == "us-west-2"
-        assert call_kwargs["access_key_id"] == "AKID"
-        assert call_kwargs["secret_access_key"] == "SECRET"
+        assert call_kwargs["access_key_id"] == ("AKID" if explicit_credentials else None)
+        assert call_kwargs["secret_access_key"] == ("SECRET" if explicit_credentials else None)
 
 
 def test_connector_connect_params_no_iam():
@@ -215,6 +219,45 @@ def test_connector_connect_params_no_iam():
         assert "region" not in call_kwargs
         assert "access_key_id" not in call_kwargs
         assert "secret_access_key" not in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# get_schema
+# ---------------------------------------------------------------------------
+
+
+def test_get_schema_columns_and_table_summary(connector):
+    cursor = connector.connection.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [
+        ("id", "integer", "NO", None, 1, "Identifier"),
+        ("label", "character varying", "YES", None, 2, None),
+    ]
+
+    assert connector.get_schema(table_name="sample") == [
+        {
+            "cid": 0,
+            "name": "id",
+            "type": "integer",
+            "nullable": False,
+            "pk": False,
+            "default_value": None,
+            "comment": "Identifier",
+        },
+        {
+            "cid": 1,
+            "name": "label",
+            "type": "character varying",
+            "nullable": True,
+            "pk": False,
+            "default_value": None,
+            "comment": None,
+        },
+        {
+            "table": "sample",
+            "columns": [{"name": "id", "type": "integer"}, {"name": "label", "type": "character varying"}],
+            "table_type": "table",
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------

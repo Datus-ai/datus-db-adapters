@@ -240,6 +240,7 @@ class RedshiftConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedView
             connection_params.update(
                 {
                     "iam": True,
+                    "db_user": config.username,
                     "cluster_identifier": config.cluster_identifier,
                     "region": config.region,
                     "access_key_id": config.access_key_id,
