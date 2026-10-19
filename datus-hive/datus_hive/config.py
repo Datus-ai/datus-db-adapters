@@ -2,9 +2,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _extract_prefixed_config(carrier_map: Mapping[str, Any], prefix: str) -> Dict[str, Any]:
@@ -53,8 +53,22 @@ class HiveConfig(BaseModel):
         default=None,
         description="Authentication mechanism (NONE, LDAP, CUSTOM, KERBEROS)",
     )
+    kerberos_service_name: Optional[str] = Field(
+        default=None, description="Kerberos service component of the server principal (usually hive)"
+    )
     configuration: Dict[str, Any] = Field(default_factory=dict, description="Hive session configuration")
     timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+
+    @model_validator(mode="after")
+    def validate_kerberos(self) -> Self:
+        if self.auth == "KERBEROS":
+            if not self.kerberos_service_name or not self.kerberos_service_name.strip():
+                raise ValueError("kerberos_service_name is required when auth is KERBEROS")
+            if self.password:
+                raise ValueError("KERBEROS uses a ticket cache obtained with kinit; do not supply password")
+        elif self.kerberos_service_name is not None:
+            raise ValueError("kerberos_service_name requires auth=KERBEROS")
+        return self
 
     @classmethod
     def from_config_map(cls, config_map: Mapping[str, Any], prefix: str) -> "HiveConfig":

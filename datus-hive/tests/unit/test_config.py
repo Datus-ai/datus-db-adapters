@@ -17,6 +17,7 @@ def test_config_defaults_and_required_fields():
     assert config.username == "hue"
     assert config.password == ""
     assert config.auth is None
+    assert config.kerberos_service_name is None
     assert config.configuration == {}
     assert config.timeout_seconds == 30
 
@@ -77,3 +78,36 @@ def test_config_from_carrier_map_prefix():
         "spark.app.name": "datacenter_carrier",
         "spark.executor.instances": "1",
     }
+
+
+def test_kerberos_from_carrier_map():
+    config = HiveConfig.from_config_map(
+        {
+            "hive.username": "alice",
+            "hive.auth": "KERBEROS",
+            "hive.kerberos_service_name": "hive",
+        },
+        prefix="hive.",
+    )
+    assert config.auth == "KERBEROS"
+    assert config.kerberos_service_name == "hive"
+    assert config.password == ""
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"auth": "KERBEROS"}, "kerberos_service_name is required"),
+        ({"auth": "KERBEROS", "kerberos_service_name": ""}, "kerberos_service_name is required"),
+        ({"auth": "KERBEROS", "kerberos_service_name": "  "}, "kerberos_service_name is required"),
+        (
+            {"auth": "KERBEROS", "kerberos_service_name": "hive", "password": "secret"},
+            "KERBEROS uses a ticket cache",
+        ),
+        ({"kerberos_service_name": "hive"}, "kerberos_service_name requires auth=KERBEROS"),
+        ({"auth": "LDAP", "kerberos_service_name": "hive"}, "kerberos_service_name requires auth=KERBEROS"),
+    ],
+)
+def test_kerberos_config_rejections(kwargs, message):
+    with pytest.raises(ValidationError, match=message):
+        HiveConfig(username="alice", **kwargs)

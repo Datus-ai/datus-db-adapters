@@ -21,32 +21,36 @@ This will automatically install the required dependencies:
 The adapter is automatically registered with Datus when installed. Configure your Hive connection in your Datus configuration:
 
 ```yaml
-namespace:
-  hive:
-    type: hive
-    host: 127.0.0.1
-    port: 10000
-    username: hive
-    database: default
+agent:
+  services:
+    datasources:
+      hive:
+        type: hive
+        host: 127.0.0.1
+        port: 10000
+        username: hive
+        database: default
 ```
 
 With authentication and session configuration:
 
 ```yaml
-namespace:
-  hive_production:
-    type: hive
-    host: 127.0.0.1
-    port: 10000
-    database: mydb
-    username: hive_user
-    password: your_password
-    auth: CUSTOM
-    configuration:
-      hive.execution.engine: spark
-      spark.app.name: my_app
-      spark.executor.memory: 1G
-      spark.executor.instances: 2
+agent:
+  services:
+    datasources:
+      hive_production:
+        type: hive
+        host: 127.0.0.1
+        port: 10000
+        database: mydb
+        username: hive_user
+        password: your_password
+        auth: CUSTOM
+        configuration:
+          hive.execution.engine: spark
+          spark.app.name: my_app
+          spark.executor.memory: 1G
+          spark.executor.instances: 2
 ```
 
 Or use programmatically:
@@ -94,8 +98,61 @@ for column in schema:
 | `username` | str | **required** | Hive username |
 | `password` | str | `""` | Password (for LDAP/CUSTOM auth) |
 | `auth` | str | `None` | Auth mechanism: `NONE`, `LDAP`, `CUSTOM`, `KERBEROS` |
+| `kerberos_service_name` | str | `None` | Required for `KERBEROS`; service component of the server principal, usually `hive` |
 | `configuration` | dict | `{}` | Hive session configuration key-value pairs |
 | `timeout_seconds` | int | `30` | Connection timeout in seconds |
+
+When `auth` is omitted, PyHive uses `NONE` (SASL PLAIN).
+Authentication is not detected automatically. Set
+`auth: LDAP` or `auth: CUSTOM` explicitly when supplying a password.
+
+### Kerberos
+
+Install the GSSAPI dependency, with system Kerberos libraries and development
+headers available (for example, `libkrb5-dev` and a C compiler on Debian/Ubuntu):
+
+```bash
+pip install 'datus-hive[kerberos]'
+```
+
+Obtain a ticket before starting Datus. For example, with a keytab and a dedicated
+credential cache:
+
+```bash
+export KRB5_CONFIG=/path/to/krb5.conf
+export KRB5CCNAME=FILE:/path/to/datus.ccache
+kinit -kt /path/to/alice.keytab alice@EXAMPLE.COM
+```
+
+```yaml
+agent:
+  services:
+    datasources:
+      secured_hive:
+        type: hive
+        host: hs2.example.com
+        port: 10000
+        database: default
+        username: alice
+        auth: KERBEROS
+        kerberos_service_name: hive
+```
+
+This uses binary HiveServer2 Thrift with SASL GSSAPI, including Inceptor's
+compatible endpoint. The example expects `hive/hs2.example.com@EXAMPLE.COM` on
+the server. Use the hostname matching the service principal, with working DNS,
+realm configuration, and synchronized clocks. The service name is the `hive`
+component, not the complete principal or the client principal.
+
+Authentication uses the principal in the current ticket cache; `username` does
+not obtain a ticket or change that identity. Do not supply `password` for
+Kerberos. Ticket acquisition and renewal remain the responsibility of the
+application or deployment environment. The adapter does not run `kinit` or
+change process-wide Kerberos settings. LDAP/CUSTOM continue to use passwords.
+
+For integration tests, set `HIVE_AUTH=KERBEROS`,
+`HIVE_KERBEROS_SERVICE_NAME=hive`, and the usual `HIVE_HOST`, `HIVE_PORT`, and
+`HIVE_USERNAME` variables in a process with a valid ticket cache.
 
 ## Features
 
@@ -107,6 +164,11 @@ for column in schema:
 - Database context switching (USE statement)
 - Connection pooling and management
 - Hive session configuration support
+
+Table listings (`get_tables` and `get_tables_with_ddl`) exclude ordinary views;
+use `get_views` and `get_views_with_ddl` for views. Column metadata is read by
+field name, preserving comments with both Apache Hive's standard `DESCRIBE`
+result and Inceptor's additional default-value and constraint fields.
 
 ## Testing
 

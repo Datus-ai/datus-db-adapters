@@ -173,6 +173,50 @@ def test_build_connect_args_minimal():
     assert args == {}
 
 
+@pytest.mark.parametrize("service_name", ["hive", "custom_hive"])
+def test_kerberos_arguments_reach_engine(service_name):
+    connection = HiveConnector(HiveConfig(username="alice", auth="KERBEROS", kerberos_service_name=service_name))
+    with patch("datus_hive.connector.create_engine") as factory:
+        engine = connection._ensure_engine()
+        assert engine is factory.return_value
+        assert factory.call_args.kwargs["connect_args"] == {
+            "auth": "KERBEROS",
+            "kerberos_service_name": service_name,
+        }
+    connection.close()
+
+
+def test_kerberos_arguments_reach_pyhive():
+    connection = HiveConnector(
+        HiveConfig(host="hs2.example.com", username="alice", auth="KERBEROS", kerberos_service_name="hive")
+    )
+    try:
+        with patch("pyhive.hive.Connection", side_effect=RuntimeError("driver boundary")) as driver:
+            with pytest.raises(RuntimeError, match="driver boundary"):
+                connection._ensure_engine().connect()
+            driver.assert_called_once_with(
+                host="hs2.example.com",
+                port=10000,
+                username="alice",
+                password=None,
+                database="default",
+                auth="KERBEROS",
+                kerberos_service_name="hive",
+            )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("auth", [None, "NONE", "LDAP", "CUSTOM"])
+def test_non_kerberos_arguments(auth):
+    password = "secret" if auth in ("LDAP", "CUSTOM") else ""
+    config = HiveConfig(username="hive", auth=auth, password=password)
+    expected = {"auth": auth} if auth else {}
+    if password:
+        expected["password"] = password
+    assert HiveConnector._build_connect_args(config) == expected
+
+
 # ==================== _normalize_configuration Tests ====================
 
 
@@ -338,7 +382,11 @@ def test_get_tables_parses_results(monkeypatch, connector):
     monkeypatch.setattr(
         connector,
         "_execute_pandas",
-        lambda sql: pd.DataFrame({"database": ["default"], "tableName": ["table_a"], "isTemporary": [False]}),
+        lambda sql: (
+            pd.DataFrame({"database": ["default"], "tableName": ["table_a"], "isTemporary": [False]})
+            if sql.startswith("SHOW TABLES")
+            else pd.DataFrame()
+        ),
     )
 
     assert connector.get_tables(database_name="default") == ["table_a"]

@@ -33,6 +33,7 @@ def test_connection_with_dict():
                 "password": os.getenv("HIVE_PASSWORD", ""),
                 "database": os.getenv("HIVE_DATABASE", "default"),
                 "auth": os.getenv("HIVE_AUTH") or None,
+                "kerberos_service_name": os.getenv("HIVE_KERBEROS_SERVICE_NAME") or None,
             }
         )
         assert conn.test_connection()

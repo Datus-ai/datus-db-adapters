@@ -54,6 +54,8 @@ class HiveConnector(SQLAlchemyConnector):
         connect_args: Dict[str, Any] = {}
         if config.auth:
             connect_args["auth"] = config.auth
+        if config.auth == "KERBEROS":
+            connect_args["kerberos_service_name"] = config.kerberos_service_name
         if config.password:
             connect_args["password"] = config.password
         if config.configuration:
@@ -139,7 +141,7 @@ class HiveConnector(SQLAlchemyConnector):
         return ".".join(parts)
 
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """Get list of tables."""
+        """Get base tables, excluding views included by Hive's SHOW TABLES."""
         self.connect()
         arg_db = database_name
         database_name = database_name or self.database_name
@@ -148,7 +150,12 @@ class HiveConnector(SQLAlchemyConnector):
         else:
             sql = "SHOW TABLES"
         result = self._execute_pandas(sql)
-        return [self._qualify(name, database_name, "", arg_db, "") for name in self._extract_table_names(result)]
+        view_names = {name.casefold() for name in self.get_views(database_name=database_name)}
+        return [
+            self._qualify(name, database_name, "", arg_db, "")
+            for name in self._extract_table_names(result)
+            if name.casefold() not in view_names
+        ]
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
@@ -185,9 +192,11 @@ class HiveConnector(SQLAlchemyConnector):
         if result.empty:
             return []
 
-        col_name = result.columns[0]
-        type_col = result.columns[1] if len(result.columns) > 1 else None
-        comment_col = result.columns[2] if len(result.columns) > 2 else None
+        # Inceptor adds default/constraint columns before comment; Hive returns three columns.
+        columns = {str(column).strip().lower(): column for column in result.columns}
+        col_name = columns["col_name"]
+        type_col = columns.get("data_type")
+        comment_col = columns.get("comment")
 
         rows: List[Dict[str, Any]] = []
         for i in range(len(result)):
