@@ -398,7 +398,7 @@ def test_get_tables_with_ddl_rejects_table_from_another_schema(config):
 
 
 def make_listed_table(name, table_type="MANAGED_TABLE"):
-    """构造 ``odps.list_tables()`` 返回的对象。"""
+    """Build an object returned by ``odps.list_tables()``."""
     table = MagicMock()
     table.name = name
     table.type = SimpleNamespace(value=table_type)
@@ -408,12 +408,12 @@ def make_listed_table(name, table_type="MANAGED_TABLE"):
 
 @pytest.fixture
 def ignored_config(config):
-    """模拟用户在 agent.yml 里写 ``ignore_table_patterns: ["tmp_*"]``。"""
+    """Configure a datasource to ignore tables matching ``tmp_*``."""
     return config.model_copy(update={"ignore_table_patterns": ["tmp_*"]})
 
 
 def test_ignore_patterns_are_empty_by_default(config):
-    """默认不过滤：忽略哪些表由用户配置，不是适配器的内置假设。"""
+    """Leave table filtering disabled by default."""
     assert config.ignore_table_patterns == []
 
 
@@ -422,11 +422,11 @@ def test_ignore_patterns_are_empty_by_default(config):
     [
         ("tmp_0826", ["tmp_*"], True),
         ("tmp_26061ecd_89f6_4010_88bd_4ea6d95abc22", ["tmp_*"], True),
-        ("TMP_0826", ["tmp_*"], True),  # 大小写不敏感
-        ("orders_bak", ["*_bak"], True),  # 后缀规则
+        ("TMP_0826", ["tmp_*"], True),  # Case-insensitive matching.
+        ("orders_bak", ["*_bak"], True),  # Suffix pattern.
         ("orders", ["tmp_*"], False),
-        ("temp_orders", ["tmp_*"], False),  # 不误伤 temp_ 前缀
-        ("tmp_0826", [], False),  # 空列表 = 不过滤
+        ("temp_orders", ["tmp_*"], False),  # Keep unrelated prefixes.
+        ("tmp_0826", [], False),  # An empty list disables filtering.
         ("tmp_0826", None, False),
     ],
 )
@@ -435,12 +435,7 @@ def test_matches_ignore_patterns(name, patterns, expected):
 
 
 def test_get_tables_with_ddl_skips_ignored_tables(ignored_config):
-    """被忽略的表连 DDL 都不取。
-
-    生产项目里作业会创建/删除 tmp_ 表；列举到 fetch 之间表消失会让 get_ddl() 抛
-    NoSuchObject，而列表推导会让它连带整个 datasource 的 schema init 一起失败。
-    不发起这次读取，既消除了失败面，也省掉了那部分耗时。
-    """
+    """Skip DDL reads for ignored tables, including transient scratch tables."""
     connector, odps = make_connector(ignored_config)
     scratch = make_listed_table("tmp_26061ecd_89f6_4010_88bd_4ea6d95abc22")
     orders = make_listed_table("orders")
@@ -453,7 +448,7 @@ def test_get_tables_with_ddl_skips_ignored_tables(ignored_config):
 
 
 def test_get_views_with_ddl_skips_ignored_tables(ignored_config):
-    """视图路径同样过滤。"""
+    """Apply ignore patterns before fetching view definitions."""
     connector, odps = make_connector(ignored_config)
     scratch = make_listed_table("tmp_0826", "VIRTUAL_VIEW")
     view = make_listed_table("orders_view", "VIRTUAL_VIEW")
@@ -466,7 +461,7 @@ def test_get_views_with_ddl_skips_ignored_tables(ignored_config):
 
 
 def test_get_materialized_views_with_ddl_skips_ignored_tables(ignored_config):
-    """物化视图路径同样过滤 —— 三处列举共用同一层。"""
+    """Apply the shared ignore filter to materialized view definitions."""
     connector, odps = make_connector(ignored_config)
     scratch = make_listed_table("tmp_0826", "MATERIALIZED_VIEW")
     materialized = make_listed_table("orders_mv", "MATERIALIZED_VIEW")
@@ -479,7 +474,7 @@ def test_get_materialized_views_with_ddl_skips_ignored_tables(ignored_config):
 
 
 def test_name_only_listing_skips_ignored_tables(ignored_config):
-    """名单接口与 DDL 路径共用同一处过滤，结果必须一致。"""
+    """Keep name-only listings consistent with DDL listings."""
     connector, odps = make_connector(ignored_config)
     odps.list_tables.return_value = [make_listed_table("tmp_0826"), make_listed_table("orders")]
 
@@ -487,7 +482,7 @@ def test_name_only_listing_skips_ignored_tables(ignored_config):
 
 
 def test_ignore_patterns_accept_multiple_globs(config):
-    """规则是列表，可以同时给多条。"""
+    """Apply every glob in the configured pattern list."""
     connector, odps = make_connector(config.model_copy(update={"ignore_table_patterns": ["tmp_*", "*_bak"]}))
     odps.list_tables.return_value = [
         make_listed_table("tmp_0826"),
@@ -501,7 +496,7 @@ def test_ignore_patterns_accept_multiple_globs(config):
 
 
 def test_tables_are_all_listed_when_no_pattern_configured(config):
-    """没配规则时一张都不少，且照常取 DDL —— 确认过滤是 opt-in。"""
+    """List every table and fetch its DDL when no patterns are configured."""
     connector, odps = make_connector(config)
     scratch = make_listed_table("tmp_0826")
     orders = make_listed_table("orders")
@@ -723,11 +718,7 @@ def test_get_sample_rows_omits_predicate_for_unpartitioned_table(config):
 
 
 def test_get_sample_rows_skips_table_with_unreadable_metadata(config):
-    """读不出 schema 的表不猜分区状态，也不发无谓词查询。
-
-    把它当成"非分区表"会退回本 PR 要消除的那条无谓词查询；若该表其实是分区表，
-    查询必被 ODPS-0130071 拒绝 —— 样本一样拿不到，还白烧一个作业。
-    """
+    """Skip unreadable schemas instead of assuming the table is unpartitioned."""
     connector, odps = make_connector(config)
     # A table object without a table_schema stands in for metadata the driver cannot read.
     odps.list_tables.return_value = [
@@ -742,11 +733,7 @@ def test_get_sample_rows_skips_table_with_unreadable_metadata(config):
 
 
 def test_sql_string_literal_escapes_quotes_and_backslashes(config):
-    """分区值走 pyodps 的转义：引号和反斜杠都要处理。
-
-    只把引号加倍是不够的 -- ODPS 把 ``\\b``、``\\n`` 这类反斜杠序列当转义，
-    含反斜杠的分区值会让谓词落到别的分区，静默返回零行。
-    """
+    """Escape quotes and backslashes using the MaxCompute string literal rules."""
     connector, _ = make_connector(config)
 
     assert connector._sql_string_literal("a'b") == "'a\\'b'"
@@ -754,7 +741,7 @@ def test_sql_string_literal_escapes_quotes_and_backslashes(config):
 
 
 def test_sample_partition_predicate_prefers_partition_with_data(config):
-    """最新分区可能还没产出，一页之内优先挑有数据的那个。"""
+    """Prefer a populated partition when the newest partition is still empty."""
     connector, _ = make_connector(config)
     table = make_partitioned_table(
         listed=[
@@ -767,10 +754,7 @@ def test_sample_partition_predicate_prefers_partition_with_data(config):
 
 
 def test_sample_partition_predicate_falls_back_to_newest_when_page_is_empty(config):
-    """整页都没有数据（或外表不报 size）时，仍用最新的那个。
-
-    空分区回答带谓词的查询会返回零行，那也是一个合法的采样结果。
-    """
+    """Use the newest partition when the page contains no known populated partition."""
     connector, _ = make_connector(config)
     table = make_partitioned_table(
         listed=[
@@ -783,11 +767,7 @@ def test_sample_partition_predicate_falls_back_to_newest_when_page_is_empty(conf
 
 
 def test_sample_partition_predicate_reads_one_page_only(config):
-    """不物化整张分区表：最多消费一页。
-
-    这正是选 ``iterate_partitions`` 而不是 ``get_max_partition()`` 的原因 ——
-    后者会把每个分区都拉下来再在 Python 里排序。
-    """
+    """Bound iteration to one page instead of materializing every partition."""
     connector, _ = make_connector(config)
     consumed = []
 
@@ -807,7 +787,7 @@ def test_sample_partition_predicate_reads_one_page_only(config):
 
 
 def test_sample_partition_predicate_returns_none_when_partition_unresolvable(config):
-    """分区表但分区读不出来 → 返回 None，而不是退回无谓词查询。"""
+    """Return no predicate when partition metadata cannot be resolved."""
     connector, _ = make_connector(config)
     table = make_partitioned_table()
 
@@ -820,11 +800,7 @@ def test_sample_partition_predicate_returns_none_when_partition_unresolvable(con
 
 
 def test_get_sample_rows_skips_partitioned_table_without_predicate(config):
-    """无法解析分区的分区表不应发起查询。
-
-    分区表上的无谓词 ``SELECT *`` 在 ``odps.sql.allow.fullscan=false`` 下必被
-    ODPS-0130071 拒绝，照发只会白烧一个作业并打整段 traceback。
-    """
+    """Skip unresolved partitions instead of submitting an unfiltered sampling job."""
     connector, odps = make_connector(config)
     table = make_partitioned_table()
 
@@ -842,7 +818,7 @@ def test_get_sample_rows_skips_partitioned_table_without_predicate(config):
 
 
 def test_sample_partition_predicate_quotes_reserved_partition_key(config):
-    """分区键可能是保留字，必须加反引号。"""
+    """Quote reserved words used as partition column names."""
     connector, _ = make_connector(config)
     table = make_partitioned_table(partitions=("select",), values=("20260911",))
 
@@ -850,19 +826,14 @@ def test_sample_partition_predicate_quotes_reserved_partition_key(config):
 
 
 def test_declares_partitions_reports_unknown_when_schema_is_unreadable():
-    """schema 读失败 ≠ 非分区表：返回 None，由调用方跳过该表。
-
-    当成非分区表的话，调用方会发无谓词查询；该表其实可能是分区表，在
-    ``odps.sql.allow.fullscan=false`` 下必被 ODPS-0130071 拒绝 —— 白烧一个作业，
-    而样本同样拿不到。
-    """
+    """Report unknown partition state when schema metadata cannot be read."""
     table_without_schema = SimpleNamespace()
 
     assert _declares_partitions(table_without_schema) is None
 
 
 def test_sample_partition_predicate_skips_table_with_unreadable_schema(config):
-    """schema 读不出的表不猜分区状态，直接返回 None 交给调用方跳过。"""
+    """Skip sampling when the schema cannot establish a safe partition predicate."""
     connector, _ = make_connector(config)
     table = SimpleNamespace(name="orders")
 

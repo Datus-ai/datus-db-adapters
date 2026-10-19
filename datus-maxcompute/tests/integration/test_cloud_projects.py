@@ -199,7 +199,7 @@ def test_three_level_custom_schema_object_metadata_and_samples():
                 f"INSERT OVERWRITE TABLE {full(table_name)} "
                 "SELECT 1, 'alpha', CAST('12.34' AS DECIMAL(10,2)), CAST('2026-08-28' AS DATE) "
                 "UNION ALL "
-                "SELECT 2, '中文 beta', CAST('56.78' AS DECIMAL(10,2)), CAST('2026-08-29' AS DATE)",
+                "SELECT 2, '\u4e2d\u6587 beta', CAST('56.78' AS DECIMAL(10,2)), CAST('2026-08-29' AS DATE)",
                 database_name=connector.project,
                 schema_name=schema_name,
             ),
@@ -216,7 +216,7 @@ def test_three_level_custom_schema_object_metadata_and_samples():
             "query typed rows",
         )
         assert query.row_count == 2
-        assert query.sql_return[1]["select"] == "中文 beta"
+        assert query.sql_return[1]["select"] == "\u4e2d\u6587 beta"
         assert [
             (column["name"], column["type"])
             for column in connector.get_schema(
