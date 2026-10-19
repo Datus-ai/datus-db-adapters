@@ -223,9 +223,12 @@ On 2026-10-19 the EXPLAIN smoke case also passed against SQL engine v3 with
 managed results, reporting zero scanned bytes. Its temporary Workgroups were
 deleted immediately after validation. The observed DML/header result shape is
 recorded in [AWS_TESTING.md](AWS_TESTING.md#additional-explain-validation-2026-10-19).
-The writable table contract was added after this environment was decommissioned;
-its SDK path and cleanup have offline coverage, but the new cloud case has not
-yet been run against AWS. It is not included in the historical counts above.
+On the same date, a fresh minimal environment passed the writable table contract
+and EXPLAIN in both enforced S3 and managed-results modes (two passed cases per
+mode, zero skips). Physical quoted columns, typed inserts, schema and cleanup
+were verified against AWS, then the bucket, database and Workgroup were deleted.
+These checks are separate from the historical counts above; see the
+[additional writable validation record](AWS_TESTING.md#additional-writable-validation-2026-10-19).
 
 References: [Athena API](https://docs.aws.amazon.com/boto3/latest/reference/services/athena.html),
 [SDK credential providers](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html),

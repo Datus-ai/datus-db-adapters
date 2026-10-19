@@ -217,9 +217,8 @@ were deleted. Account LF settings were verified unchanged. The final query audit
 active queries and confirmed that the client output override was ignored.
 These zero-skip results used the temporary extended environment. Future cloud
 runs require the environment and any optional permission/role profiles to be
-recreated. The writable table contract added on 2026-10-19 has offline SDK and
-S3 cleanup coverage, but has not been run against AWS after this teardown and
-is not included in the historical counts above.
+recreated. The writable table contract added on 2026-10-19 is not included in
+the historical counts above; its separate live validation is recorded below.
 
 The network tests inject faults at a local TLS proxy while forwarding other
 signed requests to real AWS with normal upstream TLS verification. They do not
@@ -260,6 +259,32 @@ Each run created one uniquely tagged temporary Workgroup with managed results
 and a 10 MiB scan cutoff, then disabled/deleted it and verified it was absent.
 No S3 buckets, Glue databases, capacity reservations or servers were created.
 These extra EXPLAIN checks are separate from the historical 28-case result-mode
-counts. The optional writable table contract still awaits live validation.
+counts.
 
 See [AWS EXPLAIN behavior and scan considerations](https://docs.aws.amazon.com/athena/latest/ug/athena-explain-statement.html).
+
+## Additional writable validation: 2026-10-19
+
+A fresh stack in `us-east-1` created exactly one private SSE-S3 bucket, one Glue
+database and one Athena SQL engine v3 Workgroup with a 10 MiB scan cutoff. No
+TPC-H initialization or additional IAM/KMS resources were needed. The optional
+writable table contract and EXPLAIN ran against this environment in both result
+modes with Workgroup enforcement enabled:
+
+| Result mode | Result |
+| --- | --- |
+| S3 results | 2 passed, zero skipped, 25.41 seconds |
+| Managed results | 2 passed, zero skipped, 24.38 seconds |
+
+The shared table contract created physical `Mixed Case` and `special-name`
+columns, inserted both typed rows, verified Glue schema plus qualified SELECT
+and LIMIT results, and dropped its table. After each run, Glue listed no tables
+and the `contracts/` prefix contained no objects. This validates the actual Hive
+DDL and Trino INSERT/SELECT identifiers rather than result aliases alone.
+
+All 16 queries succeeded and reported 1,006 scanned bytes in total; per-query
+billing minimums and S3/catalog requests apply separately. Teardown removed the
+13 remaining query-result objects and the stack reached `DELETE_COMPLETE`.
+Subsequent AWS API checks verified the bucket, Glue database and Workgroup were
+absent. These four passed cases are separate from the historical 28-case suites
+and the earlier standalone EXPLAIN checks.
