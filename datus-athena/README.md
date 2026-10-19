@@ -166,9 +166,9 @@ the shared writable table contract. This requires scoped Glue table creation,
 insertion and deletion, plus S3 list/read/write/delete access. The test creates
 one UUID-named Parquet table under a new child prefix and cleans up its metadata
 and data. The supplied prefix must be dedicated to disposable test data.
-Athena Hive DDL restricts physical column names; the read contract separately
-checks quoted `Mixed Case` and `special-name` aliases
-([AWS naming rules](https://docs.aws.amazon.com/athena/latest/ug/create-table.html)).
+The writable contract creates physical `Mixed Case` and `special-name` columns,
+using backticks in Hive DDL and double quotes in INSERT/SELECT. Metadata must
+report those names; the read contract also checks quoted result aliases.
 
 For real AWS validation, provision a dedicated SQL Workgroup with a per-query
 scan cutoff and either an S3 result prefix or managed results, a disposable Glue

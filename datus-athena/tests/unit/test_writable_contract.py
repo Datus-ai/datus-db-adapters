@@ -14,6 +14,29 @@ def test_writable_contract_runs_the_shared_assertions_through_the_sdk(make_conne
     _, stubber = sdk
     connector = make_connector()
     case = build_writable_contract(connector, "contract_unit", "s3://fixture-bucket/contracts/contract_unit/")
+    expected_columns = (
+        "id",
+        "Mixed Case",
+        "special-name",
+        "nullable_text",
+        "event_date",
+        "event_ts",
+        "amount",
+        "bool_flag",
+    )
+    assert case.expected_columns == expected_columns
+    create = sqlglot.parse_one(case.create_sql, read="athena")
+    assert tuple(column.this.name for column in create.this.expressions) == expected_columns
+    assert all(column.this.args.get("quoted") for column in create.this.expressions)
+    insert = sqlglot.parse_one(case.insert_sqls[0], read="athena")
+    assert tuple(column.name for column in insert.this.expressions) == expected_columns
+    assert all(column.args.get("quoted") for column in insert.this.expressions)
+    select = sqlglot.parse_one(case.qualified_select_sql, read="athena")
+    assert [
+        (column.name, column.this.args.get("quoted"))
+        for column in select.find_all(sqlglot.exp.Column)
+        if column.name in {"Mixed Case", "special-name"}
+    ] == [("Mixed Case", True), ("special-name", True)]
     for sql in (case.create_sql, *case.insert_sqls, case.qualified_select_sql, case.limit_sql, case.drop_sql):
         assert sqlglot.parse_one(sql, read="athena") is not None
     for sql in (case.drop_sql, case.create_sql):

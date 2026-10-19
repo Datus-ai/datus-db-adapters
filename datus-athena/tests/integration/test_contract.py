@@ -36,11 +36,11 @@ def test_shared_select_contract(connector):
 
 
 def build_writable_contract(connector, table_name, location):
-    """Hive DDL uses supported physical names; the read contract covers quoted aliases."""
+    """Exercise the shared contract's quoted physical names through Hive DDL and Trino DML."""
     columns = (
         ("id", "BIGINT", "id_value"),
-        ("mixed_case", "STRING", "mixed_value"),
-        ("special_name", "STRING", "special_value"),
+        ("Mixed Case", "STRING", "mixed_value"),
+        ("special-name", "STRING", "special_value"),
         ("nullable_text", "STRING", "nullable_value"),
         ("event_date", "DATE", "event_date_value"),
         ("event_ts", "TIMESTAMP", "event_ts_value"),
@@ -52,6 +52,7 @@ def build_writable_contract(connector, table_name, location):
     table = connector.full_name(table_name=table_name)
     definitions = ", ".join(f"`{name}` {kind}" for name, kind, _ in columns)
     fields = ", ".join(f"{quote(name)} AS {alias}" for name, _, alias in columns)
+    insert_columns = ", ".join(quote(name) for name, _, _ in columns)
     location = location.replace("'", "''")
     return TableContractCase(
         adapter_name="athena",
@@ -59,7 +60,7 @@ def build_writable_contract(connector, table_name, location):
         drop_sql=f"DROP TABLE IF EXISTS {ddl_table}",
         create_sql=f"CREATE EXTERNAL TABLE {ddl_table} ({definitions}) STORED AS PARQUET LOCATION '{location}'",
         insert_sqls=(
-            f"INSERT INTO {table} VALUES "
+            f"INSERT INTO {table} ({insert_columns}) VALUES "
             "(CAST(1 AS BIGINT), 'Alpha', 'S-1', CAST(NULL AS VARCHAR), DATE '2024-02-03', "
             "TIMESTAMP '2024-02-03 04:05:06', CAST(123.45 AS DECIMAL(10,2)), TRUE), "
             "(CAST(2 AS BIGINT), 'Beta', 'S-2', 'present', DATE '2024-02-04', "
