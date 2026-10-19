@@ -212,6 +212,28 @@ def kerberos(manager: Manager, enable: bool, timeout: int, restart: bool = True)
     quark = next(s for s in services if s["type"] == "QUARK")
     cid = container_id()
     if enable:
+        inspection = subprocess.run(
+            [
+                "docker",
+                "exec",
+                cid,
+                "python3",
+                "-c",
+                "import sys,xml.etree.ElementTree as E; "
+                "r=E.parse('/etc/'+sys.argv[1]+'/conf/hive-site.xml').getroot(); "
+                "print(next((p.findtext('value') for p in r.findall('property') "
+                "if p.findtext('name')=='hive.server2.authentication'),'NONE'))",
+                quark["sid"],
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if inspection.stdout.strip() != "KERBEROS":
+            # Metastore lazily initializes its Hadoop identity. Warm it under
+            # SIMPLE before changing the shared runtime files to Kerberos.
+            environment = dict(os.environ, HIVE_AUTH="NONE", HIVE_PASSWORD="", HIVE_KERBEROS_SERVICE_NAME="")
+            wait_endpoint(min(timeout, 900), environment=environment)
         state = prepare_realm()
         compose("--profile", "kerberos", "up", "-d", "--build", "--wait", "kdc")
         target = "/opt/transwarp/data/datus-kerberos-test"
@@ -245,7 +267,7 @@ def kerberos(manager: Manager, enable: bool, timeout: int, restart: bool = True)
         print("Original runtime restored; run readiness with the original authentication mode", flush=True)
 
 
-def wait_endpoint(timeout: int) -> None:
+def wait_endpoint(timeout: int, environment: dict[str, str] | None = None) -> None:
     deadline = time.monotonic() + timeout
     last_error = "no attempt completed"
     while time.monotonic() < deadline:
@@ -255,6 +277,7 @@ def wait_endpoint(timeout: int) -> None:
                 capture_output=True,
                 text=True,
                 timeout=min(90, max(1, deadline - time.monotonic())),
+                env=environment,
             )
             if result.returncode == 0:
                 print(result.stdout.strip(), flush=True)

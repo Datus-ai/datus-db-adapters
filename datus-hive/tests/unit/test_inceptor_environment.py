@@ -275,3 +275,37 @@ def test_cold_kerberos_recovery_restores_runtime_before_starting_metastore(manag
 
     manage.kerberos(ColdManager(), False, 60, restart=False)
     assert commands == [["docker", "exec", "-i", "local-container", "python3", "-", "restore", "quark1"]]
+
+
+def test_kerberos_enable_requires_simple_readiness_before_changing_runtime(manage, monkeypatch):
+    commands = []
+    monkeypatch.setattr(manage, "container_id", lambda: "local-container")
+    monkeypatch.setattr(
+        manage.subprocess, "run", lambda command, **kw: commands.append(command) or SimpleNamespace(stdout="NONE\n")
+    )
+
+    def require_simple(timeout, environment):
+        assert environment["HIVE_AUTH"] == "NONE"
+        assert environment["HIVE_KERBEROS_SERVICE_NAME"] == ""
+        assert environment["HIVE_PASSWORD"] == ""
+        raise RuntimeError("Metastore is not ready under SIMPLE")
+
+    monkeypatch.setattr(manage, "wait_endpoint", require_simple)
+
+    class Manager:
+        def request(self, method, path):
+            assert method == "GET"
+            if path == "/api/nodes/this":
+                return {"hostName": "local"}
+            if path == "/api/nodes":
+                return [{"hostName": "local", "clusterId": 7}]
+            if path == "/api/services":
+                return [
+                    {"id": i, "type": kind, "clusterId": 7, "sid": "quark1"} for i, kind in enumerate(manage.REQUIRED)
+                ]
+            raise AssertionError(path)
+
+    with pytest.raises(RuntimeError, match="Metastore is not ready"):
+        manage.kerberos(Manager(), True, 60)
+    assert len(commands) == 1
+    assert commands[0][:5] == ["docker", "exec", "local-container", "python3", "-c"]
