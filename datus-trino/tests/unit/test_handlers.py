@@ -72,6 +72,11 @@ def test_context_uri_rejects_unknown_scheme():
         ("..orders", "", "", "orders"),
         (".analytics.orders", "", "analytics", "orders"),
         ("hive.analytics.*", "hive", "analytics", "*"),
+        ("hive.analytics.orders_%", "hive", "analytics", "orders_%"),
+        ("hive.*.orders_*", "hive", "*", "orders_*"),
+        ("hive.analytics.*_daily", "hive", "analytics", "*_daily"),
+        ("hive.analytics.orders_?", "hive", "analytics", "orders_?"),
+        ("hive.analytics.%", "hive", "analytics", "%"),
         ("_catalog.数据.订单", "_catalog", "数据", "订单"),
     ],
 )

@@ -45,7 +45,7 @@ def parse_trino_identifier(value: str) -> dict[str, str]:
         return result
     padding = len(value) - len(value.lstrip("."))
     value = value[padding:]
-    pattern = re.compile(r'\s*(?:"((?:[^"]|"")*)"|([^\W\d][\w$]*|\*))\s*')
+    pattern = re.compile(r'\s*(?:"((?:[^"]|"")*)"|((?:[^\W\d]|[*%?])[\w$%*?]*))\s*')
     parts = []
     position = 0
     while position < len(value):
