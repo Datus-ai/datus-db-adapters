@@ -1,3 +1,5 @@
+import csv
+import io
 from contextvars import Context
 from datetime import date, datetime
 from decimal import Decimal
@@ -160,6 +162,28 @@ def test_types_and_formats(make_connector, sdk, fmt):
     else:
         assert "数据" in result.sql_return and "123.45" in result.sql_return
         assert result.sql_return.startswith("id,text,empty,null,amount,day,ts,flag,bin,real,array,zoned\n")
+
+
+@pytest.mark.parametrize("fmt", ["list", "arrow", "pandas", "csv"])
+def test_nullable_bigints_keep_exact_values_in_all_formats(make_connector, sdk, fmt):
+    _, stubber = sdk
+    values = [2**53 + 1, None, 2**63 - 1, -(2**63), -(2**53 + 1)]
+    sql = "SELECT id FROM test_values"
+    start(stubber, sql)
+    status(stubber)
+    results(stubber, [[value] for value in values], [{"Name": "id", "Type": "bigint"}])
+    result = make_connector().execute_query(sql, fmt)
+    assert result.success, result.error
+    if fmt == "list":
+        assert result.sql_return == [{"id": value} for value in values]
+    elif fmt == "arrow":
+        assert result.sql_return["id"].to_pylist() == values
+    elif fmt == "pandas":
+        assert result.sql_return["id"].tolist() == values
+    else:
+        assert list(csv.DictReader(io.StringIO(result.sql_return))) == [
+            {"id": "" if value is None else str(value)} for value in values
+        ]
 
 
 def test_result_pages_skip_header_only_once(make_connector, sdk):

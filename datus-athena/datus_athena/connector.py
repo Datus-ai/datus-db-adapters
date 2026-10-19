@@ -270,9 +270,9 @@ class AthenaConnector(BaseSqlConnector, CatalogSupportMixin, MigrationTargetMixi
                         raise ValueError("List results require unique column names; use SQL aliases or Arrow")
                     payload = table.to_pylist()
                 elif result_format == "pandas":
-                    payload = table.to_pandas()
+                    payload = table.to_pandas(integer_object_nulls=True)
                 else:
-                    payload = table.to_pandas().to_csv(index=False)
+                    payload = table.to_pandas(integer_object_nulls=True).to_csv(index=False)
             return AthenaExecuteSQLResult(
                 success=True,
                 sql_query=sql,

@@ -6,6 +6,8 @@
 import re
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
+from .config import AthenaConfig
+
 
 def _value(config, name: str, default: str = "") -> str:
     value = getattr(config, name, None)
@@ -19,8 +21,15 @@ def build_athena_uri(config) -> str:
     catalog = _value(config, "catalog", "AwsDataCatalog")
     database = _value(config, "database")
     params = {"workgroup": _value(config, "workgroup", "primary")}
+    identity_values = {name: _value(config, name) or None for name in ("region", "profile_name", "ca_bundle")}
+    nested = getattr(config, "aws", None)
+    if nested is None:
+        nested = (getattr(config, "extra", None) or {}).get("aws")
+    if nested is not None:
+        identity_values["aws"] = nested
+    identity = AthenaConfig.model_validate(identity_values)
     for name in ("region", "profile_name"):
-        if value := _value(config, name):
+        if value := getattr(identity, name):
             params[name] = value
     return f"athena://{quote(catalog, safe='')}/{quote(database, safe='')}?{urlencode(params)}"
 
