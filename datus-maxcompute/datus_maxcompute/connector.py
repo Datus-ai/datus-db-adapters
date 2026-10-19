@@ -161,21 +161,21 @@ _PARTITION_SCAN_LIMIT = 100
 
 
 def _partition_has_data(partition: Any) -> bool:
-    """Whether *partition* already holds data.
+    """Whether the partition listing already provides evidence of data.
 
-    ``physical_size`` comes straight out of the partition-listing JSON (pyodps parses
-    it with a ``JSONNodeField``), so reading it costs no extra request. External tables
-    -- OSS, Hologres FDW and friends -- do not report a physical size and yield
-    ``None``; that is "unknown", not "empty", so it is reported as ``False`` and the
-    caller keeps whatever candidate it has already seen.
+    PyODPS lazily fetches ``physical_size`` from extended metadata. Even ``size``
+    and ``record_num`` can fetch metadata when absent, so bypass its attribute
+    loader and inspect only values already parsed from the listing. Missing or
+    negative values are unknown; the caller retains its newest candidate.
     """
-    size = getattr(partition, "physical_size", None)
-    if size is None:
-        return False
-    try:
-        return int(size) > 0
-    except (TypeError, ValueError):
-        return False
+    for field in ("size", "record_num"):
+        try:
+            value = object.__getattribute__(partition, field)
+            if value is not None and int(value) > 0:
+                return True
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return False
 
 
 class MaxComputeConnector(BaseSqlConnector):
@@ -783,9 +783,9 @@ class MaxComputeConnector(BaseSqlConnector):
         (``"10"`` before ``"9"``) are ranked by the service rather than by a string
         comparison here.
 
-        Within that page the first partition that holds data wins; ``physical_size`` is
-        read from the listing payload, not fetched per partition (see
-        ``_partition_has_data``), so scanning the page costs nothing extra. When
+        Within that page the first partition with a positive size or record count
+        already present in the listing wins (see ``_partition_has_data``), so scanning
+        the page adds no per-partition metadata requests. When
         nothing on the page holds data -- or the table is external and reports no size
         at all -- the newest partition is returned anyway: an empty partition answers a
         predicate-pinned query with zero rows, which is a valid sample result.

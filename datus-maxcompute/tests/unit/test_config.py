@@ -71,7 +71,7 @@ def _values(**overrides):
 
 
 def test_config_lists_every_table_by_default():
-    """默认不过滤：忽略哪些表由用户决定，不是适配器的内置假设。"""
+    """Table filtering is disabled unless the datasource configures patterns."""
     config = MaxComputeConfig(**_values())
 
     assert config.ignore_table_patterns == []
@@ -88,21 +88,13 @@ def test_config_lists_every_table_by_default():
     ],
 )
 def test_config_normalizes_ignore_table_patterns(given, expected):
-    """忽略规则接受列表或裸字符串，并丢掉空白项。
-
-    YAML 里 ``ignore_table_patterns: "tmp_*"`` 与写成列表一样常见；空串若被保留，
-    会成为一条永不匹配的 glob，看起来像功能失效。
-    """
+    """Accept a pattern string or list and discard blank entries."""
     config = MaxComputeConfig(**_values(ignore_table_patterns=given))
 
     assert config.ignore_table_patterns == expected
 
 
 def test_config_rejects_undeclared_fields():
-    """``extra="forbid"``：datasource 上的新键必须在配置类里显式声明。
-
-    这也是 ``ignore_table_patterns`` 必须写进 ``MaxComputeConfig`` 的原因 ——
-    agent.yml 的未知键会经 ``DbConfig.extra`` 透传到这里，未声明就直接报错。
-    """
+    """Reject datasource options that the adapter configuration does not declare."""
     with pytest.raises(ValidationError):
         MaxComputeConfig(**_values(not_a_real_option=["tmp_*"]))
