@@ -14,10 +14,10 @@ from pydantic import BaseModel
 from datus_db_core import DatusDbException
 from datus_maxcompute import MaxComputeConfig, MaxComputeConnector
 from datus_maxcompute.connector import (
+    _PARTITION_SCAN_LIMIT,
     _coerce_config,
     _declares_partitions,
     _matches_ignore_patterns,
-    _PARTITION_SCAN_LIMIT,
     _TimeoutRestClient,
 )
 
