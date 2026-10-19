@@ -6,6 +6,19 @@ kind = "compose"
 package = "datus-mysql"
 kind = "compose"
 
+# AURORA-01/02, VERIFY-01.4: cloud acceptance cases exist, but no Aurora test
+# cluster/scoped credentials or ephemeral provisioning workflow are assigned to CI. Keep the
+# ordinary MySQL/PostgreSQL compose targets enabled independently.
+[targets.aurora-mysql]
+package = "datus-mysql"
+kind = "cloud"
+enabled = false
+
+[targets.aurora-postgresql]
+package = "datus-postgresql"
+kind = "cloud"
+enabled = false
+
 [targets.clickhouse]
 package = "datus-clickhouse"
 kind = "compose"

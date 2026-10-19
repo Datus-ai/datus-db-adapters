@@ -245,6 +245,13 @@ def select_impacts(
     for raw_path in sorted(set(changed_paths)):
         path = PurePosixPath(raw_path)
         path_string = path.as_posix()
+        if path_string in {"ci/run_tls_integration_tests.py", "ci/integration/generate_tls.py"}:
+            for name in ("mysql", "postgresql"):
+                package_name = targets[name].package
+                direct_integration_packages.add(package_name)
+                selection.unit_packages.add(package_name)
+                selection.add_reason(package_name, path_string)
+            continue
         handled_global_path = False
         if path_string in _GLOBAL_ALL_INTEGRATION_PATHS:
             global_all_reasons.add(path_string)

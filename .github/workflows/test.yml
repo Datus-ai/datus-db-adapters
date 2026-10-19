@@ -164,6 +164,10 @@ jobs:
       - name: Run ${{ matrix.adapter }} integration tests
         run: ci/run-integration-tests.sh "${{ matrix.adapter }}"
 
+      - name: Run verified TLS and certificate rejection tests
+        if: matrix.adapter == 'mysql' || matrix.adapter == 'postgresql'
+        run: uv run --no-project python -m ci.run_tls_integration_tests "${{ matrix.adapter }}"
+
       - name: Stop ${{ matrix.adapter }} integration services
         if: always()
         run: ci/run-integration-tests.sh --cleanup-only "${{ matrix.adapter }}"

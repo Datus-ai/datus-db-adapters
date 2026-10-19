@@ -382,6 +382,87 @@ _STUB_CERT = (
 )
 
 
+@pytest.mark.parametrize("connect_timeout_seconds, expected_timeout", [(None, 30), (7, 7)])
+def test_connector_engines_pass_timeout_accepted_by_pg8000(connect_timeout_seconds, expected_timeout):
+    """Exercise URL translation through to the real DBAPI constructor's signature."""
+    import inspect
+
+    from pg8000.core import CoreConnection
+
+    from datus_gaussdb import GaussDBConnector
+
+    connector = GaussDBConnector(
+        dict(
+            username="reader",
+            database="app",
+            driver="pg8000",
+            sslmode="disable",
+            connect_timeout_seconds=connect_timeout_seconds,
+        )
+    )
+
+    def connect(*args, **kwargs):
+        inspect.signature(CoreConnection.__init__).bind(None, *args, **kwargs)
+        assert kwargs["timeout"] == expected_timeout
+        return connection
+
+    connection = object()
+    try:
+        engines = [connector._ensure_engine(), connector._get_engine("app"), connector._get_engine("other")]
+        for engine in engines:
+            with patch.object(engine.dialect.dbapi, "connect", side_effect=connect):
+                assert engine.pool._creator() is connection
+    finally:
+        connector.close()
+
+
+@pytest.mark.parametrize("driver", ["psycopg2", "pg8000"])
+@pytest.mark.parametrize("inline", [True, False])
+def test_connector_engines_keep_dialect_translated_tls_parameters(driver, inline, tmp_path):
+    """Parent hooks must preserve libpq CA paths and pg8000 SSL contexts."""
+    import inspect
+    import ssl
+    from pathlib import Path
+
+    from pg8000.core import CoreConnection
+    from psycopg2.extensions import make_dsn
+
+    from datus_gaussdb import GaussDBConnector
+
+    ca = tmp_path / "ca.pem"
+    ca.write_text(_STUB_CERT)
+    connector = GaussDBConnector(
+        dict(
+            username="reader",
+            database="app",
+            driver=driver,
+            sslmode="verify-ca",
+            sslrootcert=_STUB_CERT if inline else str(ca),
+        )
+    )
+
+    def connect(*args, **kwargs):
+        if driver == "pg8000":
+            inspect.signature(CoreConnection.__init__).bind(None, *args, **kwargs)
+            context = kwargs["ssl_context"]
+            assert context.verify_mode == ssl.CERT_REQUIRED
+            assert context.check_hostname is False
+            assert len(context.get_ca_certs()) == 1
+        else:
+            make_dsn(*args, **kwargs)
+            assert Path(kwargs["sslrootcert"]).read_text() == _STUB_CERT
+        return connection
+
+    connection = object()
+    try:
+        engines = [connector._ensure_engine(), connector._get_engine("app"), connector._get_engine("other")]
+        for engine in engines:
+            with patch.object(engine.dialect.dbapi, "connect", side_effect=connect):
+                assert engine.pool._creator() is connection
+    finally:
+        connector.close()
+
+
 def test_pg8000_ssl_context_verify_modes(tmp_path):
     import ssl
 

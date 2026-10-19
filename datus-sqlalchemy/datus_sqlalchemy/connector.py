@@ -3,13 +3,14 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import threading
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping
+from contextlib import contextmanager, nullcontext
 from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 
 from pandas import DataFrame
 from pyarrow import Table
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Inspector
+from sqlalchemy.engine import Inspector, make_url
 from sqlalchemy.exc import (
     DatabaseError,
     DataError,
@@ -41,6 +42,31 @@ from datus_db_core import (
 logger = get_logger(__name__)
 
 _SQL_PREVIEW_CHARS = 50
+_INITIAL_CREDENTIAL_VERSION = object()
+
+
+def _safe_connect_error(exc: Exception, parameters: dict) -> Exception:
+    """Preserve driver error types/codes, removing runtime passwords from messages."""
+    from urllib.parse import quote, quote_plus
+
+    password = parameters.get("password")
+    if not password:
+        return exc
+    sensitive = {str(password), quote(str(password), safe=""), quote_plus(str(password))}
+
+    def redact(value):
+        if isinstance(value, str):
+            for secret in sensitive:
+                value = value.replace(secret, "<redacted>")
+        return value
+
+    safe_args = tuple(redact(arg) for arg in exc.args)
+    if safe_args == exc.args:
+        return exc
+    try:
+        return type(exc)(*safe_args)
+    except Exception:
+        return RuntimeError(f"Database connection failed ({type(exc).__name__})")
 
 
 def _log_sql_exception(event: str, sql: str, exc: Exception) -> None:
@@ -97,6 +123,91 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         self._owns_engine = False
         self._engine_lock = threading.Lock()
 
+    def configure_connection(
+        self,
+        *,
+        connect_args: Mapping[str, Any] | None = None,
+        url_defaults: Mapping[str, str] | None = None,
+        connection_parameters: Callable[[], Mapping[str, Any]] | None = None,
+        credential_version: Callable[[bool], Any] | None = None,
+        connection_cleanup: Callable[[], None] | None = None,
+        connection_validator: Callable[[Any], None] | None = None,
+    ) -> None:
+        """Configure optional DBAPI parameters for every engine owned by this connector.
+
+        ``url_defaults`` supplements missing URL query options before dialect
+        translation. Existing URL options win, preserving subclass normalization.
+        Static DBAPI arguments override translated URL arguments; runtime
+        parameters override both.
+        Replacing these options disposes existing pools. ``credential_version`` is
+        checked before engine lookup and can refresh cached credentials on demand.
+        ``connection_cleanup`` releases provider resources on close; it must be
+        idempotent and allow later use, just like the connector's pools.
+        ``connection_validator`` validates a DBAPI connection before checkout,
+        before application SQL is issued. DisconnectionError uses the pool's
+        bounded reconnect path without replaying application statements.
+        Leave this extension unused to retain the original engine creation path.
+        Configure/reconfigure between operations, not during an active checkout.
+        """
+        self.close()
+        self._connect_args = dict(connect_args or {})
+        self._url_defaults = dict(url_defaults or {})
+        self._connection_parameters = connection_parameters
+        self._credential_version = credential_version
+        self._connection_cleanup = connection_cleanup
+        self._connection_validator = connection_validator
+        self._credential_state = _INITIAL_CREDENTIAL_VERSION
+        self._credential_lock = threading.RLock()
+
+    def refresh_credentials(self) -> None:
+        """Force a Secret refresh and discard pools if its version changed."""
+        self._prepare_connection(force=True)
+
+    def _prepare_connection(self, force: bool = False) -> None:
+        provider = getattr(self, "_credential_version", None)
+        if provider is None:
+            return
+        with self._credential_lock:
+            version = provider(force)
+            previous = self._credential_state
+            if previous is not _INITIAL_CREDENTIAL_VERSION and previous != version:
+                self.close()
+            self._credential_state = version
+
+    def _create_engine(self, connection_string, **options):
+        """Shared creation path, including PostgreSQL's per-database engines."""
+        url_defaults = getattr(self, "_url_defaults", None)
+        if url_defaults:
+            url = make_url(connection_string)
+            connection_string = url.update_query_dict({**url_defaults, **url.query})
+        connect_args = getattr(self, "_connect_args", None)
+        if connect_args:
+            options["connect_args"] = dict(connect_args)
+        engine = create_engine(connection_string, **options)
+        parameters = getattr(self, "_connection_parameters", None)
+        if parameters is not None:
+            from sqlalchemy import event
+
+            @event.listens_for(engine, "do_connect")
+            def connect_with_current_credentials(dialect, conn_rec, cargs, cparams):
+                # Get credentials for each physical connection, never per Engine.
+                current_parameters = dict(cparams)
+                current_parameters.update(parameters())
+                try:
+                    return dialect.connect(*cargs, **current_parameters)
+                except Exception as exc:
+                    raise _safe_connect_error(exc, current_parameters) from None
+
+        validator = getattr(self, "_connection_validator", None)
+        if validator is not None:
+            from sqlalchemy import event
+
+            @event.listens_for(engine, "checkout")
+            def validate_checkout(dbapi_connection, connection_record, connection_proxy):
+                validator(dbapi_connection)
+
+        return engine
+
     def __del__(self):
         """Destructor to ensure engine is properly disposed."""
         try:
@@ -113,15 +224,17 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         than ``self.engine`` to avoid races when subclasses maintain multiple
         engines (e.g. PostgreSQL engine-per-database).
         """
-        if self.engine and self._owns_engine:
-            return self.engine
+        self._prepare_connection()
+        engine = self.engine
+        if engine and self._owns_engine:
+            return engine
         with self._engine_lock:
             # Double-check after acquiring lock
             if self.engine and self._owns_engine:
                 return self.engine
             try:
                 if self.dialect not in ("duckdb", "sqlite"):
-                    self.engine = create_engine(
+                    self.engine = self._create_engine(
                         self.connection_string,
                         pool_size=10,
                         max_overflow=20,
@@ -130,7 +243,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                         pool_pre_ping=True,
                     )
                 else:
-                    self.engine = create_engine(self.connection_string)
+                    self.engine = self._create_engine(self.connection_string)
                 self._owns_engine = True
                 return self.engine
             except Exception as e:
@@ -181,14 +294,21 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
     @override
     def close(self):
         """Dispose the engine and its connection pool."""
-        try:
+        with getattr(self, "_engine_lock", nullcontext()):
             engine = getattr(self, "engine", None)
-            if engine:
-                engine.dispose()
             self.engine = None
             self._owns_engine = False
+        try:
+            if engine:
+                engine.dispose()
         except Exception as e:
-            logger.warning(f"Error disposing engine: {str(e)}")
+            logger.warning("Error disposing engine (%s)", type(e).__name__)
+        cleanup = getattr(self, "_connection_cleanup", None)
+        if cleanup is not None:
+            try:
+                cleanup()
+            except Exception as exc:
+                logger.warning("Error releasing connection resources (%s)", type(exc).__name__)
 
     # ==================== Error Handling ====================
 
