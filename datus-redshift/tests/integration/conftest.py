@@ -35,6 +35,7 @@ TPCH_SCHEMA = os.getenv("REDSHIFT_TPCH_SCHEMA", os.getenv("REDSHIFT_SCHEMA", "pu
 
 
 def _required_env(name: str) -> str:
+    """Skip live tests only when required configuration is absent."""
     value = os.getenv(name)
     if not value:
         pytest.skip(f"{name} is not set")
@@ -42,6 +43,7 @@ def _required_env(name: str) -> str:
 
 
 def _build_config(schema: str | None = None) -> RedshiftConfig:
+    """Build password or IAM settings from the documented environment variables."""
     iam = os.getenv("REDSHIFT_IAM", "false").lower() == "true"
     return RedshiftConfig(
         host=_required_env("REDSHIFT_HOST"),
@@ -60,11 +62,13 @@ def _build_config(schema: str | None = None) -> RedshiftConfig:
 
 @pytest.fixture
 def config() -> RedshiftConfig:
+    """Provide the configured live Redshift connection settings."""
     return _build_config()
 
 
 @pytest.fixture
 def connector(config: RedshiftConfig) -> Generator[RedshiftConnector, None, None]:
+    """Verify a live connection and close it after each test."""
     conn = RedshiftConnector(config)
     try:
         assert conn.test_connection()["success"] is True
@@ -99,7 +103,10 @@ def tpch_setup() -> Generator[RedshiftConnector, None, None]:
                     cleanup_errors.append(f"{table}: {result.error}")
             except Exception as error:
                 cleanup_errors.append(f"{table}: {error}")
-        conn.close()
+        try:
+            conn.close()
+        except Exception as error:
+            cleanup_errors.append(f"close: {error}")
         if cleanup_errors:
             message = "TPC-H cleanup failed: " + "; ".join(cleanup_errors)
             if failure is not None:
