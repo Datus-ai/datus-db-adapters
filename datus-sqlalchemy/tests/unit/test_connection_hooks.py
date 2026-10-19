@@ -15,6 +15,20 @@ class Connector(SQLAlchemyConnector):
         pass
 
 
+def test_url_defaults_preserve_existing_url_options_before_driver_translation():
+    connector = Connector("postgresql+psycopg2://reader:secret@localhost/app?connect_timeout=11")
+    connector.configure_connection(url_defaults={"connect_timeout": "7", "sslrootcert": "ca.pem"})
+    try:
+        engine = connector._ensure_engine()
+        with patch.object(engine.dialect.dbapi, "connect") as connect:
+            engine.pool._creator()
+        assert connect.call_args.kwargs["connect_timeout"] == "11"
+        assert connect.call_args.kwargs["sslrootcert"] == "ca.pem"
+        assert connect.call_args.kwargs["dbname"] == "app"
+    finally:
+        connector.close()
+
+
 def test_dynamic_credentials_are_per_physical_connection_and_existing_sessions_survive():
     """Elapsed token lifetime must not force a working pooled session to log in again."""
     passwords = iter(["token-at-start", "token-after-expiry"])

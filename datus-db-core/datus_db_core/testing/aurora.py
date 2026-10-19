@@ -71,6 +71,7 @@ def assert_token_lifetime(connector, config, session_id_sql):
         assert datetime.now(UTC) > initial_expiry, "The original STS role session must really expire"
     connector.configure_connection(
         connect_args=connector._connect_args,
+        url_defaults=connector._url_defaults,
         connection_parameters=lambda: expired_parameters,
         connection_cleanup=cleanup,
     )
@@ -78,7 +79,10 @@ def assert_token_lifetime(connector, config, session_id_sql):
     assert not expired.success, "An expired IAM token must not establish a new physical connection"
     assert "authentication" in str(expired.error).lower() or "access denied" in str(expired.error).lower()
     connector.configure_connection(
-        connect_args=connector._connect_args, connection_parameters=parameters, connection_cleanup=cleanup
+        connect_args=connector._connect_args,
+        url_defaults=connector._url_defaults,
+        connection_parameters=parameters,
+        connection_cleanup=cleanup,
     )
     fresh = connector.execute_query(session_id_sql, result_format="list")
     assert fresh.success, fresh.error
@@ -133,6 +137,7 @@ def assert_invalid_iam_token(connector, config):
     assert baseline.success, baseline.error
     connector.configure_connection(
         connect_args=connector._connect_args,
+        url_defaults=connector._url_defaults,
         connection_parameters=lambda: {"password": "intentionally-invalid-iam-token"},
     )
     invalid = connector.execute_query("SELECT 1", result_format="list")

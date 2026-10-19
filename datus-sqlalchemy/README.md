@@ -38,11 +38,15 @@ class MyDatabaseConnector(SQLAlchemyConnector):
 
 ## Optional connection hooks
 
-`configure_connection(connect_args=..., connection_parameters=..., credential_version=..., connection_cleanup=..., connection_validator=...)`
+`configure_connection(connect_args=..., url_defaults=..., connection_parameters=..., credential_version=..., connection_cleanup=..., connection_validator=...)`
 adds static driver parameters and an optional dynamic provider. Each new engine,
 including PostgreSQL's per-database engines, uses the same `_create_engine` path.
-Static parameters override the URL; the dynamic provider overrides both at every
-physical connection through `do_connect`. No new abstract methods are required.
+`url_defaults` fills missing URL query options before dialect translation. Existing
+URL options win, preserving subclass-normalized CA paths. Use this for PostgreSQL
+TLS and timeout options that a dialect must translate for its selected DBAPI.
+Static `connect_args` override translated URL options; the dynamic provider
+overrides both at every physical connection through `do_connect`. No new abstract
+methods are required.
 
 The optional `credential_version(force: bool)` callback runs before engine lookup.
 A changed version disposes owned pools; `refresh_credentials()` forces this check.

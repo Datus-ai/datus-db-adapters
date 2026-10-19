@@ -299,6 +299,34 @@ def test_inline_pem_is_materialised_to_a_readable_file():
         assert handle.read() == pem
 
 
+@pytest.mark.parametrize("inline", [True, False])
+def test_engines_pass_materialised_ca_path_to_dbapi(inline, tmp_path):
+    """Check actual DBAPI kwargs, after SQLAlchemy merges URL and hook options."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from psycopg2.extensions import make_dsn
+
+    pem = "-----BEGIN CERTIFICATE-----\nMIIBtjCCAVug\n-----END CERTIFICATE-----\n"
+    ca = tmp_path / "ca.pem"
+    ca.write_text(pem)
+    connector = _connector(sslmode="verify-ca", sslrootcert=pem if inline else str(ca))
+
+    def connect(*args, **kwargs):
+        make_dsn(*args, **kwargs)
+        assert Path(kwargs["sslrootcert"]).read_text() == pem
+        return connection
+
+    connection = object()
+    try:
+        engines = [connector._ensure_engine(), connector._get_engine("gaussdb"), connector._get_engine("other")]
+        for engine in engines:
+            with patch.object(engine.dialect.dbapi, "connect", side_effect=connect):
+                assert engine.pool._creator() is connection
+    finally:
+        connector.close()
+
+
 def test_connection_string_escapes_credentials():
     url = _connector(username="ad/min", password="p@ss/word")._build_connection_string("gaussdb")
 

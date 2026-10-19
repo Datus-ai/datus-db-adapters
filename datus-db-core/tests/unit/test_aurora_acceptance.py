@@ -101,6 +101,7 @@ def test_token_expiry_keeps_one_session_active_then_rejects_expired_token_and_re
     monkeypatch.setenv("DATUS_AURORA_LONG_TESTS", "1")
     monkeypatch.delenv("DATUS_AURORA_ROLE_EXPIRY_TEST", raising=False)
     connector = MagicMock()
+    connector._url_defaults = {"sslrootcert": "trusted-ca.pem", "connect_timeout": "60"}
     session = SimpleNamespace(success=True, sql_return=[{"session_id": 10}], error=None)
     rejected = SimpleNamespace(success=False, error="authentication failed")
     fresh = SimpleNamespace(success=True, sql_return=[{"session_id": 20}], error=None)
@@ -112,6 +113,8 @@ def test_token_expiry_keeps_one_session_active_then_rejects_expired_token_and_re
     assert sleep.call_count == 16
     assert connector.execute_query.call_count == 20
     assert connector.configure_connection.call_count == 2
+    for call in connector.configure_connection.call_args_list:
+        assert call.kwargs["url_defaults"] == {"sslrootcert": "trusted-ca.pem", "connect_timeout": "60"}
     replacement = connector.configure_connection.call_args.kwargs["connection_parameters"]
     assert replacement is connector._connection_parameters
 

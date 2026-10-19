@@ -106,6 +106,14 @@ with patch("datus_mysql.MySQLConnector.__init__", return_value=None):
 Must cover: init/context resolution, `full_name` with and without catalog/database,
 `quote_identifier` escaping, `close()` swallowing driver exceptions, `to_dict`/`get_type`.
 
+Changes to shared connection setup must also exercise the final DBAPI arguments
+of affected derived connectors. Instantiate real connectors and engines, keep URL
+construction and dialect translation active, and mock only the DBAPI connection
+boundary. Cover each affected driver's timeout/TLS arguments, path and inline PEM
+CA inputs where supported, and both base and per-database engines where present.
+Mocking a base initializer or checking only the URL misses parameters overwritten
+later by SQLAlchemy `connect_args` (Aurora review regressions in GaussDB/DWS).
+
 Additionally, **every server-error fallback/degradation branch is mandatory to test** whenever the
 connector has one (e.g. primary `information_schema` query fails → fall back to `SHOW`): make the
 mocked engine raise on the primary query and assert the fallback result, including that it stays

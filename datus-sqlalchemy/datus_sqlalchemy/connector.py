@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 from pandas import DataFrame
 from pyarrow import Table
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Inspector
+from sqlalchemy.engine import Inspector, make_url
 from sqlalchemy.exc import (
     DatabaseError,
     DataError,
@@ -127,6 +127,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         self,
         *,
         connect_args: Mapping[str, Any] | None = None,
+        url_defaults: Mapping[str, str] | None = None,
         connection_parameters: Callable[[], Mapping[str, Any]] | None = None,
         credential_version: Callable[[bool], Any] | None = None,
         connection_cleanup: Callable[[], None] | None = None,
@@ -134,7 +135,10 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
     ) -> None:
         """Configure optional DBAPI parameters for every engine owned by this connector.
 
-        Static arguments override URL arguments; runtime parameters override both.
+        ``url_defaults`` supplements missing URL query options before dialect
+        translation. Existing URL options win, preserving subclass normalization.
+        Static DBAPI arguments override translated URL arguments; runtime
+        parameters override both.
         Replacing these options disposes existing pools. ``credential_version`` is
         checked before engine lookup and can refresh cached credentials on demand.
         ``connection_cleanup`` releases provider resources on close; it must be
@@ -147,6 +151,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """
         self.close()
         self._connect_args = dict(connect_args or {})
+        self._url_defaults = dict(url_defaults or {})
         self._connection_parameters = connection_parameters
         self._credential_version = credential_version
         self._connection_cleanup = connection_cleanup
@@ -171,6 +176,10 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
 
     def _create_engine(self, connection_string, **options):
         """Shared creation path, including PostgreSQL's per-database engines."""
+        url_defaults = getattr(self, "_url_defaults", None)
+        if url_defaults:
+            url = make_url(connection_string)
+            connection_string = url.update_query_dict({**url_defaults, **url.query})
         connect_args = getattr(self, "_connect_args", None)
         if connect_args:
             options["connect_args"] = dict(connect_args)

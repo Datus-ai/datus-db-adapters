@@ -292,6 +292,8 @@ class GaussDBPg8000Dialect(PGDialect_pg8000):
 
     def create_connect_args(self, url):
         args, opts = super().create_connect_args(url)
+        if "connect_timeout" in opts:
+            opts["timeout"] = float(opts.pop("connect_timeout"))
         sslmode = opts.pop("sslmode", None)
         sslrootcert = opts.pop("sslrootcert", None)
         opts["ssl_context"] = _build_pg8000_ssl_context(sslmode, sslrootcert)

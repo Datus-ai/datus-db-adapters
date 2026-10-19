@@ -16,6 +16,8 @@ pip install 'datus-mysql[aws]'       # or 'datus-postgresql[aws]'
 These changes require the matching workspace packages: `datus-db-core` 0.1.8,
 `datus-sqlalchemy` 0.1.10, `datus-mysql` 0.1.9 / `datus-postgresql` 0.1.10.
 Publish core, SQLAlchemy, then the adapters before installing from PyPI.
+Environments also using GaussDB must update `datus-gaussdb` to 0.1.3 or later;
+that release maps the shared connection timeout to pg8000's native `timeout`.
 
 Example Datus Agent configuration (adapter-specific fields travel through
 `DbConfig.extra`; no Aurora-specific Agent dispatch is required):
@@ -371,3 +373,23 @@ JUnit reports and a credential-free resource manifest are retained locally under
 the run artifact directory. Live test configuration references Secrets Manager;
 database passwords and STS credentials are not written into those artifacts.
 Cloud CI still requires its own provisioning workflow and scoped credentials.
+
+### Review regression validation (2026-10-19)
+
+PostgreSQL-family TLS and timeout settings now enter the shared engine path as
+URL defaults, before the selected dialect translates them. Existing URL options
+retain precedence, preserving DWS's materialized CA path. GaussDB's dialect maps
+`connect_timeout` to pg8000's numeric `timeout`; CA inputs continue through its
+existing libpq-path or pg8000-SSLContext conversion. This requires the GaussDB
+0.1.3 update in environments that also use that adapter.
+
+Regression tests reproduced the previous failures and then passed with real
+connectors/engines, checking the final DBAPI arguments for base and per-database
+pools, default/explicit timeouts, and path/inline PEM inputs. All 21 packages'
+unit suites passed (1930 tests, zero skips). After rebasing onto upstream
+`ae30d6a`, diff coverage was 82.04% (402/490 lines) and overall coverage 71.96%;
+CI infrastructure tests passed 167 cases with 28 existing optional-environment
+skips. Verified-TLS integration passed again for MySQL (35 tests) and
+PostgreSQL (41 tests), both with zero skips and successful cleanup. The five
+changed packages' wheel/sdist builds and isolated imports passed. This follow-up
+used local containers and did not provision or rerun real AWS environments.

@@ -141,10 +141,18 @@ def configure_database_connection(
     timeout = config.connect_timeout_seconds or config.timeout_seconds
     if timeout > 0:
         connect_args["connect_timeout"] = timeout
+    # PostgreSQL-family dialects own TLS and timeout translation. Passing libpq
+    # options directly as DBAPI kwargs would overwrite materialized CA paths
+    # and bypass pg8000's SSLContext / timeout mapping.
+    url_defaults = None
+    if dialect == "postgresql":
+        url_defaults = {key: str(value) for key, value in connect_args.items()}
+        connect_args = {}
     dynamic = config.aurora or config.auth_mode == "iam" or config.secret_ref is not None
     credentials = DatabaseCredentials(config) if dynamic else None
     connector.configure_connection(
         connect_args=connect_args,
+        url_defaults=url_defaults,
         connection_parameters=credentials.connection_parameters if credentials else None,
         credential_version=credentials.secret_version if credentials and config.secret_ref else None,
         connection_cleanup=credentials.identity.close if credentials else None,

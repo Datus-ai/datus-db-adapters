@@ -57,7 +57,7 @@ def test_base_and_all_database_engines_get_tls_and_new_tokens():
     for params in observed:
         assert params["sslmode"] == "verify-full"
         assert params["sslrootcert"] == "ca.pem"
-        assert params["connect_timeout"] == 7
+        assert params["connect_timeout"] == "7"
     token.assert_called_with("writer.cluster.example", 5432, "alice")
     assert "t1" not in connector.connection_string
     connector.close()
