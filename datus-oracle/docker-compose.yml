@@ -1,7 +1,7 @@
 services:
   oracle:
-    # Oracle Database Free 23ai; shared with osi-engine's Oracle corpus tests.
-    image: ${ORACLE_IMAGE:-gvenzl/oracle-free:23-slim}
+    # Pin the multi-platform image so preserved databases cannot outlive a moving tag.
+    image: ${ORACLE_IMAGE:-gvenzl/oracle-free:23.26.3-slim@sha256:6d61d267a3b978c24c5ac1790e62e927416a0aec446bd86e4b3a1527562757bd}
     environment:
       TZ: UTC
       # DATUS_TEST_* configures this container; the ORACLE_* the tests read
@@ -32,7 +32,7 @@ volumes:
     # CI preserves this volume across runs (ADAPTER_PRESERVE_VOLUMES in
     # ci/integration/adapters/oracle.sh) to skip re-expanding the multi-GB
     # system datafiles on every cold start. The name is keyed by ORACLE_IMAGE
-    # because Oracle 19c and 23ai data files are not compatible — bumping the
-    # image switches to a fresh volume, and stale ones are pruned by
-    # cleanup_adapter_stale_volumes().
+    # because database and timezone files can differ between image versions.
+    # Bumping the image switches to a fresh volume; older volumes remain
+    # available for diagnosis or rollback and must be cleaned up explicitly.
     name: datus-oracle-data-${ORACLE_DATA_VOLUME_KEY:-default}

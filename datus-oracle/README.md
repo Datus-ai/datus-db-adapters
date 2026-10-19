@@ -2,7 +2,7 @@
 
 Oracle database adapter for [Datus](https://github.com/Datus-ai/datus-agent).
 
-Generates Oracle Database 19c-compatible SQL and connects via [python-oracledb](https://python-oracledb.readthedocs.io/) Thin mode (no Oracle Client required, supports Oracle Database 12.1+). Integration CI runs against Oracle Database Free 23ai.
+Generates Oracle Database 19c-compatible SQL and connects via [python-oracledb](https://python-oracledb.readthedocs.io/) Thin mode (no Oracle Client required, supports Oracle Database 12.1+). Integration CI runs against Oracle AI Database 26ai Free (23.26.3).
 
 ## Installation
 
@@ -58,10 +58,17 @@ docker compose up -d
 cd datus-oracle && python -m pytest tests/integration/ -v
 ```
 
-The compose environment uses `gvenzl/oracle-free:23-slim`, connects through
-`FREEPDB1`, and stores its data in a dedicated 23ai Free volume. The first
-database creation is slower than restarting an initialized volume; the CI
-readiness probe allows up to 20 minutes by default.
+The compose environment pins `gvenzl/oracle-free:23.26.3-slim` by digest and
+connects through `FREEPDB1`. The CI runner keys the preserved data volume by the
+full image reference, so an image upgrade initializes a separate database with
+matching timezone files. Keep `ORACLE_IMAGE` overrides pinned to an exact image,
+and do not reuse an `ORACLE_DATA_VOLUME_KEY` across image versions. Direct Compose
+runs should likewise select a new volume key when changing images.
+
+Older volumes remain available for diagnosis or rollback; remove them explicitly
+once they are no longer needed. `DATUS_RECREATE_VOLUMES=1` resets only the selected
+CI database volume. The first database creation is slower than restarting an
+initialized volume; the CI readiness probe allows up to 20 minutes by default.
 
 ### Sample schemas
 
