@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -42,6 +42,32 @@ class MaxComputeConfig(BaseModel):
     timeout_seconds: int = Field(default=30, gt=0, description="Connection timeout in seconds")
     query_timeout_seconds: int = Field(default=600, gt=0, description="SQL job timeout in seconds")
     default_hints: Dict[str, Any] = Field(default_factory=dict, description="Default MaxCompute SQL hints")
+    ignore_table_patterns: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Glob patterns of tables and views to exclude from metadata listing, "
+            "e.g. ['tmp_*', '*_bak']. Matched case-insensitively against the object "
+            "name. Empty (the default) lists everything. Set it per datasource in "
+            "agent.yml to drop scratch tables that jobs create and drop at will."
+        ),
+    )
+
+    @field_validator("ignore_table_patterns", mode="before")
+    @classmethod
+    def _normalize_ignore_patterns(cls, value: Any) -> Any:
+        """Accept a bare string and drop blanks.
+
+        ``ignore_table_patterns: "tmp_*"`` is as valid as a list -- YAML users will try
+        both. Blank entries are dropped rather than kept as an empty glob, which would
+        silently match nothing and look like the option is broken.
+        """
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        if isinstance(value, (list, tuple)):
+            return [str(pattern).strip() for pattern in value if str(pattern).strip()]
+        return value
 
     @field_validator("project", "endpoint")
     @classmethod
