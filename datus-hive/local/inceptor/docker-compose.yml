@@ -1,0 +1,48 @@
+name: datus-inceptor-local
+services:
+  inceptor:
+    image: tdh-standalone:2024.5
+    pull_policy: never
+    platform: linux/amd64
+    hostname: inceptor-local
+    privileged: true
+    mem_limit: 14g
+    memswap_limit: 16g
+    cpus: 8
+    environment:
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${INCEPTOR_MANAGER_PORT:-18190}:8180"
+      - "127.0.0.1:${INCEPTOR_HS2_PORT:-19110}:10000"
+    volumes:
+      - data:/opt/transwarp
+    healthcheck:
+      # Manager readiness only. manage.py wait checks authenticated HS2 and storage.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8180/', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  kdc:
+    profiles: [kerberos]
+    build: ./kerberos
+    mem_limit: 256m
+    environment:
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${INCEPTOR_KDC_PORT:-19188}:88/tcp"
+      - "127.0.0.1:${INCEPTOR_KDC_PORT:-19188}:88/udp"
+    volumes:
+      - ./state/kerberos:/test
+    healthcheck:
+      test: ["CMD-SHELL", "KRB5_CONFIG=/test/kdc-client.conf kinit -k -t /test/client.keytab -c FILE:/tmp/health.ccache hive@DATUS.TEST && kdestroy -c FILE:/tmp/health.ccache"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+volumes:
+  data:

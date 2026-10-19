@@ -238,3 +238,12 @@ This creates 5 TPC-H tables with sample data:
 ## License
 
 Apache License 2.0
+
+### Manual Inceptor environment
+
+[Local Inceptor setup](local/inceptor/README.md) provides an isolated Docker Compose
+environment, idempotent initialization, authenticated storage/metadata readiness,
+and strict manual query/metadata tests. It includes a local Kerberos KDC; LDAP and
+CUSTOM tests accept a separately configured endpoint. The official TDH CE image
+and a valid vendor evaluation/license are prerequisites. This target is not
+registered in CI.

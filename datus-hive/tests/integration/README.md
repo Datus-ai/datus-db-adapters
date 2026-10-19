@@ -59,3 +59,11 @@ export HIVE_PORT=10001
 ```bash
 docker-compose down -v
 ```
+
+## Manual Inceptor tests
+
+See [the local environment guide](../../local/inceptor/README.md) for Compose,
+initialization, NONE and Kerberos readiness, and the exact pytest commands. Set
+`INCEPTOR_TEST=1` to opt into `inceptor/`. Once selected, connection and fixture
+errors fail the run; they never become availability skips. This target is not
+registered in CI.
