@@ -14,10 +14,10 @@ from pydantic import BaseModel
 from datus_db_core import DatusDbException
 from datus_maxcompute import MaxComputeConfig, MaxComputeConnector
 from datus_maxcompute.connector import (
+    _PARTITION_SCAN_LIMIT,
     _coerce_config,
     _declares_partitions,
     _matches_ignore_patterns,
-    _PARTITION_SCAN_LIMIT,
     _TimeoutRestClient,
 )
 
@@ -640,11 +640,11 @@ def test_execute_routes_transaction_control_to_specific_rejection(config, sql):
     odps.run_sql.assert_not_called()
 
 
-def make_listed_partition(keys, values, physical_size=100):
+def make_listed_partition(keys, values, size=100):
     """A partition as ``iterate_partitions()`` yields it."""
     return SimpleNamespace(
         partition_spec=SimpleNamespace(keys=list(keys), values=list(values)),
-        physical_size=physical_size,
+        size=size,
     )
 
 
@@ -758,8 +758,8 @@ def test_sample_partition_predicate_prefers_partition_with_data(config):
     connector, _ = make_connector(config)
     table = make_partitioned_table(
         listed=[
-            make_listed_partition(["pt"], ["20260912"], physical_size=0),
-            make_listed_partition(["pt"], ["20260911"], physical_size=1024),
+            make_listed_partition(["pt"], ["20260912"], size=0),
+            make_listed_partition(["pt"], ["20260911"], size=1024),
         ]
     )
 
@@ -767,15 +767,15 @@ def test_sample_partition_predicate_prefers_partition_with_data(config):
 
 
 def test_sample_partition_predicate_falls_back_to_newest_when_page_is_empty(config):
-    """整页都没有数据（或外表不报 physical_size）时，仍用最新的那个。
+    """整页都没有数据（或外表不报 size）时，仍用最新的那个。
 
     空分区回答带谓词的查询会返回零行，那也是一个合法的采样结果。
     """
     connector, _ = make_connector(config)
     table = make_partitioned_table(
         listed=[
-            make_listed_partition(["pt"], ["20260912"], physical_size=None),
-            make_listed_partition(["pt"], ["20260911"], physical_size=None),
+            make_listed_partition(["pt"], ["20260912"], size=None),
+            make_listed_partition(["pt"], ["20260911"], size=None),
         ]
     )
 
@@ -795,7 +795,7 @@ def test_sample_partition_predicate_reads_one_page_only(config):
         def partitions():
             for index in range(1000):
                 consumed.append(index)
-                yield make_listed_partition(["pt"], [f"pt_{index:04d}"], physical_size=0)
+                yield make_listed_partition(["pt"], [f"pt_{index:04d}"], size=0)
 
         return partitions()
 
