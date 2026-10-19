@@ -27,6 +27,9 @@ dependencies = [
     "pydantic>=2.0.0",
 ]
 
+[project.optional-dependencies]
+kerberos = ["pure-sasl[gssapi]>=0.6.2"]
+
 [project.urls]
 Homepage = "https://github.com/Datus-ai/datus-db-adapters"
 Repository = "https://github.com/Datus-ai/datus-db-adapters"

@@ -236,6 +236,12 @@ Non-negotiables baked into the shared assertions (`datus_db_core/testing/contrac
 
 - Columns must include a mixed-case name (`Mixed Case`) and a hyphenated name (`special-name`) —
   this is what actually exercises identifier quoting.
+  If an engine rejects those physical names (for example TDH CE 2024.5 error 20484),
+  retain the shared table contract's typed rows, schema, qualified SELECT and LIMIT
+  assertions using accepted physical names. Exercise the quoted names as result
+  aliases, and add an explicit server-rejection test plus an engine documentation
+  note. This exception requires live evidence of the engine constraint and does
+  not relax identifier coverage for engines that accept the original DDL.
 - Row 1 values are fixed: `1, 'Alpha', 'S-1', NULL, DATE 2024-02-03, TS 2024-02-03 04:05:06,
   123.45, TRUE` — `assert_default_contract_row` pins their round-trip types (INT, strings,
   NULL, DATE, TIMESTAMP, `Decimal`, BOOL).

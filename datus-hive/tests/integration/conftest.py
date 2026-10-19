@@ -45,6 +45,7 @@ def _build_hive_config() -> HiveConfig:
         username=os.getenv("HIVE_USERNAME", "hive"),
         password=os.getenv("HIVE_PASSWORD", ""),
         auth=auth if auth else None,
+        kerberos_service_name=os.getenv("HIVE_KERBEROS_SERVICE_NAME") or None,
         configuration=_load_configuration(),
     )
 
@@ -100,11 +101,13 @@ def metadata_objects_setup() -> Generator[None, None, None]:
         _require_success(conn.execute_ddl(f"DROP VIEW IF EXISTS {view_ref}"), "drop metadata view")
         _require_success(conn.execute_ddl(f"DROP TABLE IF EXISTS {table_ref}"), "drop metadata table")
         _require_success(
-            conn.execute_ddl(f"CREATE TABLE {table_ref} (id INT, value INT) STORED AS ORC"),
+            conn.execute_ddl(
+                f"CREATE TABLE {table_ref} (id INT COMMENT 'identifier', value INT COMMENT '中文注释') STORED AS ORC"
+            ),
             "create metadata table",
         )
         _require_success(
-            conn.execute_insert(f"INSERT INTO {table_ref} VALUES (1, 10), (2, 20)"),
+            conn.execute_insert(f"INSERT INTO {table_ref} SELECT 1, 10 UNION ALL SELECT 2, 20"),
             "insert metadata rows",
         )
         _require_success(

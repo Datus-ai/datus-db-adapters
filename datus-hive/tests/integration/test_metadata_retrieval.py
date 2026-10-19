@@ -8,6 +8,8 @@ import pytest
 
 from datus_hive import HiveConfig, HiveConnector
 
+pytestmark = pytest.mark.integration
+
 METADATA_TABLE = "datus_metadata_table"
 METADATA_VIEW = "datus_metadata_view"
 
@@ -26,6 +28,16 @@ def test_get_tables(connector: HiveConnector, config: HiveConfig, metadata_objec
     database = config.database or "default"
     assert METADATA_TABLE in connector.get_tables(database_name=database)
     assert f"{database}.{METADATA_TABLE}" in connector.get_tables()
+
+
+def test_get_tables_excludes_views(connector: HiveConnector, config: HiveConfig, metadata_objects_setup):
+    """SHOW TABLES includes views on both Hive and Inceptor; the adapter must separate them."""
+    database = config.database or "default"
+    assert METADATA_VIEW not in connector.get_tables(database_name=database)
+    assert f"{database}.{METADATA_VIEW}" not in connector.get_tables()
+    table_names = {item["table_name"] for item in connector.get_tables_with_ddl(database_name=database)}
+    assert METADATA_TABLE in table_names
+    assert METADATA_VIEW not in table_names
 
 
 @pytest.mark.integration
@@ -93,11 +105,7 @@ def test_get_tables_with_ddl(connector: HiveConnector, config: HiveConfig):
 
 @pytest.mark.integration
 def test_get_views(connector: HiveConnector, config: HiveConfig, metadata_objects_setup):
-    """The fixture view is listed by the view listing.
-
-    Hive's ``SHOW TABLES`` reports views alongside tables, so the table listing
-    carries the view too; only ``SHOW VIEWS`` distinguishes them.
-    """
+    """The fixture view remains visible through the separate view listing."""
     database = config.database or "default"
     assert METADATA_VIEW in connector.get_views(database_name=database)
     assert f"{database}.{METADATA_VIEW}" in connector.get_views()
@@ -134,6 +142,8 @@ def test_get_schema(connector: HiveConnector, config: HiveConfig, metadata_objec
     by_name = {column["name"]: column for column in columns}
     assert by_name["id"]["type"] == "int"
     assert by_name["value"]["type"] == "int"
+    assert by_name["id"]["comment"] == "identifier"
+    assert by_name["value"]["comment"] == "中文注释"
 
 
 @pytest.mark.integration
