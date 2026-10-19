@@ -6,14 +6,19 @@ import os
 
 import pytest
 
+from datus_db_core.testing import contract
 from datus_redshift import RedshiftConnector
+from datus_redshift.tpch_data import ROW_COUNTS, TPCH_TABLES
 
 from .conftest import TPCH_SCHEMA
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("REDSHIFT_HOST"),
-    reason="Redshift credentials not available in environment variables",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not os.getenv("REDSHIFT_HOST"),
+        reason="Redshift credentials not available in environment variables",
+    ),
+]
 
 # Schema-qualified table names for Redshift (uses double-quoted identifiers)
 S = TPCH_SCHEMA
@@ -38,28 +43,32 @@ def test_tpch_get_tables(tpch_setup: RedshiftConnector):
     assert expected.issubset(table_set), f"Missing tables: {expected - table_set}"
 
 
-@pytest.mark.integration
-def test_tpch_get_columns(tpch_setup: RedshiftConnector):
-    """Test getting column schema for tpch_customer table."""
-    columns = tpch_setup.get_schema(table_name="tpch_customer")
-    assert len(columns) > 0
-    column_names = {col["name"] for col in columns}
-    assert "custkey" in column_names
-    assert "name" in column_names
-    assert "nationkey" in column_names
-    for col in columns:
-        assert "name" in col
-        assert "type" in col
+@pytest.mark.parametrize(
+    "table_name,expected_columns",
+    [
+        ("tpch_customer", ("custkey", "name", "nationkey", "acctbal", "mktsegment")),
+        ("tpch_nation", ("nationkey", "name", "regionkey", "comment")),
+    ],
+)
+def test_tpch_get_columns(tpch_setup: RedshiftConnector, table_name, expected_columns):
+    """Schema results include column records followed by a table summary."""
+    schema = tpch_setup.get_schema(table_name=table_name)
+    contract.assert_schema_columns(schema, expected_columns)
+    columns = [column for column in schema if "name" in column]
+    assert tuple(column["name"] for column in columns) == expected_columns
+    assert all(column["type"] for column in columns)
+    assert schema[-1] == {
+        "table": table_name,
+        "columns": [{"name": column["name"], "type": column["type"]} for column in columns],
+        "table_type": "table",
+    }
 
 
-@pytest.mark.integration
-def test_tpch_get_columns_nation(tpch_setup: RedshiftConnector):
-    """Test getting column schema for tpch_nation table."""
-    columns = tpch_setup.get_schema(table_name="tpch_nation")
-    column_names = {col["name"] for col in columns}
-    assert "nationkey" in column_names
-    assert "name" in column_names
-    assert "regionkey" in column_names
+@pytest.mark.parametrize("table_name,expected_rows", list(zip(TPCH_TABLES, ROW_COUNTS, strict=True)))
+def test_tpch_row_counts(tpch_setup: RedshiftConnector, table_name, expected_rows):
+    result = tpch_setup.execute_query(f"SELECT COUNT(*) AS row_count FROM {S}.{table_name}", result_format="list")
+    contract.assert_success(result, f"count {table_name}")
+    assert result.sql_return == [{"row_count": expected_rows}]
 
 
 # ==================== Data Query Tests ====================

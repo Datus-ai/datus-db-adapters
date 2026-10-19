@@ -2,116 +2,107 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+"""Live Redshift fixtures; configured connection failures fail the test run.
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| REDSHIFT_HOST | required | Original Redshift endpoint, including when tunneling |
+| REDSHIFT_USERNAME | required | Database user for password and IAM authentication |
+| REDSHIFT_PASSWORD | required without IAM | Database password |
+| REDSHIFT_DATABASE | dev | Database |
+| REDSHIFT_PORT | 5439 | Connection port, or the local forwarded port |
+| REDSHIFT_SCHEMA | public | Schema for connector tests |
+| REDSHIFT_TPCH_SCHEMA | REDSHIFT_SCHEMA | Existing schema for TPC-H tables |
+| REDSHIFT_IAM | false | Use IAM credentials when true |
+| REDSHIFT_CLUSTER_IDENTIFIER | unset | Provisioned cluster ID for IAM authentication |
+| REDSHIFT_REGION | unset | AWS region for IAM authentication |
+
+IAM uses the SDK's default AWS credential provider chain.
+"""
+
 import os
 from typing import Generator
 
 import pytest
-from redshift_connector.error import InterfaceError, OperationalError
 
+from datus_db_core.testing import contract
 from datus_redshift import RedshiftConfig, RedshiftConnector
 from datus_redshift.tpch_data import ROW_COUNTS, TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
 __all__ = ["ROW_COUNTS", "TPCH_DATA", "TPCH_DDL", "TPCH_TABLES", "TPCH_SCHEMA"]
 
+TPCH_SCHEMA = os.getenv("REDSHIFT_TPCH_SCHEMA", os.getenv("REDSHIFT_SCHEMA", "public"))
+
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        pytest.skip(f"{name} is not set")
+    return value
+
+
+def _build_config(schema: str | None = None) -> RedshiftConfig:
+    iam = os.getenv("REDSHIFT_IAM", "false").lower() == "true"
+    return RedshiftConfig(
+        host=_required_env("REDSHIFT_HOST"),
+        username=_required_env("REDSHIFT_USERNAME"),
+        password=None if iam else _required_env("REDSHIFT_PASSWORD"),
+        database=os.getenv("REDSHIFT_DATABASE", "dev"),
+        port=int(os.getenv("REDSHIFT_PORT", "5439")),
+        schema=schema or os.getenv("REDSHIFT_SCHEMA", "public"),
+        ssl=True,
+        timeout_seconds=30,
+        iam=iam,
+        cluster_identifier=_required_env("REDSHIFT_CLUSTER_IDENTIFIER") if iam else None,
+        region=_required_env("REDSHIFT_REGION") if iam else None,
+    )
+
 
 @pytest.fixture
 def config() -> RedshiftConfig:
-    """Create Redshift configuration from environment variables."""
-    return RedshiftConfig(
-        host=os.getenv("REDSHIFT_HOST"),
-        username=os.getenv("REDSHIFT_USERNAME"),
-        password=os.getenv("REDSHIFT_PASSWORD"),
-        database=os.getenv("REDSHIFT_DATABASE", "dev"),
-        port=int(os.getenv("REDSHIFT_PORT", "5439")),
-        schema=os.getenv("REDSHIFT_SCHEMA", "public"),
-        ssl=True,
-        timeout_seconds=30,
-    )
+    return _build_config()
 
 
 @pytest.fixture
 def connector(config: RedshiftConfig) -> Generator[RedshiftConnector, None, None]:
-    """Create and cleanup Redshift connector for integration tests."""
-    conn = None
+    conn = RedshiftConnector(config)
     try:
-        conn = RedshiftConnector(config)
-        if not conn.test_connection():
-            pytest.skip("Database connection test failed")
-    except (InterfaceError, OperationalError, OSError) as e:
-        # Skip on connection-related errors only (network, auth, DNS).
-        # Other exceptions (e.g. programming errors) should propagate
-        # so real bugs are not silently masked in CI.
-        pytest.skip(f"Database not available: {e}")
-    else:
+        assert conn.test_connection()["success"] is True
         yield conn
     finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-
-# ==================== TPC-H Test Data ====================
-
-TPCH_SCHEMA = os.getenv("REDSHIFT_TPCH_SCHEMA", "public")
+        conn.close()
 
 
 @pytest.fixture(scope="session")
 def tpch_setup() -> Generator[RedshiftConnector, None, None]:
-    """Session-scoped fixture: create TPC-H tables, insert data, yield connector, cleanup."""
-    redshift_config = RedshiftConfig(
-        host=os.getenv("REDSHIFT_HOST"),
-        username=os.getenv("REDSHIFT_USERNAME"),
-        password=os.getenv("REDSHIFT_PASSWORD"),
-        database=os.getenv("REDSHIFT_DATABASE", "dev"),
-        port=int(os.getenv("REDSHIFT_PORT", "5439")),
-        schema=os.getenv("REDSHIFT_SCHEMA", "public"),
-        ssl=True,
-        timeout_seconds=30,
-    )
-
-    conn = None
+    """Load the shared dataset, then remove its tables even if a test fails."""
+    conn = RedshiftConnector(_build_config(schema=TPCH_SCHEMA))
+    failure = None
     try:
-        conn = RedshiftConnector(redshift_config)
-        if not conn.test_connection():
-            pytest.skip("Database connection test failed")
-
-        schema = TPCH_SCHEMA
-
-        # Drop tables first for deterministic setup
+        assert conn.test_connection()["success"] is True
         for table in TPCH_TABLES:
-            drop_result = conn.execute_ddl(f"DROP TABLE IF EXISTS {schema}.{table}")
-            if not drop_result.success:
-                pytest.fail(f"Failed to drop table {schema}.{table}: {drop_result.error}")
-
-        # Create tables
-        for i, ddl in enumerate(TPCH_DDL):
-            ddl_result = conn.execute_ddl(ddl.format(schema=schema))
-            if not ddl_result.success:
-                pytest.fail(f"Failed to create table {schema}.{TPCH_TABLES[i]}: {ddl_result.error}")
-
-        # Insert data
-        for i, data in enumerate(TPCH_DATA):
-            ins_result = conn.execute_insert(data.format(schema=schema))
-            if not ins_result.success:
-                pytest.fail(f"Failed to insert data into {schema}.{TPCH_TABLES[i]}: {ins_result.error}")
-
-    except (InterfaceError, OperationalError, OSError) as e:
-        # Skip on connection-related errors only; let other exceptions
-        # propagate so real bugs surface during test runs.
-        pytest.skip(f"TPC-H setup failed (connection error): {e}")
-    else:
+            contract.assert_success(conn.execute_ddl(f"DROP TABLE IF EXISTS {TPCH_SCHEMA}.{table}"), f"drop {table}")
+        for table, ddl in zip(TPCH_TABLES, TPCH_DDL, strict=True):
+            contract.assert_success(conn.execute_ddl(ddl.format(schema=TPCH_SCHEMA)), f"create {table}")
+        for table, insert in zip(TPCH_TABLES, TPCH_DATA, strict=True):
+            contract.assert_success(conn.execute_insert(insert.format(schema=TPCH_SCHEMA)), f"load {table}")
         yield conn
+    except BaseException as error:
+        failure = error
+        raise
     finally:
-        if conn is not None:
+        cleanup_errors = []
+        for table in TPCH_TABLES:
             try:
-                schema = TPCH_SCHEMA
-                for table in TPCH_TABLES:
-                    conn.execute_ddl(f"DROP TABLE IF EXISTS {schema}.{table}")
-            except Exception:
-                pass
-            try:
-                conn.close()
-            except Exception:
-                pass
+                result = conn.execute_ddl(f"DROP TABLE IF EXISTS {TPCH_SCHEMA}.{table}")
+                if not result.success:
+                    cleanup_errors.append(f"{table}: {result.error}")
+            except Exception as error:
+                cleanup_errors.append(f"{table}: {error}")
+        conn.close()
+        if cleanup_errors:
+            message = "TPC-H cleanup failed: " + "; ".join(cleanup_errors)
+            if failure is not None:
+                failure.add_note(message)
+            else:
+                raise RuntimeError(message)
