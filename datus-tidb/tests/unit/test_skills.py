@@ -1,7 +1,9 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
+import re
 from importlib.metadata import entry_points
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,11 @@ def test_tidb_sql_skill_is_packaged_and_notes_strip_frontmatter():
     skill_file = Path(get_skills_dir()) / "db-tidb-sql" / "SKILL.md"
 
     assert skill_file.is_file()
+    references = re.findall(r"\]\((references/[^)]+)\)", skill_file.read_text())
+    assert references
+    for reference in references:
+        resource = files("datus_tidb").joinpath("skills", "db-tidb-sql", reference)
+        assert resource.is_file() and resource.read_text().strip()
     notes = get_tidb_sql_generation_notes()
     assert notes.startswith("# TiDB SQL")
     assert not notes.startswith("---")
@@ -24,8 +31,10 @@ def test_tidb_sql_skill_is_packaged_and_notes_strip_frontmatter():
 def test_skill_names_the_constructs_tidb_rejects():
     notes = get_tidb_sql_generation_notes()
 
-    for construct in ("FULL OUTER JOIN", "JSON_TABLE", "LATERAL", "CREATE TABLE ... AS SELECT", "CORR"):
+    for construct in ("FULL OUTER JOIN", "JSON_TABLE", "LATERAL", "CORR"):
         assert construct in notes, f"{construct!r} missing from the skill"
+    writes = (Path(get_skills_dir()) / "db-tidb-sql/references/table-design-and-writes.md").read_text()
+    assert "CREATE TABLE ... AS SELECT" in writes
 
 
 def test_skill_warns_about_the_clauses_tidb_accepts_but_ignores():

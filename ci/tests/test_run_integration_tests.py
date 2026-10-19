@@ -5,6 +5,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
+
 CI_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = CI_ROOT.parent
 RUNNER = CI_ROOT / "run-integration-tests.sh"
@@ -84,6 +86,44 @@ def test_cleanup_only_tolerates_a_missing_adapter_definition(tmp_path: Path) -> 
 
     assert result.returncode == 0
     assert "Missing integration adapter definition" in result.stderr
+
+
+@pytest.mark.parametrize("recreate", [False, True])
+def test_oracle_cleanup_scopes_volume_removal_to_selected_compose_project(tmp_path: Path, recreate: bool) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    calls = tmp_path / "docker-calls"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >>"$DOCKER_CALLS"\n'
+        'if [ "$1 $2" = "volume ls" ]; then\n'
+        "  echo datus-oracle-data-previous-image\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    result = subprocess.run(
+        [RUNNER, "--cleanup-only", "oracle"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "DOCKER_CALLS": str(calls),
+            "ORACLE_DATA_VOLUME_KEY": "selected-image",
+            "DATUS_RECREATE_VOLUMES": "1" if recreate else "0",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    down = "compose -f datus-oracle/docker-compose.yml down --remove-orphans"
+    if recreate:
+        down += " -v"
+    assert calls.read_text(encoding="utf-8").splitlines() == ["compose version", down]
 
 
 def test_readiness_probes_run_as_modules_to_avoid_driver_shadowing() -> None:

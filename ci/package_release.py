@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tomllib
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -233,6 +234,27 @@ def single_artifact(output_dir: Path, pattern: str, label: str, package: Package
     return artifacts[0]
 
 
+def validate_skill_resources(package: PackageInfo, wheel: Path) -> None:
+    """Check packaged entrypoints and Markdown references against their source bytes."""
+    resources = {
+        resource.relative_to(package.path).as_posix(): resource.read_bytes()
+        for skill in package.path.glob("*/skills/*/SKILL.md")
+        for resource in [skill, *skill.parent.glob("references/**/*.md")]
+    }
+    with zipfile.ZipFile(wheel) as archive:
+        packaged = {
+            name
+            for name in archive.namelist()
+            if re.fullmatch(r"[^/]+/skills/[^/]+/(SKILL\.md|references/.+\.md)", name)
+        }
+        for reason, names in (("missing", resources.keys() - packaged), ("extra", packaged - resources.keys())):
+            if names:
+                raise ValueError(f"Wheel {wheel.name} has {reason} skill resource {sorted(names)[0]}")
+        for name, content in resources.items():
+            if archive.read(name) != content:
+                raise ValueError(f"Wheel {wheel.name} has stale skill resource {name}")
+
+
 def build_package_wheels(
     repo_root: Path,
     packages_to_build: list[PackageInfo],
@@ -256,7 +278,9 @@ def build_package_wheels(
             check=True,
         )
         single_artifact(output_dir, "*.tar.gz", "sdist", package)
-        wheels[canonicalize_name(package.name)] = single_artifact(output_dir, "*.whl", "wheel", package)
+        wheel = single_artifact(output_dir, "*.whl", "wheel", package)
+        validate_skill_resources(package, wheel)
+        wheels[canonicalize_name(package.name)] = wheel
     return wheels
 
 

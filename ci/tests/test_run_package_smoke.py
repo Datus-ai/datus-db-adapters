@@ -1,8 +1,11 @@
+from dataclasses import replace
 from pathlib import Path
+from zipfile import ZipFile
 
+import pytest
 from packaging.version import Version
 
-from ci.package_release import PackageInfo
+from ci.package_release import PackageInfo, validate_skill_resources
 from ci.run_package_smoke import ordered_build_packages
 
 
@@ -32,3 +35,46 @@ def test_ordered_build_packages_deduplicates_shared_workspace_dependencies() -> 
         "datus-mysql",
         "datus-starrocks",
     ]
+
+
+@pytest.mark.parametrize(
+    "defect,reason",
+    [
+        (None, None),
+        ("missing_entrypoint", "missing"),
+        ("missing_reference", "missing"),
+        ("stale_reference", "stale"),
+        ("extra_reference", "extra"),
+        ("removed_skill", "extra"),
+    ],
+)
+def test_wheel_skill_resources_are_complete_and_current(tmp_path: Path, defect: str | None, reason: str | None) -> None:
+    target = replace(package("datus-example"), path=tmp_path)
+    bundle = tmp_path / "datus_example/skills/db-example-sql"
+    (bundle / "references").mkdir(parents=True)
+    source_files = {
+        "SKILL.md": "# SQL\n[Writes](references/writes.md)\n",
+        "references/writes.md": "# Writes\nUse the target dialect's write syntax.\n",
+    }
+    wheel = tmp_path / "datus_example.whl"
+    with ZipFile(wheel, "w") as archive:
+        for name, content in source_files.items():
+            resource = bundle / name
+            resource.write_text(content)
+            if (name == "SKILL.md" and defect == "missing_entrypoint") or (
+                name == "references/writes.md" and defect == "missing_reference"
+            ):
+                continue
+            packaged = "Old reference" if name == "references/writes.md" and defect == "stale_reference" else content
+            archive.writestr(resource.relative_to(tmp_path).as_posix(), packaged)
+        if defect == "extra_reference":
+            archive.writestr("datus_example/skills/db-example-sql/references/removed.md", "Removed guidance")
+    if defect == "removed_skill":
+        for name in source_files:
+            (bundle / name).unlink()
+
+    if defect is None:
+        assert validate_skill_resources(target, wheel) is None
+    else:
+        with pytest.raises(ValueError, match=f"{reason} skill resource"):
+            validate_skill_resources(target, wheel)

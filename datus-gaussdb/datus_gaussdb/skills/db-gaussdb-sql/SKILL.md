@@ -1,11 +1,11 @@
 ---
 name: db-gaussdb-sql
-description: Generate, review, and understand GaussDB / openGauss SQL. Use for GaussDB queries, DDL, DML, table design, and SQL rewrites where PostgreSQL compatibility, A/B/PG database compatibility modes, distributed deployments, or version-specific syntax matter.
+description: Generate and interpret GaussDB/openGauss SQL with PostgreSQL query syntax and A/B/PG compatibility modes. Read the task reference for distributed layout, upserts and transactions.
 ---
 
 # GaussDB SQL
 
-Generate GaussDB-compatible SQL from metadata-provided object and column names. Treat PostgreSQL 9.2 as the baseline syntax; GaussDB Kernel 50x and openGauss share this dialect. Write PostgreSQL-style SQL only — never Oracle or MySQL syntax, regardless of the database's compatibility mode.
+Generate GaussDB-compatible SQL from metadata-provided object and column names. Treat PostgreSQL 9.2 as the baseline syntax; GaussDB Kernel 50x and openGauss share this dialect. Use PostgreSQL-style query syntax in every database compatibility mode. Consult the write reference for supported upsert extensions.
 
 ## Namespaces and identifiers
 
@@ -30,20 +30,18 @@ Generate GaussDB-compatible SQL from metadata-provided object and column names. 
 - Use PostgreSQL-style `LIMIT` and `OFFSET`, ANSI joins, window functions, and CTEs.
 - Prefer `TEXT` for unbounded strings and `VARCHAR(n)` only when a length bound is meaningful.
 - Use GaussDB-supported PostgreSQL types such as `SMALLINT`, `INTEGER`, `BIGINT`, `NUMERIC`, `REAL`, `DOUBLE PRECISION`, `BOOLEAN`, `TEXT`, `BYTEA`, `DATE`, `TIMESTAMP`, and `TIMESTAMPTZ` according to metadata.
-- Treat PostgreSQL features newer than 9.2 as version-dependent: `to_regclass`, `FILTER` aggregate clauses, `LATERAL`, and `ON CONFLICT` are not universally available. Confirm support before generating them.
-
-## Distributed deployments
-
-- On distributed GaussDB, large tables carry `DISTRIBUTE BY HASH (col, ...)`; reference and dimension tables may use `DISTRIBUTE BY REPLICATION`. Centralized deployments (and openGauss) take no DISTRIBUTE BY clause.
-- Distribution key columns cannot be UPDATEd; never generate UPDATE statements that modify a table's distribution key.
-- Prefer joins and GROUP BY on distribution keys to avoid cross-node data shuffling.
-
-## Writes and transactions
-
-- Use `INSERT`, `UPDATE`, and `DELETE` with PostgreSQL syntax. For upserts, prefer `INSERT ... ON DUPLICATE KEY UPDATE` or `MERGE INTO` — `ON CONFLICT` support is version-dependent. `ON DUPLICATE KEY UPDATE` is a GaussDB extension accepted in every compatibility mode and is the one intentional exception to the "no MySQL syntax" rule above.
-- In `A` mode, inserting an empty string stores NULL; source data containing empty strings will not round-trip.
-- Do not mix DDL and DML in one multi-statement transaction; some DDL is restricted inside explicit transactions, especially on distributed deployments.
+- Treat PostgreSQL features newer than 9.2 as version-dependent: `to_regclass`, `FILTER` aggregate clauses, `LATERAL`, and `ON CONFLICT` are not universally available. `ON CONFLICT` additionally requires PG compatibility. Confirm support before generating them.
 
 ## Avoid common dialect leaks
 
 Before returning SQL, reject MySQL backticks and table options, Oracle-only functions and `(+)` joins, Snowflake three-part names, unguarded `ON CONFLICT`, and `= ''` emptiness checks that break under `A` mode.
+
+## Existing distributed layout
+
+Use the metadata's deployment type and distribution keys. Prefer joins and GROUP BY on distribution keys to reduce cross-node shuffling; a distribution key alone does not establish a unique row.
+
+## Task references
+
+- [GaussDB distributed layout and writes](references/table-design-and-writes.md): physical distribution choices, writes, upserts and transactions.
+
+Read these for the requested operation, including SQL-only authoring. Supplied ETL is evidence; follow the user's task.

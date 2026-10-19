@@ -28,22 +28,9 @@ export_adapter_env() {
   export DATUS_TEST_ORACLE_PASSWORD="$ORACLE_PASSWORD"
   export DATUS_TEST_ORACLE_SYS_PASSWORD="$ORACLE_SYS_PASSWORD"
   # Key the preserved data volume by image so bumping ORACLE_IMAGE starts from
-  # a fresh volume (Oracle 19c and 23ai data files are not compatible).
-  local oracle_image="${ORACLE_IMAGE:-gvenzl/oracle-free:23-slim}"
+  # a fresh volume with matching database and timezone files.
+  local oracle_image="${ORACLE_IMAGE:-gvenzl/oracle-free:23.26.3-slim@sha256:6d61d267a3b978c24c5ac1790e62e927416a0aec446bd86e4b3a1527562757bd}"
   export ORACLE_DATA_VOLUME_KEY="${ORACLE_DATA_VOLUME_KEY:-$(printf '%s' "$oracle_image" | tr -c 'a-zA-Z0-9' '-')}"
-}
-
-cleanup_adapter_stale_volumes() {
-  local current="datus-oracle-data-${ORACLE_DATA_VOLUME_KEY}"
-  local volume_name
-  # Drop volumes keyed for other (older) images, plus the legacy pre-keying
-  # project-scoped volume name.
-  docker volume ls -q --filter "name=datus-oracle-data-" 2>/dev/null |
-    while IFS= read -r volume_name; do
-      [ "$volume_name" = "$current" ] && continue
-      docker volume rm "$volume_name" >/dev/null 2>&1 || true
-    done
-  docker volume rm datus-oracle_oracle23free_data >/dev/null 2>&1 || true
 }
 
 adapter_env_summary() {

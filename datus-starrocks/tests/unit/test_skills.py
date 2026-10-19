@@ -1,7 +1,9 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
+import re
 from importlib.metadata import entry_points
+from importlib.resources import files
 from pathlib import Path
 
 from datus_db_core import connector_registry
@@ -13,6 +15,11 @@ def test_starrocks_sql_skill_is_packaged_and_notes_strip_frontmatter():
     skill_file = Path(get_skills_dir()) / "db-starrocks-sql" / "SKILL.md"
 
     assert skill_file.is_file()
+    references = re.findall(r"\]\((references/[^)]+)\)", skill_file.read_text())
+    assert references
+    for reference in references:
+        resource = files("datus_starrocks").joinpath("skills", "db-starrocks-sql", reference)
+        assert resource.is_file() and resource.read_text().strip()
     notes = get_starrocks_sql_generation_notes()
     _, separator, body = skill_file.read_text(encoding="utf-8").partition("\n---\n")
     assert separator == "\n---\n"
