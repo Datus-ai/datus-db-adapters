@@ -75,3 +75,39 @@ def test_uri_rejects_conflicting_flat_and_nested_aws_identity(flat):
     config = SimpleNamespace(extra=dict(flat, aws={"region": "us-east-1", "profile": "role"}))
     with pytest.raises(ValueError, match="Conflicting"):
         build_athena_uri(config)
+
+
+@pytest.mark.parametrize("top_level", [False, True])
+@pytest.mark.parametrize("database", [" analytics ", " "])
+def test_uri_and_context_match_normalized_connector_configuration(top_level, database):
+    values = dict(catalog=" My.Catalog ", database=database, workgroup=" analytics ", region=" us-east-1 ")
+    config = SimpleNamespace(**values) if top_level else SimpleNamespace(extra=values)
+    native = AthenaConfig(**values)
+    assert build_athena_uri(config) == build_athena_uri(native)
+    expected = ("athena", native.catalog, native.database or "", "")
+    assert resolve_athena_context(config, build_athena_uri(config)) == expected
+    assert resolve_athena_context(config, "athena:///") == expected
+
+
+@pytest.mark.parametrize("name", ["catalog", "workgroup"])
+@pytest.mark.parametrize("value", ["", " "])
+def test_uri_rejects_blank_required_fields_like_the_connector(name, value):
+    with pytest.raises(ValueError):
+        build_athena_uri(SimpleNamespace(extra={name: value}))
+
+
+@pytest.mark.parametrize("extra", [{}, {"catalog": " My.Catalog ", "database": " analytics "}])
+def test_agent_empty_default_attributes_leave_defaults_or_extra_in_effect(extra):
+    config = SimpleNamespace(catalog="", database="", extra=extra)
+    native = AthenaConfig(**extra)
+    assert build_athena_uri(config) == build_athena_uri(native)
+    assert resolve_athena_context(config, "athena:///") == ("athena", native.catalog, native.database or "", "")
+
+
+def test_supplied_uri_context_uses_the_same_normalization():
+    assert resolve_athena_context(SimpleNamespace(), "athena://%20My.Catalog%20/%20analytics%20") == (
+        "athena",
+        "My.Catalog",
+        "analytics",
+        "",
+    )

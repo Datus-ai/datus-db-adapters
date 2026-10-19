@@ -197,8 +197,8 @@ class AthenaConnector(BaseSqlConnector, CatalogSupportMixin, MigrationTargetMixi
                 columns = result_set.get("ResultSetMetadata", {}).get("ColumnInfo", [])
                 schema = pa.schema([(c["Name"], arrow_type(c)) for c in columns])
             page_rows = result_set.get("Rows", [])
-            # SELECT results have a header on the first page. Athena UTILITY
-            # (SHOW/DESCRIBE/EXPLAIN) output is headerless: retain its first row.
+            # DML results (including EXPLAIN on SQL engine v3) have a first-page
+            # header. UTILITY metadata such as SHOW CREATE is headerless.
             if first_page and execution.get("StatementType") == "DML" and page_rows:
                 page_rows = page_rows[1:]
             if "UpdateCount" in response:

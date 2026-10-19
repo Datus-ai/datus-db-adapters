@@ -12,6 +12,20 @@ def test_unicode_and_null(connector):
     assert result.sql_return == [{"text": "数据", "missing": None}]
 
 
+@pytest.mark.acceptance
+def test_explain_returns_query_plan(query_connector):
+    """Verify the service's EXPLAIN result shape without any source database or data scan."""
+    result = query_connector.execute_explain("EXPLAIN SELECT 1 AS datus_explain_value", "list")
+    assert result.success, result.error
+    assert result.query_execution_id
+    assert result.execution_info["state"] == "SUCCEEDED"
+    assert result.sql_return
+    assert result.row_count == len(result.sql_return)
+    plan = "\n".join(value for row in result.sql_return for value in row.values() if value is not None)
+    assert "datus_explain_value" in plan
+    assert "output" in plan.lower()
+
+
 def test_invalid_sql_has_query_id_and_diagnostic(connector):
     result = connector.execute_query("SELECT * FROM datus_nonexistent_table_76ab")
     assert not result.success and result.error and result.query_execution_id

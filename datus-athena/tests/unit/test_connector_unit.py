@@ -201,8 +201,8 @@ def test_result_pages_skip_header_only_once(make_connector, sdk):
     assert result.execution_info["truncated"] is False
 
 
-@pytest.mark.parametrize("sql", ["SHOW CREATE TABLE `orders`", "EXPLAIN SELECT 1"])
-def test_utility_first_row_is_data(make_connector, sdk, sql):
+def test_utility_first_row_is_data(make_connector, sdk):
+    sql = "SHOW CREATE TABLE `orders`"
     conn = make_connector()
     _, stubber = sdk
     start(stubber, sql)
@@ -210,8 +210,22 @@ def test_utility_first_row_is_data(make_connector, sdk, sql):
     results(
         stubber, [["CREATE EXTERNAL TABLE orders ("]], [{"Name": "createtab_stmt", "Type": "varchar"}], header=False
     )
-    result = conn.execute_explain(sql, "list", database_name="analytics")
+    result = conn.execute_query(sql, "list", database_name="analytics")
     assert result.success and result.sql_return == [{"createtab_stmt": "CREATE EXTERNAL TABLE orders ("}]
+
+
+def test_explain_uses_the_observed_dml_header_and_retains_the_plan(make_connector, sdk):
+    _, stubber = sdk
+    sql = "EXPLAIN SELECT 1 AS datus_explain_value"
+    plan = ["Fragment 0 [SINGLE]", "    Output[columnNames = [datus_explain_value]]", "    Values[]"]
+    start(stubber, sql)
+    status(stubber, statement_type="DML")
+    results(stubber, [[line] for line in plan], [{"Name": "Query Plan", "Type": "varchar"}])
+    result = make_connector().execute_explain(sql, "list")
+    assert result.success, result.error
+    assert result.sql_return == [{"Query Plan": line} for line in plan]
+    assert result.row_count == len(plan)
+    assert result.execution_info["statement_type"] == "DML"
 
 
 @pytest.mark.parametrize(

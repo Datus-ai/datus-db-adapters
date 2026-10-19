@@ -9,39 +9,44 @@ from urllib.parse import quote, unquote, urlencode, urlsplit
 from .config import AthenaConfig
 
 
-def _value(config, name: str, default: str = "") -> str:
-    value = getattr(config, name, None)
-    if not value:
-        value = (getattr(config, "extra", None) or {}).get(name)
-    return str(value) if value else default
+def _uri_config(config, **overrides) -> AthenaConfig:
+    """Apply the connector's validation and normalization to URI/context fields."""
+    extra = getattr(config, "extra", None) or {}
+    values = {}
+    for name in ("catalog", "database", "workgroup", "region", "profile_name", "ca_bundle", "aws"):
+        value = getattr(config, name, None)
+        if value is None or value == "":
+            value = extra.get(name)
+        if value is not None:
+            values[name] = value
+    values.update(overrides)
+    return AthenaConfig.model_validate(values)
 
 
 def build_athena_uri(config) -> str:
     """A credential-free URI for datasource identity and context."""
-    catalog = _value(config, "catalog", "AwsDataCatalog")
-    database = _value(config, "database")
-    params = {"workgroup": _value(config, "workgroup", "primary")}
-    identity_values = {name: _value(config, name) or None for name in ("region", "profile_name", "ca_bundle")}
-    nested = getattr(config, "aws", None)
-    if nested is None:
-        nested = (getattr(config, "extra", None) or {}).get("aws")
-    if nested is not None:
-        identity_values["aws"] = nested
-    identity = AthenaConfig.model_validate(identity_values)
+    normalized = _uri_config(config)
+    params = {"workgroup": normalized.workgroup}
     for name in ("region", "profile_name"):
-        if value := getattr(identity, name):
+        if value := getattr(normalized, name):
             params[name] = value
-    return f"athena://{quote(catalog, safe='')}/{quote(database, safe='')}?{urlencode(params)}"
+    return (
+        f"athena://{quote(normalized.catalog, safe='')}/{quote(normalized.database or '', safe='')}?{urlencode(params)}"
+    )
 
 
 def resolve_athena_context(config, uri: str) -> tuple[str, str, str, str]:
     parsed = urlsplit(uri)
-    return (
-        "athena",
-        unquote(parsed.netloc) or _value(config, "catalog", "AwsDataCatalog"),
-        unquote(parsed.path.lstrip("/")) or _value(config, "database"),
-        "",
-    )
+    overrides = {
+        name: value
+        for name, value in (
+            ("catalog", unquote(parsed.netloc)),
+            ("database", unquote(parsed.path.lstrip("/"))),
+        )
+        if value
+    }
+    normalized = _uri_config(config, **overrides)
+    return "athena", normalized.catalog, normalized.database or "", ""
 
 
 def parse_athena_identifier(value: str) -> dict[str, str]:

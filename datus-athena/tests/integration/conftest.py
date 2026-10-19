@@ -2,7 +2,7 @@
 
 Required environment:
   ATHENA_WORKGROUP: isolated Athena SQL Workgroup with a scan cutoff
-  ATHENA_DATABASE: disposable Glue database with prepared tiny TPC-H tables
+  ATHENA_DATABASE: disposable Glue database with prepared tiny TPC-H tables (not required by EXPLAIN)
   AWS_REGION or AWS_DEFAULT_REGION: AWS region
 Optional:
   AWS_PROFILE: standard SDK profile, including refreshable AssumeRole profiles
@@ -41,18 +41,29 @@ def required(name):
 
 
 @pytest.fixture(scope="session")
-def config():
-    workgroup, database = required("ATHENA_WORKGROUP"), required("ATHENA_DATABASE")
+def query_config():
+    workgroup = required("ATHENA_WORKGROUP")
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
     if not region:
         pytest.skip("AWS_REGION or AWS_DEFAULT_REGION is not set")
     return AthenaConfig(
         region=region,
         workgroup=workgroup,
-        database=database,
+        database=os.getenv("ATHENA_DATABASE"),
         catalog=os.getenv("ATHENA_CATALOG", "AwsDataCatalog"),
         output_location=os.getenv("ATHENA_OUTPUT_LOCATION"),
     )
+
+
+@pytest.fixture(scope="session")
+def config(query_config):
+    return AthenaConfig.model_validate(dict(query_config.model_dump(), database=required("ATHENA_DATABASE")))
+
+
+@pytest.fixture
+def query_connector(query_config):
+    with AthenaConnector(query_config) as conn:
+        yield conn
 
 
 @pytest.fixture(scope="session")

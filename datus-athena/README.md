@@ -160,6 +160,15 @@ Unit tests use real botocore `Stubber` responses, never AWS network access.
 The cloud target remains disabled until CI-specific credentials and its workflow
 are configured. No paid LocalStack dependency is required.
 
+The EXPLAIN smoke case only needs `AWS_REGION` (or `AWS_DEFAULT_REGION`) and
+`ATHENA_WORKGROUP`. It can use managed results without a source database or S3
+fixtures:
+
+```bash
+env -u ATHENA_DATABASE .venv/bin/python -m pytest \
+  tests/integration/test_sql_execution.py::test_explain_returns_query_plan -q
+```
+
 The prepared-fixture suite supports read-only source permissions. Set
 `ATHENA_WRITABLE_DATA_LOCATION=s3://test-bucket/contracts/` to additionally run
 the shared writable table contract. This requires scoped Glue table creation,
@@ -210,6 +219,10 @@ and Lake Formation allow/deny controls, native cancellation, result/wait deadlin
 result budgets and controlled loopback TLS transport faults with real AWS queries.
 See [environment setup, limits and validation](AWS_TESTING.md). CI credentials
 and its workflow remain unassigned; the local identity is not copied to CI.
+On 2026-10-19 the EXPLAIN smoke case also passed against SQL engine v3 with
+managed results, reporting zero scanned bytes. Its temporary Workgroups were
+deleted immediately after validation. The observed DML/header result shape is
+recorded in [AWS_TESTING.md](AWS_TESTING.md#additional-explain-validation-2026-10-19).
 The writable table contract was added after this environment was decommissioned;
 its SDK path and cleanup have offline coverage, but the new cloud case has not
 yet been run against AWS. It is not included in the historical counts above.

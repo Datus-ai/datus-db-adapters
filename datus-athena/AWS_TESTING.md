@@ -241,3 +241,25 @@ checks, then verifies database metadata and an actual SELECT. It does not add
 catalog-name exceptions or suppress metadata errors. The existing connection-test
 category caught this during live acceptance; offline regression covers discovery,
 missing/unsupported catalogs and the actual-query requirement.
+
+## Additional EXPLAIN validation: 2026-10-19
+
+The standalone `test_explain_returns_query_plan` case ran twice against actual
+Athena SQL engine v3 in `us-east-1` with managed results: one passed case per run
+(3.84 and 3.97 seconds), zero skips, and `DataScannedInBytes=0` for each query.
+The test uses `EXPLAIN SELECT 1 AS datus_explain_value` and verifies a successful,
+nonempty plan containing the output alias. It requires only region/Workgroup
+configuration, without a source database or prepared data.
+
+The captured service response reported `StatementType=DML`, with `Query Plan`
+as the first API row and `Fragment 0 [SINGLE]` as the first plan row. The connector
+correctly removes the DML header and retains the plan. The unit regression now
+uses this observed protocol rather than fabricating a headerless UTILITY EXPLAIN.
+
+Each run created one uniquely tagged temporary Workgroup with managed results
+and a 10 MiB scan cutoff, then disabled/deleted it and verified it was absent.
+No S3 buckets, Glue databases, capacity reservations or servers were created.
+These extra EXPLAIN checks are separate from the historical 28-case result-mode
+counts. The optional writable table contract still awaits live validation.
+
+See [AWS EXPLAIN behavior and scan considerations](https://docs.aws.amazon.com/athena/latest/ug/athena-explain-statement.html).
