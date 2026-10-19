@@ -8,6 +8,7 @@ Optional:
   AWS_PROFILE: standard SDK profile, including refreshable AssumeRole profiles
   ATHENA_CATALOG: Glue catalog (default AwsDataCatalog)
   ATHENA_OUTPUT_LOCATION: optional S3 result prefix; omit for Workgroup defaults
+  ATHENA_WRITABLE_DATA_LOCATION: dedicated S3 prefix enabling the writable table contract
   ATHENA_EXPECT_MANAGED_RESULTS: true/false, assert the actual result mode
   ATHENA_DENIED_PROFILE: identity without query/data access, for policy acceptance
   ATHENA_EXPECT_FAILURE_SQL: environment-specific KMS/Lake Formation denied query

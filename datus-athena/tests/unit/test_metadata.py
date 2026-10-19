@@ -177,6 +177,33 @@ def test_sample_lists_objects_and_filters_kind(make_connector, sdk):
     assert rows[0]["sample_rows"] == "value\n1\n"
 
 
+@pytest.mark.parametrize("name", ["123table", "sales-data", "literal.dot", 'quoted"table'])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_samples_quote_raw_catalog_names(make_connector, sdk, name, explicit):
+    _, stubber = sdk
+    table = dict(TABLE, Name=name)
+    if explicit:
+        metadata(stubber, table)
+    else:
+        object_page(stubber, [table])
+    quoted = '"' + name.replace('"', '""') + '"'
+    start(stubber, f'SELECT * FROM "AwsDataCatalog"."analytics".{quoted} LIMIT 1')
+    status(stubber)
+    results(stubber, [[1]])
+    entries = make_connector().get_sample_rows(tables=[quoted] if explicit else None, top_n=1)
+    assert entries == [
+        dict(
+            identifier=f"AwsDataCatalog.analytics.{name}",
+            catalog_name="AwsDataCatalog",
+            database_name="analytics",
+            schema_name="",
+            table_name=name,
+            table_type="table",
+            sample_rows="value\n1\n",
+        )
+    ]
+
+
 @pytest.mark.parametrize("kwargs", [{"top_n": 0}, {"table_type": "bad"}])
 def test_sample_validation(make_connector, kwargs):
     with pytest.raises(ValueError):

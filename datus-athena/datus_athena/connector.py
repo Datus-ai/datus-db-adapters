@@ -543,9 +543,8 @@ class AthenaConnector(BaseSqlConnector, CatalogSupportMixin, MigrationTargetMixi
             if table_type not in {"full", kind}:
                 continue
             name = meta["Name"]
-            result = self._execute(
-                f"SELECT * FROM {self.full_name(c, d, table_name=name)} LIMIT {int(top_n)}", "csv", c, d, max_rows=top_n
-            )
+            reference = ".".join(self.quote_identifier(part) for part in (c, d, name))
+            result = self._execute(f"SELECT * FROM {reference} LIMIT {int(top_n)}", "csv", c, d, max_rows=top_n)
             if not result.success or result.execution_info.get("truncated"):
                 raise RuntimeError(result.error or "Athena sample exceeded the configured result budget")
             entries.append(dict(self._entry(c, d, name, kind), sample_rows=result.sql_return))

@@ -160,6 +160,16 @@ Unit tests use real botocore `Stubber` responses, never AWS network access.
 The cloud target remains disabled until CI-specific credentials and its workflow
 are configured. No paid LocalStack dependency is required.
 
+The prepared-fixture suite supports read-only source permissions. Set
+`ATHENA_WRITABLE_DATA_LOCATION=s3://test-bucket/contracts/` to additionally run
+the shared writable table contract. This requires scoped Glue table creation,
+insertion and deletion, plus S3 list/read/write/delete access. The test creates
+one UUID-named Parquet table under a new child prefix and cleans up its metadata
+and data. The supplied prefix must be dedicated to disposable test data.
+Athena Hive DDL restricts physical column names; the read contract separately
+checks quoted `Mixed Case` and `special-name` aliases
+([AWS naming rules](https://docs.aws.amazon.com/athena/latest/ug/create-table.html)).
+
 For real AWS validation, provision a dedicated SQL Workgroup with a per-query
 scan cutoff and either an S3 result prefix or managed results, a disposable Glue
 database, and a dedicated S3 data prefix. Set `AWS_REGION`, `ATHENA_WORKGROUP`,
@@ -200,6 +210,9 @@ and Lake Formation allow/deny controls, native cancellation, result/wait deadlin
 result budgets and controlled loopback TLS transport faults with real AWS queries.
 See [environment setup, limits and validation](AWS_TESTING.md). CI credentials
 and its workflow remain unassigned; the local identity is not copied to CI.
+The writable table contract was added after this environment was decommissioned;
+its SDK path and cleanup have offline coverage, but the new cloud case has not
+yet been run against AWS. It is not included in the historical counts above.
 
 References: [Athena API](https://docs.aws.amazon.com/boto3/latest/reference/services/athena.html),
 [SDK credential providers](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html),

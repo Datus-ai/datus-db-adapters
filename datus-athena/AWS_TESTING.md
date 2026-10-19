@@ -93,6 +93,17 @@ Optional denied-identity and KMS/Lake Formation cases require their separately
 documented environment variables; this minimal stack does not create IAM roles,
 KMS keys or Lake Formation grants. Their skips do not mean those behaviors passed.
 
+To include creation, insertion, metadata, typed retrieval and cleanup through
+the shared `TableContractCase`, set
+`ATHENA_WRITABLE_DATA_LOCATION="s3://$ATHENA_TEST_BUCKET/contracts/"`.
+Grant scoped Glue table creation/deletion and S3 list/read/write/delete access.
+The test creates one UUID-named external Parquet table and removes both its
+definition and its private child prefix, including files written before a
+failed assertion. Missing this optional variable skips only the writable case;
+service or cleanup errors after configuration fail the test. It uses explicit
+CREATE EXTERNAL TABLE and INSERT rather than CTAS, so it does not require
+disabling Workgroup-enforced result settings.
+
 For extended acceptance, provide isolated test resources and SDK profiles. Do not
 change account-wide Lake Formation defaults or apply policies to existing users:
 
@@ -131,8 +142,8 @@ ATHENA_RUN_ROLE_EXPIRY_TEST=1 ../.venv/bin/python -m pytest \
 
 After extended testing, revoke the fixture's LF grants, deregister its prefix,
 delete the two copied tables/objects and the disposable roles, and schedule the
-customer KMS key for deletion with the minimum seven-day waiting period. Retain
-the original three-resource environment. A pending-deletion key cannot be used;
+customer KMS key for deletion with the minimum seven-day waiting period. Run the
+full cleanup below after acceptance is complete. A pending-deletion key cannot be used;
 see [KMS key deletion](https://docs.aws.amazon.com/kms/latest/developerguide/deleting-keys.html).
 
 ## Existing local environment
@@ -141,6 +152,8 @@ For an environment prepared in this checkout, source `.aws-test/env.sh` instead
 of creating another stack. The ignored `.aws-test/` directory records resource
 names, CLI requests, query IDs/statistics and test reports, without AWS credentials.
 Check stack status and fixture age before reusing it.
+The environment recorded on 2026-10-16 has since been fully decommissioned;
+its local `env.sh` is disabled. Recreate the stack before future cloud tests.
 
 ```bash
 source .aws-test/env.sh
@@ -198,12 +211,15 @@ required. Test profiles and reports stayed in the ignored `.aws-test/` directory
 
 Cleanup removed all four temporary roles, both protected tables/objects and the
 LF prefix registration. The test KMS key is `PendingDeletion` with a seven-day
-waiting period. The original bucket, database and Workgroup remain available;
-account LF settings were verified unchanged. The final query audit found no
+waiting period. A subsequent full teardown on 2026-10-16 reached
+`DELETE_COMPLETE`: the original bucket (328 objects), database and Workgroup
+were deleted. Account LF settings were verified unchanged. The final query audit found no
 active queries and confirmed that the client output override was ignored.
-These zero-skip results used the temporary extended environment. After cleanup,
-`env.sh` retains the basic environment; permission and role-expiry cases require
-their profiles/resources to be recreated, and proxy faults require their opt-in.
+These zero-skip results used the temporary extended environment. Future cloud
+runs require the environment and any optional permission/role profiles to be
+recreated. The writable table contract added on 2026-10-19 has offline SDK and
+S3 cleanup coverage, but has not been run against AWS after this teardown and
+is not included in the historical counts above.
 
 The network tests inject faults at a local TLS proxy while forwarding other
 signed requests to real AWS with normal upstream TLS verification. They do not
