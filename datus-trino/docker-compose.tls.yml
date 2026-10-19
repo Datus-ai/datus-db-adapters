@@ -1,0 +1,17 @@
+# Disposable certificates, random loopback ports and a project owned by the TLS runner.
+services:
+  trino:
+    user: "0:0"
+    ports: !override
+      - "${TRINO_HTTPS_HOST_PORT:-127.0.0.1:0}:8443"
+      - "${TRINO_HOST_PORT:-127.0.0.1:0}:8080"
+    volumes:
+      - ${DATUS_TEST_TLS_DIR:?Generate disposable certificates first}:/tls:ro
+      - ./etc/tls.properties:/etc/trino/config.properties:ro
+    entrypoint:
+      - bash
+      - -ec
+      - |
+        cat /tls/server.crt /tls/server.key > /tmp/datus-server.pem
+        chmod 0600 /tmp/datus-server.pem
+        exec /usr/lib/trino/bin/run-trino

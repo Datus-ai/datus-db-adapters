@@ -155,12 +155,12 @@ def test_ensure_engine_forwards_http_scheme_and_verify():
     )
     connector = TrinoConnector(config)
 
-    with patch("datus_trino.connector.create_engine") as mock_create_engine:
+    with patch("datus_sqlalchemy.connector.create_engine") as mock_create_engine:
         engine = connector._ensure_engine()
 
         mock_create_engine.assert_called_once()
         connect_args = mock_create_engine.call_args.kwargs["connect_args"]
-        assert connect_args == {"verify": False, "http_scheme": "https"}
+        assert connect_args == {"verify": False, "http_scheme": "https", "user": "user"}
         assert engine is mock_create_engine.return_value
         assert connector._owns_engine is True
 
@@ -170,11 +170,11 @@ def test_ensure_engine_default_http_scheme():
     config = TrinoConfig(host="localhost", port=8080, username="user")
     connector = TrinoConnector(config)
 
-    with patch("datus_trino.connector.create_engine") as mock_create_engine:
+    with patch("datus_sqlalchemy.connector.create_engine") as mock_create_engine:
         connector._ensure_engine()
 
         connect_args = mock_create_engine.call_args.kwargs["connect_args"]
-        assert connect_args == {"verify": True, "http_scheme": "http"}
+        assert connect_args == {"verify": True, "http_scheme": "http", "user": "user"}
 
 
 # ==================== Catalog Functionality Unit Tests ====================

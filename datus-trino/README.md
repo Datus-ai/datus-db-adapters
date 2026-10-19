@@ -9,7 +9,7 @@ pip install datus-trino
 ```
 
 This will automatically install the required dependencies:
-- `datus-agent`
+- `datus-db-core`
 - `datus-sqlalchemy`
 - `trino`
 
@@ -83,8 +83,52 @@ for column in schema:
 | catalog | str | "hive" | Default catalog |
 | schema_name | str | "default" | Default schema |
 | http_scheme | str | "http" | HTTP scheme (http/https) |
-| verify | bool | True | Verify SSL certificates |
+| verify | bool | True | Verify the HTTPS certificate chain and hostname |
+| ca_cert | str or None | None | Readable PEM CA bundle file; HTTPS and verify=True required |
 | timeout_seconds | int | 30 | Connection timeout |
+
+## Verified HTTPS (0.1.4)
+
+The private CA setting targets the upcoming `datus-trino>=0.1.4`, with
+`datus-sqlalchemy>=0.1.10` and `datus-db-core>=0.1.8`. These versions are not yet
+published; use the workspace source packages until release.
+
+```yaml
+type: trino
+host: trino.example.com
+port: 8443
+username: analytics
+catalog: hive
+schema_name: analytics
+http_scheme: https
+verify: true
+ca_cert: /absolute/path/trino-ca.pem
+```
+
+Omit `ca_cert` to use the Python client's Requests trust configuration. `verify`
+stays a boolean. CA paths expand `~` and resolve relative to the working directory;
+invalid PEM files, HTTP + CA, and disabled verification + CA are rejected.
+This setting covers server verification; it does not accept inline PEM or client
+certificates. Explicit `verify: false` disables both chain and hostname checks and
+is intended only for temporary development. HTTPS does not fall back to HTTP, and
+ports do not choose the protocol. Old profiles keep HTTP on port 8080 by default.
+
+From the workspace root, run the isolated real TLS suite:
+
+```bash
+uv run --no-project python -m ci.run_tls_integration_tests trino
+```
+
+The runner generates disposable localhost certificates, uses random loopback ports,
+checks readiness through the verified adapter, runs metadata/TPC-H/result contracts
+and certificate rejection tests, and removes its Compose containers, volume and
+network in `finally`. `TRINO_REQUIRED=1` makes connection failures fail the tests.
+For a manually provisioned endpoint, fixtures and readiness share `TRINO_HOST`,
+`TRINO_PORT`, `TRINO_USER`, `TRINO_PASSWORD`, `TRINO_CATALOG`, `TRINO_SCHEMA`,
+`TRINO_HTTP_SCHEME`, `TRINO_VERIFY`, and `TRINO_CA_CERT`.
+
+See [Trino TLS and HTTPS](https://trino.io/docs/current/security/tls.html) and the
+[Python client](https://github.com/trinodb/trino-python-client#ssl).
 
 ## Features
 
@@ -165,12 +209,6 @@ trino_tpch:
   schema_name: tiny
 ```
 
-### Test Statistics
-
-- **Unit Tests**: 49 tests (config validation, connector logic, identifiers)
-- **Integration Tests**: 23 tests (connection, metadata, SQL execution, TPC-H)
-- **Total**: 72 tests
-
 ### Test Markers
 
 | Marker | Description |
@@ -202,8 +240,8 @@ ruff check datus_trino tests
 
 - Python >= 3.12
 - Trino >= 400
-- datus-agent > 0.2.1
-- datus-sqlalchemy >= 0.1.0
+- datus-db-core >= 0.1.8
+- datus-sqlalchemy >= 0.1.10
 
 ## License
 

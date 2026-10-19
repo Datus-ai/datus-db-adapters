@@ -82,8 +82,8 @@ def test_unit_only_change_does_not_select_integration() -> None:
 @pytest.mark.parametrize("path", ["ci/run_tls_integration_tests.py", "ci/integration/generate_tls.py"])
 def test_tls_infrastructure_selects_all_tls_database_targets(path) -> None:
     selection = select(path)
-    assert selection.compose_targets == {"mysql", "postgresql", "clickhouse"}
-    assert selection.unit_packages == {"datus-mysql", "datus-postgresql", "datus-clickhouse"}
+    assert selection.compose_targets == {"mysql", "postgresql", "clickhouse", "trino"}
+    assert selection.unit_packages == {"datus-mysql", "datus-postgresql", "datus-clickhouse", "datus-trino"}
 
 
 def test_documentation_change_does_not_select_tests() -> None:
