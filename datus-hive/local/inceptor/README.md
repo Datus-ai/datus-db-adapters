@@ -150,8 +150,10 @@ for other authentication modes.
 ```sh
 docker compose stop inceptor
 docker compose up -d inceptor
+# If the previous runtime used Kerberos, restore the SIMPLE baseline before init:
+# python manage.py kerberos-disable --no-restart
 python manage.py init
-# For a Kerberos-configured endpoint, reapply kerberos-enable, then kinit.
+# Then reapply kerberos-enable and kinit if Kerberos is desired.
 python manage.py wait
 ```
 
@@ -159,6 +161,14 @@ On an installed volume, `init` first resumes the normal vendor License daemon
 (the Manager operation API needs it), then starts services in dependency order,
 without regenerating configuration or reinstalling services. Use the same hostname
 and Compose project so the vendor's service state still resolves to its original node.
+
+For a cold restart of the HS2-only Kerberos fixture, the Metastore must first
+start under its original SIMPLE configuration. Restore it with
+`kerberos-disable --no-restart` **before `init`**; after initialization, run
+`kerberos-enable`, acquire the client ticket and run readiness. A Metastore
+started directly under the shared Kerberos runtime can reject HS2 Thrift calls.
+The no-restart option restores configuration only and is intended for stopped
+roles. It does not turn off authentication in an already running JVM.
 
 `docker compose --profile kerberos down` removes this project's containers and
 network while retaining its data volume and the local Kerberos state. A full

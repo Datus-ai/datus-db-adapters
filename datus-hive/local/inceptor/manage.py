@@ -206,7 +206,7 @@ def prepare_realm() -> Path:
     return state
 
 
-def kerberos(manager: Manager, enable: bool, timeout: int) -> None:
+def kerberos(manager: Manager, enable: bool, timeout: int, restart: bool = True) -> None:
     node = local_node(manager)
     _, services = services_for_cluster(manager, node["clusterId"])
     quark = next(s for s in services if s["type"] == "QUARK")
@@ -226,6 +226,9 @@ def kerberos(manager: Manager, enable: bool, timeout: int) -> None:
             stdin=script,
             check=True,
         )
+    if not restart:
+        print("Original runtime restored without starting roles; run init before enabling HS2 Kerberos", flush=True)
+        return
     roles = manager.request("GET", "/api/serviceRoles")
     ids = [
         r["id"]
@@ -268,9 +271,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["init", "wait", "kerberos-enable", "kerberos-disable"])
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--no-restart", action="store_true", help="kerberos-disable only: restore before cold startup")
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if args.no_restart and args.action != "kerberos-disable":
+        parser.error("--no-restart is only valid with kerberos-disable")
     if args.action == "wait":
         wait_endpoint(args.timeout)
         return
@@ -279,7 +285,7 @@ def main() -> None:
     if args.action == "init":
         initialize(manager, args.timeout)
     else:
-        kerberos(manager, args.action == "kerberos-enable", args.timeout)
+        kerberos(manager, args.action == "kerberos-enable", args.timeout, restart=not args.no_restart)
 
 
 if __name__ == "__main__":

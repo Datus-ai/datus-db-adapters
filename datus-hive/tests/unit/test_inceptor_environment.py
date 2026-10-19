@@ -253,3 +253,25 @@ def test_kerberos_runtime_is_readable_by_daemon_and_restores_original_files(tmp_
     assert {path: path.read_bytes() for path in originals} == originals
     assert all(path.stat().st_mode & 0o777 == 0o644 for path in originals)
     assert (config_root / "krb5.conf").stat().st_mode & 0o777 == 0o644
+
+
+def test_cold_kerberos_recovery_restores_runtime_before_starting_metastore(manage, monkeypatch):
+    commands = []
+    monkeypatch.setattr(manage, "container_id", lambda: "local-container")
+    monkeypatch.setattr(manage.subprocess, "run", lambda command, **kw: commands.append(command))
+
+    class ColdManager:
+        def request(self, method, path):
+            assert method == "GET", "Cold recovery must not submit role starts before restoring SIMPLE runtime"
+            if path == "/api/nodes/this":
+                return {"hostName": "local"}
+            if path == "/api/nodes":
+                return [{"hostName": "local", "clusterId": 7}]
+            if path == "/api/services":
+                return [
+                    {"id": i, "type": kind, "clusterId": 7, "sid": "quark1"} for i, kind in enumerate(manage.REQUIRED)
+                ]
+            raise AssertionError(f"Unexpected cold-start request: {path}")
+
+    manage.kerberos(ColdManager(), False, 60, restart=False)
+    assert commands == [["docker", "exec", "-i", "local-container", "python3", "-", "restore", "quark1"]]
