@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from typing import Any, Dict, List, Optional, Set, Union, override
-from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +17,7 @@ from datus_db_core import (
 from datus_sqlalchemy import SQLAlchemyConnector
 
 from .config import ClickHouseConfig
+from .handlers import connection_url
 
 logger = get_logger(__name__)
 
@@ -81,11 +81,7 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
         self.username = config.username
         database = config.database or ""
 
-        # URL encode password to handle special characters
-        encoded_password = quote_plus(config.password) if config.password else ""
-
-        # Build connection string
-        connection_string = f"clickhouse://{self.username}:{encoded_password}@{self.host}:{self.port}/{database}"
+        connection_string = connection_url(config).render_as_string(hide_password=False)
 
         super().__init__(
             connection_string,
@@ -96,6 +92,9 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
         # with a plain ConnectionConfig (which lacks ClickHouse-specific fields)
         self.config = config
         self._default_database = database
+        self.configure_connection(
+            connect_args={"verify": config.ca_cert if config.ca_cert is not None else config.verify}
+        )
 
     # ==================== System Resources ====================
 

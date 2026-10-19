@@ -13,12 +13,17 @@ def test_config_with_all_required_fields():
     """Test config initialization with all required fields."""
     config = ClickHouseConfig(username="default_user")
 
-    assert config.host == "localhost"
-    assert config.port == 8123
-    assert config.username == "default_user"
-    assert config.password == ""
-    assert config.database is None
-    assert config.timeout_seconds == 30
+    assert config.model_dump() == {
+        "host": "localhost",
+        "port": 8123,
+        "username": "default_user",
+        "password": "",
+        "database": None,
+        "timeout_seconds": 30,
+        "protocol": "http",
+        "verify": True,
+        "ca_cert": None,
+    }
 
 
 @pytest.mark.acceptance

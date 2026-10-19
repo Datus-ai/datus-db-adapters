@@ -11,6 +11,10 @@ Environment:
 | ``CLICKHOUSE_HOST``     | ``localhost``  | Server host                                |
 | ``CLICKHOUSE_PORT``     | ``8123``       | HTTP port (compose maps it via
                                               ``CLICKHOUSE_HTTP_HOST_PORT``)            |
+| ``CLICKHOUSE_PROTOCOL`` | ``http``       | HTTP or HTTPS                            |
+| ``CLICKHOUSE_VERIFY``   | ``true``       | HTTPS chain and hostname verification    |
+| ``CLICKHOUSE_CA_CERT``  | unset          | PEM CA bundle path                       |
+| ``CLICKHOUSE_REQUIRED`` | unset          | CI: fail instead of skipping unavailable |
 | ``CLICKHOUSE_USER``     | ``default_user`` | Login user                               |
 | ``CLICKHOUSE_PASSWORD`` | ``default_test`` | Login password                           |
 | ``CLICKHOUSE_DATABASE`` | ``default_test`` | Test database, created on demand         |
@@ -22,11 +26,13 @@ works rather than that setup limped through.
 
 import logging
 import os
+import sys
 from typing import Generator, Optional
 
 import pytest
 
 from datus_clickhouse import ClickHouseConfig, ClickHouseConnector
+from datus_clickhouse.testing import config_from_env
 from datus_clickhouse.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
 logger = logging.getLogger(__name__)
@@ -36,13 +42,13 @@ METADATA_VIEW = "datus_metadata_view"
 
 
 def _build_config(database: Optional[str] = None) -> ClickHouseConfig:
-    return ClickHouseConfig(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        username=os.getenv("CLICKHOUSE_USER", "default_user"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", "default_test"),
-        database=database if database is not None else os.getenv("CLICKHOUSE_DATABASE", "default_test"),
-    )
+    return config_from_env({"database": database} if database is not None else None)
+
+
+def _unavailable(message: str):
+    if os.getenv("CLICKHOUSE_REQUIRED") == "1" or os.getenv("CLICKHOUSE_PROTOCOL") == "https":
+        raise RuntimeError(message)
+    pytest.skip(message)
 
 
 def _require_success(result, operation: str) -> None:
@@ -55,14 +61,14 @@ def _connect_and_create_database() -> ClickHouseConfig:
     try:
         init_conn = ClickHouseConnector(_build_config(database=""))
     except Exception as e:
-        pytest.skip(f"ClickHouse is not available: {e}")
+        _unavailable(f"ClickHouse is not available: {e}")
     try:
         try:
             reachable = init_conn.test_connection()
         except Exception as e:
-            pytest.skip(f"ClickHouse is not available: {e}")
+            _unavailable(f"ClickHouse is not available: {e}")
         if not reachable:
-            pytest.skip("ClickHouse connection test failed")
+            _unavailable("ClickHouse connection test failed")
         if config.database:
             _require_success(
                 init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{config.database}`"),
@@ -141,53 +147,24 @@ def metadata_objects_setup() -> Generator[None, None, None]:
 @pytest.fixture(scope="session")
 def tpch_setup() -> Generator[ClickHouseConnector, None, None]:
     """Session-scoped fixture: create TPC-H tables, insert data, yield connector, cleanup."""
-    config = _build_config()
-
-    conn = None
+    config = _connect_and_create_database()
+    conn = ClickHouseConnector(config)
     try:
-        # Ensure database exists
-        init_config = ClickHouseConfig(
-            host=config.host,
-            port=config.port,
-            username=config.username,
-            password=config.password,
-            database=None,
-        )
-        init_conn = ClickHouseConnector(init_config)
-        try:
-            if not init_conn.test_connection():
-                pytest.skip("Database connection test failed")
-            if config.database:
-                init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{config.database}`")
-        finally:
-            init_conn.close()
-
-        conn = ClickHouseConnector(config)
-
-        # Drop tables first for deterministic setup
         for table in TPCH_TABLES:
-            conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`")
-
-        # Create tables
+            _require_success(conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`"), "drop TPC-H table")
         for ddl in TPCH_DDL:
-            conn.execute_ddl(ddl)
-
-        # Insert data
+            _require_success(conn.execute_ddl(ddl), "create TPC-H table")
         for data in TPCH_DATA:
-            conn.execute_insert(data)
-
-    except Exception as e:
-        pytest.skip(f"TPC-H setup failed: {e}")
-    else:
+            _require_success(conn.execute_insert(data), "insert TPC-H rows")
         yield conn
     finally:
-        if conn is not None:
-            try:
-                for table in TPCH_TABLES:
-                    conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`")
-            except Exception:
-                pass
-            try:
-                conn.close()
-            except Exception:
-                pass
+        original = sys.exception()
+        try:
+            for table in TPCH_TABLES:
+                _require_success(conn.execute_ddl(f"DROP TABLE IF EXISTS `{table}`"), "cleanup TPC-H table")
+        except Exception as error:
+            if original is None:
+                raise
+            original.add_note(f"TPC-H cleanup also failed: {error}")
+        finally:
+            conn.close()

@@ -5,7 +5,7 @@
 from .config import ClickHouseConfig
 from .connector import ClickHouseConnector
 
-__version__ = "0.1.0"
+__version__ = "0.1.4"
 __all__ = ["ClickHouseConnector", "ClickHouseConfig", "register"]
 
 

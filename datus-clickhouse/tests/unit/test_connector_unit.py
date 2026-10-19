@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pandas import DataFrame
+from sqlalchemy.engine import make_url
 
 from datus_clickhouse import ClickHouseConfig, ClickHouseConnector
 from datus_db_core import DatusDbException
@@ -77,7 +78,8 @@ def test_connector_connection_string_basic():
         call_args = mock_init.call_args
         connection_string = call_args[0][0]
 
-        assert "clickhouse://user:pass@localhost:8123/db" in connection_string
+        assert make_url(connection_string).username == "user"
+        assert make_url(connection_string).database == "db"
 
 
 @pytest.mark.acceptance
@@ -98,7 +100,7 @@ def test_connector_connection_string_special_password():
         connection_string = call_args[0][0]
 
         # Password should be URL encoded
-        assert "p%40ss%21w0rd%23%24%25" in connection_string
+        assert make_url(connection_string).password == config.password
 
 
 def test_connector_connection_string_no_password():
@@ -117,7 +119,7 @@ def test_connector_connection_string_no_password():
         call_args = mock_init.call_args
         connection_string = call_args[0][0]
 
-        assert "clickhouse://user:@localhost:8123/db" in connection_string
+        assert make_url(connection_string).password == ""
 
 
 def test_connector_connection_string_no_database():
@@ -136,7 +138,7 @@ def test_connector_connection_string_no_database():
         call_args = mock_init.call_args
         connection_string = call_args[0][0]
 
-        assert "clickhouse://user:pass@localhost:8123/" in connection_string
+        assert make_url(connection_string).database in (None, "")
 
 
 @pytest.mark.acceptance

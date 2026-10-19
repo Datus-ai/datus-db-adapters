@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate disposable localhost certificates for the MySQL/PostgreSQL TLS overlays."""
+"""Generate disposable localhost certificates for the database TLS overlays."""
 
 import argparse
 import os
