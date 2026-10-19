@@ -70,6 +70,8 @@ def test_setup_cli_arguments_reach_driver(monkeypatch, verify):
 def test_readiness_preserves_https_and_ca(monkeypatch):
     import certifi
 
+    # The pytest console entry point does not add the workspace root to sys.path.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
     monkeypatch.setenv("CLICKHOUSE_PROTOCOL", "https")
     monkeypatch.setenv("CLICKHOUSE_CA_CERT", certifi.where())
     with patch("datus_clickhouse.ClickHouseConnector") as factory:
