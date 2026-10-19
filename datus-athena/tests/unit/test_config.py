@@ -41,6 +41,10 @@ def test_defaults():
         ({"output_location": "https://bucket/path"}, "s3://"),
         ({"output_location": "s3://"}, "s3://"),
         ({"output_location": "s3://user:pass@bucket/"}, "credentials"),
+        ({"output_location": "s3://user@bucket/results"}, "credentials"),
+        ({"output_location": "s3://:secret@bucket/results"}, "credentials"),
+        ({"output_location": "s3://@bucket/results"}, "credentials"),
+        ({"output_location": "s3://:@bucket/results"}, "credentials"),
         ({"output_location": "s3://bucket/?token=secret"}, "query"),
     ],
 )

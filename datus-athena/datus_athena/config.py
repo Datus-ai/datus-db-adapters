@@ -78,7 +78,14 @@ class AthenaConfig(ConnectionConfig):
             from urllib.parse import urlsplit
 
             parsed = urlsplit(value)
-            if parsed.scheme != "s3" or not parsed.netloc or parsed.username or parsed.query or parsed.fragment:
+            if (
+                parsed.scheme != "s3"
+                or not parsed.netloc
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+            ):
                 raise ValueError(
                     "output_location must be an s3://bucket/prefix without credentials or query parameters"
                 )
