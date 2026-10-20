@@ -167,7 +167,7 @@ jobs:
         run: ci/run-integration-tests.sh "${{ matrix.adapter }}"
 
       - name: Run verified TLS and certificate rejection tests
-        if: matrix.adapter == 'mysql' || matrix.adapter == 'postgresql' || matrix.adapter == 'clickhouse'
+        if: matrix.adapter == 'mysql' || matrix.adapter == 'postgresql' || matrix.adapter == 'clickhouse' || matrix.adapter == 'trino'
         run: uv run --no-project python -m ci.run_tls_integration_tests "${{ matrix.adapter }}"
 
       - name: Stop ${{ matrix.adapter }} integration services

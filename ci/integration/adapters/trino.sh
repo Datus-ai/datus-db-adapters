@@ -15,6 +15,8 @@ export_adapter_env() {
   export TRINO_CATALOG="tpch"
   export TRINO_SCHEMA="tiny"
   export TRINO_HTTP_SCHEME="http"
+  unset TRINO_VERIFY TRINO_CA_CERT
+  export TRINO_REQUIRED=1
 }
 
 adapter_env_summary() {

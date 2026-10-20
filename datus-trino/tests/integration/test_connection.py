@@ -2,8 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import os
-
 import pytest
 
 from datus_trino import TrinoConfig, TrinoConnector
@@ -22,18 +20,13 @@ def test_connection_with_config_object(config: TrinoConfig):
 
 @pytest.mark.integration
 @pytest.mark.acceptance
-def test_connection_with_dict():
-    """Test connection using dict config."""
-    conn = TrinoConnector(
-        {
-            "host": os.getenv("TRINO_HOST", "localhost"),
-            "port": int(os.getenv("TRINO_PORT", "8080")),
-            "username": os.getenv("TRINO_USER", "trino"),
-            "password": os.getenv("TRINO_PASSWORD", ""),
-        }
-    )
-    assert conn.test_connection()
-    conn.close()
+def test_connection_with_dict(config: TrinoConfig):
+    """Dictionary construction preserves the selected endpoint and TLS policy."""
+    conn = TrinoConnector(config.model_dump())
+    try:
+        assert conn.test_connection()
+    finally:
+        conn.close()
 
 
 @pytest.mark.integration

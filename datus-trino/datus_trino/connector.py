@@ -3,14 +3,14 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from typing import Any, Dict, List, Optional, Set, Union, override
-from urllib.parse import quote_plus
 
-from sqlalchemy import create_engine
+from trino.auth import BasicAuthentication
 
 from datus_db_core import CatalogSupportMixin, MigrationTargetMixin, get_logger
 from datus_sqlalchemy import SQLAlchemyConnector
 
 from .config import TrinoConfig
+from .handlers import connection_url
 
 logger = get_logger(__name__)
 
@@ -42,16 +42,7 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         self.port = config.port
         self.user = config.username
 
-        # Build connection string: trino://user:pass@host:port/catalog/schema
-        encoded_user = quote_plus(config.username)
-        encoded_password = quote_plus(config.password) if config.password else ""
-        auth_part = f"{encoded_user}:{encoded_password}@" if config.password else f"{encoded_user}@"
-
-        connection_string = (
-            f"trino://{auth_part}{config.host}:{config.port}"
-            f"/{config.catalog}/{config.schema_name}"
-            f"?http_scheme={config.http_scheme}"
-        )
+        connection_string = connection_url(config).render_as_string(hide_password=False)
 
         super().__init__(
             connection_string,
@@ -65,28 +56,15 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         self._default_catalog = config.catalog
         self._default_schema = config.schema_name
         self._default_database = config.schema_name  # In Trino, schemas map to databases
-
-    # ==================== Connection Management ====================
-
-    @override
-    def _ensure_engine(self):
-        """Create engine with SSL verification setting. Thread-safe."""
-        if self.engine and self._owns_engine:
-            return self.engine
-        with self._engine_lock:
-            if self.engine and self._owns_engine:
-                return self.engine
-            self.engine = create_engine(
-                self.connection_string,
-                pool_size=10,
-                max_overflow=20,
-                pool_timeout=self.timeout_seconds,
-                pool_recycle=3600,
-                pool_pre_ping=True,
-                connect_args={"verify": self._verify_ssl, "http_scheme": self._http_scheme},
-            )
-            self._owns_engine = True
-            return self.engine
+        connect_args = {
+            "verify": config.ca_cert if config.ca_cert is not None else config.verify,
+            "http_scheme": config.http_scheme,
+            # Older Trino dialects decode credentials twice. Override with raw values.
+            "user": config.username,
+        }
+        if config.password:
+            connect_args["auth"] = BasicAuthentication(config.username, config.password)
+        self.configure_connection(connect_args=connect_args)
 
     # ==================== Context Manager Support ====================
 

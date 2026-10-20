@@ -21,6 +21,7 @@ def run(adapter: str) -> None:
         "mysql": ("mysql", "3306"),
         "postgresql": ("postgres", "5432"),
         "clickhouse": ("clickhouse", "8443"),
+        "trino": ("trino", "8443"),
     }[adapter]
     project = f"datus-tls-{adapter}-{uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="datus-db-tls-") as directory:
@@ -45,7 +46,7 @@ def run(adapter: str) -> None:
         elif adapter == "postgresql":
             env["POSTGRESQL_SCHEMA"] = "public"
             env["POSTGRESQL_SSLROOTCERT"] = f"{directory}/ca.crt"
-        else:
+        elif adapter == "clickhouse":
             env.update(
                 {
                     "CLICKHOUSE_HTTPS_HOST_PORT": "127.0.0.1:0",
@@ -54,6 +55,23 @@ def run(adapter: str) -> None:
                     "CLICKHOUSE_VERIFY": "true",
                     "CLICKHOUSE_CA_CERT": f"{directory}/ca.crt",
                     "CLICKHOUSE_REQUIRED": "1",
+                }
+            )
+        elif adapter == "trino":
+            # The isolated suite controls trust; external Requests settings must not
+            # override the generated CA or development verification test.
+            env.pop("REQUESTS_CA_BUNDLE", None)
+            env.pop("CURL_CA_BUNDLE", None)
+            env.update(
+                {
+                    "TRINO_HTTPS_HOST_PORT": "127.0.0.1:0",
+                    "TRINO_PASSWORD": "",
+                    "TRINO_CATALOG": "tpch",
+                    "TRINO_SCHEMA": "tiny",
+                    "TRINO_HTTP_SCHEME": "https",
+                    "TRINO_VERIFY": "true",
+                    "TRINO_CA_CERT": f"{directory}/ca.crt",
+                    "TRINO_REQUIRED": "1",
                 }
             )
         compose = [
@@ -77,6 +95,9 @@ def run(adapter: str) -> None:
             if adapter == "clickhouse":
                 plain = command([*compose, "port", service, "8123"], capture_output=True, text=True).stdout.strip()
                 env["CLICKHOUSE_PLAIN_PORT"] = plain.rsplit(":", 1)[1]
+            elif adapter == "trino":
+                plain = command([*compose, "port", service, "8080"], capture_output=True, text=True).stdout.strip()
+                env["TRINO_PLAIN_PORT"] = plain.rsplit(":", 1)[1]
             command(
                 ["uv", "run", "--package", f"datus-{adapter}", "python", "-m", f"ci.integration.readiness.{adapter}"]
             )
@@ -114,7 +135,7 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("adapter", choices=("mysql", "postgresql", "clickhouse"))
+    parser.add_argument("adapter", choices=("mysql", "postgresql", "clickhouse", "trino"))
     args = parser.parse_args()
     try:
         run(args.adapter)

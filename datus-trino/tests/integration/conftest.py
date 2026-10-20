@@ -14,7 +14,10 @@ Environment:
 | ``TRINO_PASSWORD``  | empty       | Login password                                 |
 | ``TRINO_CATALOG``   | ``memory``  | Writable catalog the metadata fixtures live in |
 | ``TRINO_SCHEMA``    | ``default`` | Schema the metadata fixtures live in           |
-| ``TRINO_HTTP_SCHEME`` | ``http``  | HTTP scheme                                    |
+| ``TRINO_HTTP_SCHEME`` | ``http`` | HTTP or HTTPS |
+| ``TRINO_VERIFY`` | ``true`` | Verify HTTPS certificates |
+| ``TRINO_CA_CERT`` | empty | PEM CA bundle file |
+| ``TRINO_REQUIRED`` | empty | Fail instead of skipping an unavailable target |
 
 Skip policy: only an unreachable Trino skips. Every statement issued after a
 successful connection is a hard requirement, so a green run means the adapter
@@ -28,6 +31,7 @@ from typing import Generator
 import pytest
 
 from datus_trino import TrinoConfig, TrinoConnector
+from datus_trino.testing import config_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +47,7 @@ METADATA_VIEW = "datus_metadata_view"
 
 
 def _build_config() -> TrinoConfig:
-    return TrinoConfig(
-        host=os.getenv("TRINO_HOST", "localhost"),
-        port=int(os.getenv("TRINO_PORT", "8080")),
-        username=os.getenv("TRINO_USER", "trino"),
-        password=os.getenv("TRINO_PASSWORD", ""),
-        catalog=os.getenv("TRINO_CATALOG", "memory"),
-        schema_name=os.getenv("TRINO_SCHEMA", "default"),
-        http_scheme=os.getenv("TRINO_HTTP_SCHEME", "http"),
-    )
+    return config_from_env()
 
 
 def _require_success(result, operation: str) -> None:
@@ -83,24 +79,29 @@ def config() -> TrinoConfig:
     return _build_config()
 
 
+def _connect_or_skip(config: TrinoConfig) -> TrinoConnector:
+    conn = TrinoConnector(config)
+    try:
+        if conn.test_connection():
+            return conn
+    except Exception:
+        conn.close()
+        if os.getenv("TRINO_REQUIRED") == "1":
+            raise
+        pytest.skip("Trino is not available")
+    conn.close()
+    if os.getenv("TRINO_REQUIRED") == "1":
+        pytest.fail("Required Trino connection failed")
+    pytest.skip("Trino is not available")
+
+
 @pytest.fixture
 def connector(config: TrinoConfig) -> Generator[TrinoConnector, None, None]:
-    """Create and cleanup Trino connector for integration tests."""
-    conn = None
+    conn = _connect_or_skip(config)
     try:
-        conn = TrinoConnector(config)
-        if not conn.test_connection():
-            pytest.skip("Database connection test failed")
-    except Exception as e:
-        pytest.skip(f"Database not available: {e}")
-    else:
         yield conn
     finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        conn.close()
 
 
 @pytest.fixture(scope="session")
@@ -115,13 +116,7 @@ def metadata_objects_setup() -> Generator[None, None, None]:
     returning ``[]`` for everything would pass.
     """
     test_config = _build_config()
-    try:
-        conn = TrinoConnector(test_config)
-        reachable = conn.test_connection()
-    except Exception as e:
-        pytest.skip(f"Trino is not available: {e}")
-    if not reachable:
-        pytest.skip("Trino connection test failed")
+    conn = _connect_or_skip(test_config)
 
     quoted = f'"{WRITABLE_CATALOG}"."{WRITABLE_SCHEMA}"'
     table_ref = f'{quoted}."{METADATA_TABLE}"'
@@ -158,29 +153,9 @@ def metadata_objects_setup() -> Generator[None, None, None]:
 @pytest.fixture
 def tpch_connector(config: TrinoConfig) -> Generator[TrinoConnector, None, None]:
     """Create connector pointing to tpch catalog for TPC-H tests."""
-    tpch_config = TrinoConfig(
-        host=config.host,
-        port=config.port,
-        username=config.username,
-        password=config.password,
-        catalog="tpch",
-        schema_name="tiny",
-        http_scheme=config.http_scheme,
-        verify=config.verify,
-        timeout_seconds=config.timeout_seconds,
-    )
-    conn = None
+    tpch_config = config.model_copy(update={"catalog": "tpch", "schema_name": "tiny"})
+    conn = _connect_or_skip(tpch_config)
     try:
-        conn = TrinoConnector(tpch_config)
-        if not conn.test_connection():
-            pytest.skip("TPC-H connection test failed")
-    except Exception as e:
-        pytest.skip(f"TPC-H catalog not available: {e}")
-    else:
         yield conn
     finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        conn.close()

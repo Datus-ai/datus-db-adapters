@@ -15,15 +15,18 @@ def test_config_with_all_required_fields():
     """Test config initialization with all required fields."""
     config = TrinoConfig(username="test_user")
 
-    assert config.host == "127.0.0.1"
-    assert config.port == 8080
-    assert config.username == "test_user"
-    assert config.password == ""
-    assert config.catalog == "hive"
-    assert config.schema_name == "default"
-    assert config.http_scheme == "http"
-    assert config.verify is True
-    assert config.timeout_seconds == 30
+    assert config.model_dump() == {
+        "host": "127.0.0.1",
+        "port": 8080,
+        "username": "test_user",
+        "password": "",
+        "catalog": "hive",
+        "schema_name": "default",
+        "http_scheme": "http",
+        "verify": True,
+        "ca_cert": None,
+        "timeout_seconds": 30,
+    }
 
 
 @pytest.mark.acceptance
