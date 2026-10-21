@@ -72,7 +72,7 @@ def _wait_for_role_chain(sts, source_arn, reader_arn, external_id, sdk_config):
 
 
 @pytest.fixture(scope="module")
-def role_lab(tmp_path_factory):
+def role_lab(tmp_path_factory, record_testsuite_property):
     run_id = uuid.uuid4().hex
     region = os.getenv("DATUS_SECRET_AWS_REGION", "us-east-1")
     profile = os.getenv("DATUS_SECRET_AWS_PROFILE") or "default"
@@ -132,7 +132,7 @@ def role_lab(tmp_path_factory):
                 SecretString='{"login":"reader","password":"role-test-value"}',
                 Tags=tag_list,
             )["ARN"]
-            cleanup.callback(_delete_secret, secrets_client, arn, tags)
+            cleanup.callback(_delete_secret, secrets_client, arn, tags, record_testsuite_property)
             arns.append(arn)
         iam.put_role_policy(
             RoleName=source_name,

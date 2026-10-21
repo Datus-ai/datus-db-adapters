@@ -12,7 +12,8 @@
 | DATUS_SNOWFLAKE_SECRET_TESTS=1 | Permit temporary Snowflake user/role provisioning |
 | SNOWFLAKE_* | Existing conftest credentials; role must manage users/roles/grants |
 
-Only temporary users' keys are changed. Cleanup checks ownership and verifies absence.
+Only temporary users' keys are changed. Cleanup checks ownership, verifies user/role
+absence and records accepted asynchronous Secret deletion.
 AWS-only acceptance does not require Snowflake credentials. API failures never skip.
 """
 
@@ -32,6 +33,7 @@ from datus_db_core.aws import AWSIdentity, AWSIdentityConfig
 from datus_db_core.secrets import AWSSecretProvider
 from datus_snowflake import SnowflakeConnector
 
+from ._aws_helpers import delete_secret
 from ._aws_helpers import publish_secret as _publish
 from .conftest import _build_config_dict
 
@@ -39,7 +41,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def aws_secret():
+def aws_secret(record_testsuite_property):
     if os.getenv("DATUS_SECRET_AWS_TESTS") != "1":
         pytest.skip("DATUS_SECRET_AWS_TESTS=1 is required")
     identity = AWSIdentity(
@@ -60,17 +62,9 @@ def aws_secret():
         yield identity, client, arn, created["VersionId"], run_id
     finally:
         try:
-            tags = {tag["Key"]: tag["Value"] for tag in client.describe_secret(SecretId=arn)["Tags"]}
-            assert tags == {"datus-test-run": run_id, "purpose": "cmp-secret-01"}
-            client.delete_secret(SecretId=arn, ForceDeleteWithoutRecovery=True)
-            for _ in range(60):
-                try:
-                    client.describe_secret(SecretId=arn)
-                except client.exceptions.ResourceNotFoundException:
-                    break
-                time.sleep(0.5)
-            else:
-                pytest.fail("Owned test Secret still exists after deletion")
+            delete_secret(
+                client, arn, {"datus-test-run": run_id, "purpose": "cmp-secret-01"}, record_testsuite_property
+            )
         finally:
             identity.close()
 

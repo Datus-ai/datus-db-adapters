@@ -176,6 +176,13 @@ failure), valid authentication modes, and CLI overrides applied before validatio
 Run the CLI entry point with explicit arguments and mock only the external driver
 boundary, so a working environment cannot hide unusable command-line options.
 
+Cloud acceptance helpers that provision resources also require SDK-boundary cleanup
+regressions. Prove that all ownership tags must match, unrelated account-added tags
+are allowed, and an API failure is not reported as successful cleanup. For asynchronous
+deletion, record the accepted request separately from verified physical absence;
+do not impose an undocumented service deletion deadline (Snowflake Secret review
+regressions in Agent #1525 / adapters #162).
+
 ### SQL analysis and bounded results
 
 SQL-analysis hooks must reject unmodeled object access and side effects, including

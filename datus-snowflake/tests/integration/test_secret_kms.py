@@ -46,7 +46,7 @@ pytestmark = [
 
 def _schedule_owned_key_deletion(kms, key_id, tags, record):
     actual = {item["TagKey"]: item["TagValue"] for item in kms.list_resource_tags(KeyId=key_id)["Tags"]}
-    assert actual == tags
+    assert tags.items() <= actual.items(), "Refusing to delete a KMS key without matching ownership"
     kms.schedule_key_deletion(KeyId=key_id, PendingWindowInDays=7)
     for _ in range(60):
         metadata = kms.describe_key(KeyId=key_id)["KeyMetadata"]
@@ -136,7 +136,7 @@ def kms_lab(tmp_path_factory, record_testsuite_property):
                 **options,
             )
             arns.append(created["ARN"])
-            cleanup.callback(delete_secret, sm, created["ARN"], tags)
+            cleanup.callback(delete_secret, sm, created["ARN"], tags, record_testsuite_property)
         record_testsuite_property("kms_secret_arns", json.dumps(arns))
         role_arns = {}
         for label in ("allowed", "no_decrypt", "no_secret", "key_denied"):

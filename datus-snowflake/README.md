@@ -397,7 +397,7 @@ existing AWS credentials. It checks profile-based role chaining, correct/wrong/
 missing External IDs, untrusted callers, source-role and Secret resource isolation,
 and a real Snowflake key-pair login. Omit `DATUS_SNOWFLAKE_SECRET_TESTS` for AWS-only
 acceptance. Existing AWS configuration and credentials are left unchanged. Cleanup
-verifies that both roles and Secrets are absent. Both roles belong to one AWS
+verifies role absence and records accepted asynchronous Secret deletion. Both roles belong to one AWS
 account: a true second-account trust/organization-policy/KMS boundary still requires
 separate acceptance.
 
@@ -423,6 +423,11 @@ Cleanup deletes the owned Secrets and roles and verifies that the KMS key enters
 `PendingDeletion` with a seven-day waiting period. The key is not immediately
 deleted. JUnit suite properties record its ID, state and scheduled deletion date
 for a subsequent live audit. Omit `DATUS_SNOWFLAKE_SECRET_TESTS` for AWS-only checks.
+
+Cleanup permits unrelated account tags while requiring every ownership tag to match.
+Secret deletion is asynchronous: the JUnit `aws_secret_cleanup` properties distinguish
+`deleted` from `deletion_requested` and include the accepted deletion timestamp.
+API failures still fail the suite; physical removal is checked separately in the live audit.
 
 ## License
 

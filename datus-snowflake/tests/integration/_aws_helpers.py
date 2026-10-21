@@ -4,6 +4,7 @@
 
 """Ownership-scoped cleanup and isolated profiles for live AWS acceptance."""
 
+import json
 import os
 import time
 from contextlib import contextmanager
@@ -33,22 +34,22 @@ def temporary_secret_value(client, arn, raw):
         publish_secret(client, arn, original)
 
 
-def delete_secret(client, arn, tags):
+def delete_secret(client, arn, tags, record):
     actual = {item["Key"]: item["Value"] for item in client.describe_secret(SecretId=arn)["Tags"]}
-    assert actual == tags
-    client.delete_secret(SecretId=arn, ForceDeleteWithoutRecovery=True)
-    for _ in range(60):
-        try:
-            client.describe_secret(SecretId=arn)
-        except client.exceptions.ResourceNotFoundException:
-            return
-        time.sleep(0.5)
-    pytest.fail("Owned test Secret remains after deletion")
+    assert tags.items() <= actual.items(), "Refusing to delete a Secret without matching ownership"
+    response = client.delete_secret(SecretId=arn, ForceDeleteWithoutRecovery=True)
+    assert response["ARN"] == arn and response.get("DeletionDate") is not None
+    result = {"arn": arn, "state": "deletion_requested", "deletion_date": response["DeletionDate"].isoformat()}
+    try:
+        client.describe_secret(SecretId=arn)
+    except client.exceptions.ResourceNotFoundException:
+        result["state"] = "deleted"
+    record("aws_secret_cleanup", json.dumps(result))
 
 
 def delete_role(client, name, tags):
     actual = {item["Key"]: item["Value"] for item in client.list_role_tags(RoleName=name)["Tags"]}
-    assert actual == tags
+    assert tags.items() <= actual.items(), "Refusing to delete a Role without matching ownership"
     for policy in client.list_role_policies(RoleName=name)["PolicyNames"]:
         client.delete_role_policy(RoleName=name, PolicyName=policy)
     client.delete_role(RoleName=name)
