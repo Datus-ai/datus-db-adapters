@@ -1,8 +1,23 @@
+from datetime import date
+
 import pytest
 
 from datus_db_core import DatusDbException
+from datus_hana.analysis import analyze_hana_sql
 
 pytestmark = pytest.mark.integration
+
+
+def test_native_scalar_analysis_and_sdk_execution_agree(connector):
+    sql = """SELECT TO_VARCHAR(DATE '2026-10-01', 'YYYY-MM') AS "month_key",
+        ADD_DAYS(DATE '2026-10-01', 1) AS "next_day",
+        DAYS_BETWEEN(DATE '2026-10-01', DATE '2026-10-03') AS "days",
+        SECONDS_BETWEEN(TIMESTAMP '2026-10-01 00:00:00', TIMESTAMP '2026-10-02 00:00:00') AS "seconds"
+        FROM DUMMY"""
+    assert analyze_hana_sql(sql).require_complete().tables == ('"DUMMY"',)
+    result = connector.execute_query(sql, "list")
+    assert result.success, result.error
+    assert result.sql_return == [{"month_key": "2026-10", "next_day": date(2026, 10, 2), "days": 2, "seconds": 86400}]
 
 
 def test_bound_unicode_crud_and_transactions(connector, metadata_objects_setup):

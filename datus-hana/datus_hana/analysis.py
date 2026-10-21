@@ -12,6 +12,14 @@ from datus_db_core.sql_analysis import SQLAnalysis
 
 from .handlers import quote_identifier
 
+# Verified native scalar functions not recognized by the compatible parser.
+# Qualified/quoted calls may resolve to user code and are not covered here.
+_NATIVE_SCALARS = {"TO_VARCHAR", "ADD_DAYS", "DAYS_BETWEEN", "SECONDS_BETWEEN"}
+
+
+def _verified_scalar(node: exp.Anonymous) -> bool:
+    return isinstance(node.this, str) and node.name.upper() in _NATIVE_SCALARS and not isinstance(node.parent, exp.Dot)
+
 
 def analyze_hana_sql(sql: str) -> SQLAnalysis:
     try:
@@ -25,7 +33,10 @@ def analyze_hana_sql(sql: str) -> SQLAnalysis:
         return SQLAnalysis("unsupported", diagnostic="Local analysis supports common SELECT queries only")
     if any(isinstance(node, (exp.DML, exp.DDL, exp.Command, exp.Into, exp.Lock)) for node in tree.walk()):
         return SQLAnalysis("unsupported", diagnostic="Query contains a write, lock, or opaque statement")
-    if any(isinstance(node, (exp.Anonymous, exp.UDTF)) for node in tree.walk()):
+    if any(
+        isinstance(node, exp.UDTF) or isinstance(node, exp.Anonymous) and not _verified_scalar(node)
+        for node in tree.walk()
+    ):
         return SQLAnalysis("unsupported", diagnostic="Unverified scalar/table functions have unknown object access")
     # The compatible parser treats HANA sequence access as a qualified column.
     if any(column.table and column.name.upper() in {"NEXTVAL", "CURRVAL"} for column in tree.find_all(exp.Column)):

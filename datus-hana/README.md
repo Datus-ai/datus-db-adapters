@@ -82,6 +82,13 @@ replay of writes after a connection error. List, CSV, pandas, and Arrow outputs
 are supported. Exceeding the row/byte budget fails explicitly, with no silent
 truncation; duplicate result names require aliases. `close()` is idempotent.
 
+Common-query analysis recognizes unqualified native scalar calls to
+`TO_VARCHAR`, `ADD_DAYS`, `DAYS_BETWEEN`, and `SECONDS_BETWEEN`, including
+their nested arguments and underlying tables. Qualified or quoted function
+names, unknown functions, table functions, and sequence access remain outside
+the verified subset. The connector also supplies tenant/schema naming guidance
+through `get_sql_generation_context()` for Agent SQL prompts.
+
 Metadata comes from SAP system views, independently of SQL parsing. Table DDL
 returned for discovery describes columns only; constraints, defaults, physical
 layout, and lossless migration are not claimed. Migration target capabilities
