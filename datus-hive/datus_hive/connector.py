@@ -85,6 +85,11 @@ class HiveConnector(SQLAlchemyConnector):
                 return self.engine
             try:
                 connect_args = dict(self._connect_args)
+                engine_args = {}
+                if self.config.server_type == "inceptor":
+                    from .inceptor import dbapi
+
+                    engine_args["module"] = dbapi
                 self.engine = create_engine(
                     self.connection_string,
                     pool_size=10,
@@ -93,6 +98,7 @@ class HiveConnector(SQLAlchemyConnector):
                     pool_recycle=3600,
                     pool_pre_ping=True,
                     connect_args=connect_args,
+                    **engine_args,
                 )
                 self._owns_engine = True
                 return self.engine

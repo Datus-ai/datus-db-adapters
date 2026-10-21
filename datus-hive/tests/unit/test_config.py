@@ -14,6 +14,7 @@ def test_config_defaults_and_required_fields():
     assert config.model_dump() == {
         "host": "127.0.0.1",
         "port": 10000,
+        "server_type": "hive",
         "database": None,
         "username": "hue",
         "password": "",
@@ -54,6 +55,17 @@ def test_config_requires_username():
 def test_config_forbids_extra_fields():
     with pytest.raises(ValidationError):
         HiveConfig(username="hue", extra_field="not_allowed")
+
+
+@pytest.mark.parametrize("server_type", ["hive", "inceptor"])
+def test_server_type_from_carrier_map(server_type):
+    config = HiveConfig.from_config_map({"db.username": "hive", "db.server_type": server_type}, prefix="db.")
+    assert config.server_type == server_type
+
+
+def test_server_type_rejects_unknown_protocol():
+    with pytest.raises(ValidationError, match="server_type"):
+        HiveConfig(username="hive", server_type="unknown")
 
 
 def test_config_from_carrier_map_prefix():

@@ -94,6 +94,7 @@ for column in schema:
 |-----------|------|---------|-------------|
 | `host` | str | `127.0.0.1` | HiveServer2 host |
 | `port` | int | `10000` | HiveServer2 Thrift port |
+| `server_type` | str | `hive` | Result protocol: `hive` or `inceptor` |
 | `database` | str | `None` | Default database (falls back to `default`) |
 | `username` | str | **required** | Hive username |
 | `password` | str | `""` | Password (for LDAP/CUSTOM auth) |
@@ -153,6 +154,58 @@ change process-wide Kerberos settings. LDAP/CUSTOM continue to use passwords.
 For integration tests, set `HIVE_AUTH=KERBEROS`,
 `HIVE_KERBEROS_SERVICE_NAME=hive`, and the usual `HIVE_HOST`, `HIVE_PORT`, and
 `HIVE_USERNAME` variables in a process with a valid ticket cache.
+
+### Inceptor result types
+
+Select Inceptor's result protocol explicitly for an Inceptor endpoint:
+
+```yaml
+agent:
+  services:
+    datasources:
+      inceptor:
+        type: hive
+        server_type: inceptor
+        host: inceptor.example.com
+        port: 10000
+        username: hive
+        database: default
+        auth: NONE
+```
+
+Keep the authentication settings appropriate to your endpoint. The default
+`server_type: hive` retains Apache Hive's PyHive driver. Inceptor uses different
+IDs for CHAR, VARCHAR and both interval types, and adds VARCHAR2, TIME, GEO,
+JSON and CURSOR. Its connection uses a dedicated result decoder without
+changing PyHive's process-wide type definitions or other connections.
+
+VARCHAR2/CHAR/VARCHAR values retain their strings, including Unicode and padding.
+TIME and intervals retain the server's textual representation (including
+`24:00:00` and month intervals); JSON retains JSON text, and GEO retains the
+server's text or binary payload. Nested CURSOR operation handles are fetched
+as lists of records and closed after materialization, including on failure.
+NULL values remain `None`. Unknown type IDs report the column name and ID.
+
+This protocol targets the definitions in TDH CE 2024.5's
+`inceptor-service-8.37.3.jar`. The local CE engine replaces non-ASCII strings
+inside JSON values before returning them over HS2; converting that JSON to
+STRING on the server has the same limitation. The driver preserves the value
+actually returned by the server. Other server versions require their own
+compatibility checks.
+
+The scalar types and a native SYS_REFCURSOR OUT parameter are covered against
+the local Inceptor engine. The cursor regression uses vendor prepared-call RPCs
+to obtain a real handle, reads nested VARCHAR2 values with the result decoder,
+and checks that the operation handle is closed afterwards. Protocol decoding
+and cleanup failures also have unit tests.
+
+The manual Inceptor fixture and readiness probe select this protocol. For the
+generic integration suite against an Inceptor endpoint, additionally export
+`HIVE_SERVER_TYPE=inceptor`. Run the result-type regression suite with:
+
+```bash
+INCEPTOR_TEST=1 python -m pytest tests/integration/inceptor/test_result_types.py -m integration -v
+```
 
 ## Features
 

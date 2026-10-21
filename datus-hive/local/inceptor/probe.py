@@ -9,6 +9,7 @@ from datus_hive import HiveConfig, HiveConnector
 def config_from_env() -> HiveConfig:
     return HiveConfig(
         host=os.getenv("HIVE_HOST", "localhost"),
+        server_type="inceptor",
         port=int(os.getenv("HIVE_PORT", os.getenv("INCEPTOR_HS2_PORT", "19110"))),
         username=os.getenv("HIVE_USERNAME", "hive"),
         password=os.getenv("HIVE_PASSWORD", ""),
