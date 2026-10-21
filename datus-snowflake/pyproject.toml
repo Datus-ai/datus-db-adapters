@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datus-snowflake"
-version = "0.1.9"
+version = "0.1.10"
 description = "Snowflake adapter for Datus Agent"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "cryptography>=41.0.0",
-    "datus-db-core>=0.1.7",
+    "datus-db-core>=0.1.9",
     # SDK 5 removes the Connect API used by this adapter.
     "snowflake-connector-python>=3.6.0,<5.0.0",
     "pandas>=2.1.2,<2.2.0",
@@ -24,6 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+aws = ["datus-db-core[aws]>=0.1.9"]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",

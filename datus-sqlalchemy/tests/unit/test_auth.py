@@ -28,13 +28,13 @@ def test_secret_cache_version_refresh_and_expired_refresh_failure():
                 params,
             )
         stub.add_client_error("get_secret_value", "AccessDeniedException", "do not expose me", expected_params=params)
-        with patch("datus_sqlalchemy.auth.time.monotonic", return_value=0):
+        with patch("datus_db_core.secrets.time.monotonic", return_value=0):
             assert credentials.secret_version() == "a" * 32
             assert credentials.connection_parameters() == {"user": "alice", "password": "old"}
-        with patch("datus_sqlalchemy.auth.time.monotonic", return_value=11):
+        with patch("datus_db_core.secrets.time.monotonic", return_value=11):
             assert credentials.secret_version() == "b" * 32
             assert credentials.connection_parameters() == {"user": "alice", "password": "new"}
-        with patch("datus_sqlalchemy.auth.time.monotonic", return_value=22):
+        with patch("datus_db_core.secrets.time.monotonic", return_value=22):
             with pytest.raises(DatusDbException) as exc:
                 credentials.connection_parameters()
             assert "AccessDeniedException" in str(exc.value)

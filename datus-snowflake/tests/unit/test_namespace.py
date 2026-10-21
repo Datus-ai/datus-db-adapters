@@ -11,6 +11,9 @@ from datus_snowflake import SnowflakeConnector
 
 
 class RecordingConnection:
+    def is_closed(self):
+        return False
+
     def __init__(self):
         self.cursor_obj = RecordingCursor()
 
