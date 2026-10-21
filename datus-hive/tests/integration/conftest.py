@@ -42,6 +42,7 @@ def _build_hive_config() -> HiveConfig:
         host=os.getenv("HIVE_HOST", "localhost"),
         port=int(os.getenv("HIVE_PORT", "10000")),
         database=os.getenv("HIVE_DATABASE", "default"),
+        server_type=os.getenv("HIVE_SERVER_TYPE", "hive"),
         username=os.getenv("HIVE_USERNAME", "hive"),
         password=os.getenv("HIVE_PASSWORD", ""),
         auth=auth if auth else None,

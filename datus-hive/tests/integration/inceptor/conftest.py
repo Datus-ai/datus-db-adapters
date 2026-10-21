@@ -44,6 +44,7 @@ def connector():
         auth=os.environ.get("HIVE_AUTH", "NONE"),
         kerberos_service_name=os.environ.get("HIVE_KERBEROS_SERVICE_NAME") or None,
         database="default",
+        server_type="inceptor",
     )
     connection = HiveConnector(config)
     try:

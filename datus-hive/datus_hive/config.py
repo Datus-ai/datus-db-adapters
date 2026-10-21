@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, Mapping, Optional, Self
+from typing import Any, Dict, Literal, Mapping, Optional, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -42,6 +42,9 @@ class HiveConfig(BaseModel):
 
     host: str = Field(default="127.0.0.1", description="Hive server host")
     port: int = Field(default=10000, description="Hive server port")
+    server_type: Literal["hive", "inceptor"] = Field(
+        default="hive", description="Server result protocol: Apache Hive or Transwarp Inceptor"
+    )
     database: Optional[str] = Field(default=None, description="Default database name")
     username: str = Field(..., description="Hive username")
     password: str = Field(
