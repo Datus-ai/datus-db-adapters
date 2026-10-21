@@ -250,6 +250,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
         "hologres",
         "maxcompute",
         "dws",
+        "snowflake",
     }
     assert {name for name, target in targets.items() if target.enabled} == COMPOSE_TARGETS | {
         "bigquery",
@@ -262,6 +263,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
         "dws",
         "aurora-mysql",
         "aurora-postgresql",
+        "snowflake",
     }
 
 

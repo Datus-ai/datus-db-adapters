@@ -18,8 +18,8 @@ pip install datus-snowflake
 ```
 
 This will automatically install the required dependencies:
-- `datus-agent>=0.3.0`
-- `snowflake-connector-python>=3.6.0`
+- `datus-db-core>=0.1.9`
+- `snowflake-connector-python>=3.6.0,<5.0.0`
 
 ## Usage
 
@@ -95,6 +95,64 @@ connector = SnowflakeConnector(
 `private_key` takes precedence over `private_key_file` and `password` when
 provided. Without `private_key`, exactly one of `password` or `private_key_file`
 must be provided; passing both (or neither) raises a `ValueError`.
+
+### AWS Secrets Manager credentials
+
+Install the optional AWS dependency with `pip install 'datus-snowflake[aws]>=0.1.10'`.
+Authentication remains Snowflake key-pair or password authentication; Secrets Manager
+supplies the credential at physical login time.
+
+```python
+connector = SnowflakeConnector({
+    "account": "myaccount",
+    "warehouse": "my_warehouse",
+    "role": "READER",
+    "auth_mode": "key_pair",
+    "secret_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:snowflake-example",
+    "secret_key_mapping": {
+        "username": "sf_user",
+        "private_key": "sf_key",
+        "private_key_file_pwd": "sf_passphrase",
+    },
+    "secret_cache_ttl_seconds": 300,
+    "aws": {"region": "us-east-1", "profile": "datus-prod"},
+})
+```
+
+The Secret's JSON maps top-level keys to nonempty strings. Omit the passphrase
+mapping for an unencrypted PEM. Without mapping (or with all mapping fields blank),
+the entire `SecretString` is the credential: specify a configured `username` and
+use a raw unencrypted PEM or `auth_mode: password` with a raw password. JSON
+passwords use a `password` mapping. `SecretBinary` is unsupported. Secret references
+cannot be combined with inline credentials or key files. Other Secret fields cannot
+override the configured account, role, warehouse or namespace. Mapped/configured
+usernames must agree; changing the effective username requires a new connector and
+refreshing identity-dependent metadata caches.
+
+The cache lasts 1–300 seconds (default 300) and new logins read `AWSCURRENT` after
+expiry. Existing sessions continue without polling or periodic disconnection.
+`refresh_credentials()` explicitly refreshes the cache for the next login without
+closing the current connection. `close(); connect()` creates a new session using
+the current cache, restoring managed database/schema and configured role/warehouse.
+Temporary objects and arbitrary session settings are not restored; business SQL is
+never automatically replayed. An unexpectedly closed SDK session returns a
+connection error; call `connect()` explicitly to start a fresh session before
+submitting more SQL. Keep old credentials valid through the cache window
+while publishing and validating their replacement. Early revocation can fail new
+logins that still use cached credentials. AWS Secrets Manager changes are eventually
+consistent: verify that the replacement is visible as `AWSCURRENT` before retiring
+the old key; the cache TTL does not bound AWS propagation. Password authentication still follows the
+Snowflake user's MFA policy.
+
+AWS uses the SDK credential chain, including refreshable assume-role profiles. Set
+`role_arn`, `source_profile` (or `credential_source`) and `external_id` in the shared
+AWS config and select `aws.profile`; no static STS credentials are copied. The caller
+and target trust policy must permit AssumeRole. Grant the reading identity
+`secretsmanager:GetSecretValue` and, for a customer-managed key, `kms:Decrypt`.
+`aws.ca_bundle` configures AWS HTTPS, not Snowflake TLS.
+
+See the [Agent profile documentation](https://docs.datus.ai/configuration/datasources/snowflake/)
+for the YAML configuration.
 
 ### Execute Queries
 
@@ -285,7 +343,7 @@ The adapter will be automatically loaded when you use `type: snowflake`.
 ## Architecture
 
 This adapter:
-- Inherits from `BaseSqlConnector` in `datus-agent`
+- Inherits from `BaseSqlConnector` in `datus-db-core`
 - Uses native Snowflake connector for optimal performance
 - Implements all required abstract methods
 - Provides Snowflake-specific optimizations (SHOW commands, Arrow format)
@@ -297,9 +355,74 @@ This adapter:
 cd datus-snowflake
 pip install -e .
 
-# Run tests
-pytest tests/
+# Run unit tests without a database
+uv run python -m pytest tests/unit -m 'not integration'
+
+# Run live tests after exporting the SNOWFLAKE_* configuration
+uv run python -m pytest tests/integration -m integration
 ```
+
+Live tests use `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_WAREHOUSE`,
+`SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`, optional `SNOWFLAKE_ROLE`, and either
+`SNOWFLAKE_PASSWORD` or `SNOWFLAKE_PRIVATE_KEY_FILE` with optional
+`SNOWFLAKE_PRIVATE_KEY_FILE_PWD`.
+
+The dedicated Secret acceptance module is opt-in:
+
+```bash
+DATUS_SECRET_AWS_TESTS=1 DATUS_SNOWFLAKE_SECRET_TESTS=1 \
+  uv run python -m pytest tests/integration/test_secret_rotation.py -m integration
+```
+
+AWS uses `DATUS_SECRET_AWS_REGION` (default `us-east-1`), optional
+`DATUS_SECRET_AWS_PROFILE`, and the SDK credential chain. It creates and deletes
+ownership-tagged temporary Secrets. Omit `DATUS_SNOWFLAKE_SECRET_TESTS` to run
+AWS-only checks. Full rotation additionally requires the existing Snowflake key-pair
+login to manage users, roles and warehouse grants. It creates a temporary service
+user/role, rotates its two keys, checks old-key rejection and session continuity,
+then verifies cleanup. It never changes the login user's keys. CI is explicitly
+disabled for this cloud target until scoped credentials and a workflow are assigned.
+
+For a single-account simulation of the third-party role flow:
+
+```bash
+DATUS_SECRET_ROLE_TESTS=1 DATUS_SNOWFLAKE_SECRET_TESTS=1 \
+  uv run python -m pytest tests/integration/test_secret_assume_role.py -m integration
+```
+
+The provisioning identity additionally needs permission to create/tag/delete IAM
+roles and manage their inline policies. This module creates two owned temporary
+roles and two Secrets, and writes isolated temporary profiles referencing the
+existing AWS credentials. It checks profile-based role chaining, correct/wrong/
+missing External IDs, untrusted callers, source-role and Secret resource isolation,
+and a real Snowflake key-pair login. Omit `DATUS_SNOWFLAKE_SECRET_TESTS` for AWS-only
+acceptance. Existing AWS configuration and credentials are left unchanged. Cleanup
+verifies that both roles and Secrets are absent. Both roles belong to one AWS
+account: a true second-account trust/organization-policy/KMS boundary still requires
+separate acceptance.
+
+Customer-managed KMS acceptance can also run in the existing AWS account:
+
+```bash
+DATUS_SECRET_KMS_TESTS=1 DATUS_SNOWFLAKE_SECRET_TESTS=1 \
+  uv run python -m pytest tests/integration/test_secret_kms.py -m integration \
+  --junitxml=/tmp/snowflake-secret-kms.xml
+```
+
+The provisioning identity needs KMS CreateKey/GetKeyPolicy/PutKeyPolicy/DescribeKey,
+TagResource/ListResourceTags, GenerateDataKey/Decrypt, DisableKey/EnableKey and
+ScheduleKeyDeletion, plus the temporary IAM/Secret provisioning permissions above.
+The suite creates one owned symmetric KMS key, a KMS-encrypted Secret, a control
+Secret and four restricted reader roles. It verifies successful reads/login,
+missing Secret or KMS permissions, an explicit key-policy denial, and disabling/
+re-enabling the key. The control Secret proves that KMS-denied roles still have
+effective Secret read permission. All denial probes bypass adapter credential
+caching; they do not require existing Snowflake sessions to terminate.
+
+Cleanup deletes the owned Secrets and roles and verifies that the KMS key enters
+`PendingDeletion` with a seven-day waiting period. The key is not immediately
+deleted. JUnit suite properties record its ID, state and scheduled deletion date
+for a subsequent live audit. Omit `DATUS_SNOWFLAKE_SECRET_TESTS` for AWS-only checks.
 
 ## License
 

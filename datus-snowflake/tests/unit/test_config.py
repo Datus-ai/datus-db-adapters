@@ -15,6 +15,28 @@ from datus_snowflake import SnowflakeConfig, SnowflakeConnector
 from datus_snowflake.connector import _handle_snowflake_exception
 
 
+def test_config_defaults():
+    config = SnowflakeConfig(account="account", username="reader", warehouse="warehouse", password="test-password")
+    assert config.model_dump() == {
+        "account": "account",
+        "username": "reader",
+        "auth_mode": None,
+        "secret_ref": None,
+        "secret_key_mapping": None,
+        "secret_cache_ttl_seconds": 300,
+        "aws": None,
+        "password": config.password,
+        "private_key_file": None,
+        "private_key": None,
+        "private_key_file_pwd": None,
+        "warehouse": "warehouse",
+        "database": None,
+        "schema_name": None,
+        "role": None,
+        "timeout_seconds": 30,
+    }
+
+
 def _private_key_material(encryption_password: bytes | None = None) -> tuple[str, bytes]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     encryption_algorithm = (

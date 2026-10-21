@@ -44,6 +44,9 @@ class JsonResultCursor:
 
 
 class JsonResultConnection:
+    def is_closed(self):
+        return False
+
     def __init__(self):
         self.cursor_obj = JsonResultCursor()
 
