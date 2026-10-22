@@ -1,0 +1,16 @@
+# Overlay for docker-compose.yml; all data belongs to the selected Compose project.
+services:
+  hive-metastore:
+    mem_limit: 2g
+    environment:
+      HADOOP_HEAPSIZE: "512"
+      HIVE_CUSTOM_CONF_DIR: /hs2-conf
+    volumes:
+      - ./tests/integration/hs2/hive-conf:/hs2-conf:ro
+  hive-server:
+    mem_limit: 4g
+    environment:
+      HADOOP_HEAPSIZE: "1024"
+      HIVE_CUSTOM_CONF_DIR: /hs2-conf
+    volumes:
+      - ./tests/integration/hs2/hive-conf:/hs2-conf:ro

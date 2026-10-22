@@ -53,6 +53,13 @@ kind = "compose"
 package = "datus-hive"
 kind = "compose"
 
+# Dedicated HS2 contracts run locally against CE 2024.5. A scoped external
+# Inceptor endpoint and its Kerberos credentials are not provisioned for CI.
+[targets.inceptor]
+package = "datus-hive"
+kind = "cloud"
+enabled = false
+
 [targets.spark]
 package = "datus-spark"
 kind = "compose"

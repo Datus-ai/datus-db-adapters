@@ -248,6 +248,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
         "aurora-postgresql",
         "bigquery",
         "hologres",
+        "inceptor",
         "maxcompute",
         "dws",
     }
@@ -258,6 +259,7 @@ def test_integration_target_manifest_covers_runner_targets() -> None:
     assert {name for name, target in targets.items() if not target.enabled} == {
         "athena",
         "hana",
+        "inceptor",
         "maxcompute",
         "dws",
         "aurora-mysql",
