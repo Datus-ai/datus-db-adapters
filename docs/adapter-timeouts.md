@@ -411,6 +411,29 @@ ClickZetta rejects fractional hints that the SDK would truncate to zero, plus
 NaN, infinity, booleans and malformed numeric strings. Real SDK job-request tests
 verify the effective positive `jobTimeoutMs` for seconds and millisecond aliases.
 
+### Aurora checkout ordering follow-up
+
+Review found that a reused Aurora PostgreSQL connection could run its writer
+validator after pre-ping but before the checkout socket lease was armed. Its
+`pg_is_in_recovery()` probe or subsequent rollback could then wait indefinitely
+for a lost reply. The lease listener now runs before existing checkout
+validators, as it already did for connection initialization.
+
+Two database-free regressions use the production writer validator, actual
+SQLAlchemy pool/event dispatch and socket-backed DBAPI calls. They separately
+stall the probe and rollback after a successful reuse pre-ping. Before the fix,
+both reached the independent three-second safety timeout; after it, the
+one-second lease interrupts the read, invalidates/closes the connection, releases
+the duplicated descriptor and permits recovery on a later explicit request.
+
+The follow-up passed **704 unit tests** across PostgreSQL, Greenplum, GaussDB,
+DWS, Hologres and SQLAlchemy, plus **six real PostgreSQL 16.15 timeout tests**.
+The latter include two new cases exercising the production Aurora writer
+validator through a fault proxy on both base and per-database engines. This is
+local PostgreSQL protocol/lifecycle coverage, not a live Aurora service test.
+The testing standard now explicitly requires composed checkout-validator
+coverage rather than testing pre-ping and validation only in isolation.
+
 ## Packaging and rollout
 
 Prepared patch versions (not published):

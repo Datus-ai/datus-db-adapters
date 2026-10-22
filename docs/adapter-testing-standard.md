@@ -122,6 +122,11 @@ safety deadline. Cover queries, metadata, and `test_connection()`, connection
 invalidation/closure, no automatic statement replay, and recovery on a later
 explicit request. Check server-side deadline setup on replacement connections
 where supported; distinguish socket inactivity from total query execution time.
+On reused pools with SQL-executing checkout validators (for example Aurora's
+writer-role probe), also stall the validator's query and rollback after pre-ping
+has succeeded. Exercise the real listener order and verify the lease is armed
+before validation, then check invalidation, timer/socket cleanup and explicit
+recovery. Testing pre-ping and the validator separately does not cover this gap.
 See `docs/adapter-timeouts.md` and `datus-mysql/tests/unit/test_timeouts.py`
 (issue #165).
 

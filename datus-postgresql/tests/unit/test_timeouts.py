@@ -175,6 +175,129 @@ def test_pre_ping_has_its_own_deadline_and_releases_it_on_failure():
         peer.close()
 
 
+@pytest.mark.parametrize("stalled_call", ["execute", "rollback"])
+def test_reused_aurora_writer_probe_is_bounded_and_invalidated(stalled_call):
+    """A successful pre-ping must not leave Aurora checkout SQL unprotected."""
+    import socket
+    import sqlite3
+    import time
+
+    from sqlalchemy import event
+    from sqlalchemy.pool import QueuePool
+
+    from datus_postgresql import PostgreSQLConnector
+
+    key = "datus_socket_deadline"
+    connections = []
+    probe_deadlines = []
+    invalidated = []
+    closed = []
+
+    class DriverConnection:
+        """Replace only DBAPI calls; keep real pools, events and blocking I/O."""
+
+        def __init__(self):
+            self.local, self.peer = socket.socketpair()
+            self.local.settimeout(3)  # Independent safety bound, longer than the lease.
+            self.native = sqlite3.connect(":memory:")
+            self.autocommit = False
+            self.stall = False
+            self.probes = 0
+            connections.append(self)
+
+        def __getattr__(self, name):
+            return getattr(self.native, name)
+
+        def fileno(self):
+            return self.local.fileno()
+
+        def wait_for_lost_reply(self):
+            assert self.local.recv(1) == b""
+            raise sqlite3.OperationalError("Aurora writer probe lost its reply")
+
+        def cursor(self):
+            native_cursor = self.native.cursor()
+            cursor = Mock(wraps=native_cursor)
+
+            def execute(sql, *args):
+                if sql == "SELECT pg_is_in_recovery()":
+                    self.probes += 1
+                    probe_deadlines.append(self.record.info.get(key))
+                    if self.stall and stalled_call == "execute":
+                        self.wait_for_lost_reply()
+                    cursor.fetchone.return_value = (False,)
+                elif not sql.startswith("SET statement_timeout"):
+                    return native_cursor.execute(sql, *args)
+
+            cursor.execute.side_effect = execute
+            return cursor
+
+        def rollback(self):
+            if self.stall and stalled_call == "rollback":
+                self.wait_for_lost_reply()
+            self.native.rollback()
+
+        def close(self):
+            self.native.close()
+            self.local.close()
+
+    connector = PostgreSQLConnector(
+        {
+            "username": "reader",
+            "host": "writer.cluster-example.us-east-1.rds.amazonaws.com",
+            "aurora": True,
+            "sslrootcert": "ca.pem",
+            "read_timeout_seconds": 1,
+        }
+    )
+    # Use the production creation path, including its Aurora validator. Only
+    # the DBAPI is a socket-backed surrogate; SQLite avoids PostgreSQL codecs.
+    engine = connector._create_engine("sqlite://", creator=DriverConnection, poolclass=QueuePool, pool_pre_ping=True)
+    event.listen(engine, "connect", lambda connection, record: setattr(connection, "record", record))
+    event.listen(engine, "invalidate", lambda connection, *args: invalidated.append(connection))
+    event.listen(engine, "close", lambda connection, *args: closed.append(connection))
+    try:
+        with engine.connect() as connection:
+            first = connection.connection.dbapi_connection
+            previous = first.record.info[key]
+        assert first.probes == 1
+        assert previous.socket.fileno() == -1
+        assert first.record.info == {}
+
+        first.stall = True
+        started = time.monotonic()
+        with pytest.raises(OperationalError, match="Aurora writer probe lost its reply"):
+            engine.connect()
+        assert time.monotonic() - started < 2.5
+        assert first.probes == 2  # Pre-ping succeeded before the stalled probe.
+        deadline = probe_deadlines[-1]
+        assert deadline is not previous
+        assert deadline.expired is True
+        assert deadline.socket.fileno() == -1
+        assert first.record.info == {}
+        assert invalidated == [first]
+        assert closed == [first]
+        assert first.local.fileno() == -1
+        assert connections == [first]  # No automatic replacement/replay.
+        first.peer.settimeout(1)
+        assert first.peer.recv(1) == b""
+
+        with engine.connect() as connection:
+            replacement = connection.connection.dbapi_connection
+            recovered_deadline = replacement.record.info[key]
+            assert replacement is not first
+            assert replacement.probes == 1
+        assert connections == [first, replacement]
+        assert recovered_deadline.socket.fileno() == -1
+        assert replacement.record.info == {}
+    finally:
+        engine.dispose()
+        connector.close()
+        for connection in connections:
+            connection.close()
+            connection.peer.close()
+
+
 def test_pg8000_socket_fallback_is_bounded():
     import socket
 

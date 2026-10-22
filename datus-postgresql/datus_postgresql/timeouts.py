@@ -76,9 +76,10 @@ def configure_timeouts(engine: Engine, seconds: float, query_seconds: int) -> No
         stop(connection, record)
         record.info[key] = SocketDeadline(connection, seconds)
 
-    # insert=True also bounds the dialect's first-connection introspection.
+    # Arm before dialect introspection and existing checkout validators, whose
+    # SQL/rollback must remain bounded after the previous lease was cancelled.
     event.listen(engine, "connect", arm, insert=True)
-    event.listen(engine, "checkout", arm)
+    event.listen(engine, "checkout", arm, insert=True)
     event.listen(engine, "close", stop)
     event.listen(engine, "invalidate", stop)
 
