@@ -83,7 +83,7 @@ def test_per_operation_connections_are_independent():
     query_result = MagicMock()
     query_result.fetchall.return_value = [MagicMock(_asdict=lambda: {"id": 1})]
     conn1.execute.return_value = MagicMock()  # for do_switch_context
-    conn2.execute.return_value = query_result  # for the actual query
+    conn2.exec_driver_sql.return_value = query_result  # for the actual query
 
     with patch("datus_sqlalchemy.connector.create_engine", return_value=engine):
         connector.execute_content_set("USE analytics")
@@ -166,7 +166,7 @@ def test_execute_query_with_context_params():
     mock_conn = MagicMock()
     query_result = MagicMock()
     query_result.fetchall.return_value = [MagicMock(_asdict=lambda: {"id": 1})]
-    mock_conn.execute.return_value = query_result
+    mock_conn.exec_driver_sql.return_value = query_result
 
     engine = MagicMock()
     engine.connect.return_value = mock_conn
@@ -188,7 +188,7 @@ def test_execute_insert_with_context_params():
     mock_result = MagicMock()
     mock_result.rowcount = 1
     mock_result.inserted_primary_key = None
-    mock_conn.execute.return_value = mock_result
+    mock_conn.exec_driver_sql.return_value = mock_result
 
     engine = MagicMock()
     engine.connect.return_value = mock_conn
@@ -208,7 +208,7 @@ def test_execute_ddl_with_context_params():
     mock_conn = MagicMock()
     mock_result = MagicMock()
     mock_result.rowcount = 0
-    mock_conn.execute.return_value = mock_result
+    mock_conn.exec_driver_sql.return_value = mock_result
 
     engine = MagicMock()
     engine.connect.return_value = mock_conn

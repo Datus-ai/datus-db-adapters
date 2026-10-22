@@ -100,6 +100,10 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
     Thread-safe: each operation checks out a connection from the engine pool,
     applies the current thread's context via do_switch_context(), executes,
     and returns the connection to the pool.
+
+    SQL strings are complete, parameter-free statements. Use exec_driver_sql
+    with no_parameters=True to preserve literal colons and percent signs without
+    SQLAlchemy bind parsing or DBAPI interpolation of an empty parameter set.
     """
 
     def __init__(self, connection_string: str, dialect: str = "", timeout_seconds: int = 30):
@@ -267,7 +271,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
 
         Usage:
             with self._conn(database_name="db1") as conn:
-                result = conn.execute(text(sql))
+                result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
         """
         effective_catalog = catalog_name or self.catalog_name
         effective_database = database_name or self.database_name
@@ -441,7 +445,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
 
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                result = conn.execute(text(sql))
+                result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 rows = result.fetchall()
                 return [row._asdict() for row in rows]
         except DatusDbException:
@@ -456,7 +460,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute INSERT statement."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
 
                 # Get inserted primary key or row count
@@ -487,7 +491,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute UPDATE statement."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
                 return ExecuteSQLResult(
                     success=True,
@@ -506,7 +510,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute DELETE statement."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
                 return ExecuteSQLResult(
                     success=True,
@@ -525,7 +529,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute DDL statement (CREATE, ALTER, DROP, etc.)."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
                 return ExecuteSQLResult(
                     success=True,
@@ -596,7 +600,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute query and return Arrow table."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                result = conn.execute(text(sql))
+                result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 if result.returns_rows:
                     df = DataFrame(result.fetchall(), columns=result.keys())
                     table = Table.from_pandas(df)
@@ -630,7 +634,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute USE/SET commands."""
         try:
             with self._conn() as conn:
-                conn.execute(text(sql))
+                conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
 
             # Update thread-local context if applicable
@@ -657,7 +661,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
                 for query in queries:
-                    result = conn.execute(text(query))
+                    result = conn.exec_driver_sql(query, execution_options={"no_parameters": True})
                     if result.returns_rows:
                         df = DataFrame(result.fetchall(), columns=list(result.keys()))
                         results.append(df.to_dict(orient="records"))
@@ -899,7 +903,9 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                result = conn.execute(text(sql).execution_options(stream_results=True, max_row_buffer=max_rows))
+                result = conn.exec_driver_sql(
+                    sql, execution_options={"no_parameters": True, "stream_results": True, "max_row_buffer": max_rows}
+                )
                 if result.returns_rows:
                     if with_header:
                         yield result.keys()

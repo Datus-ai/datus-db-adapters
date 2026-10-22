@@ -18,7 +18,7 @@ def metadata_engine():
     connection = connector.engine.connect.return_value
     responses = {}
 
-    def execute(statement):
+    def execute(statement, **kwargs):
         sql = str(statement)
         if sql.startswith("USE "):
             return MagicMock()
@@ -29,7 +29,7 @@ def metadata_engine():
         result.fetchall.return_value = [MagicMock(**{"_asdict.return_value": row}) for row in rows]
         return result
 
-    connection.execute.side_effect = execute
+    connection.exec_driver_sql.side_effect = execute
     try:
         yield connector, responses, connection
     finally:
@@ -48,7 +48,7 @@ def test_table_listing_excludes_views_before_qualification(metadata_engine, data
     responses[f"SHOW VIEWS IN {quoted_database}"] = [{view_column: "report_view"}]
 
     assert connector.get_tables(database_name=database) == ["base_table" if database else "current.base_table"]
-    executed = [str(call.args[0]) for call in connection.execute.call_args_list]
+    executed = [str(call.args[0]) for call in connection.exec_driver_sql.call_args_list]
     assert f"SHOW TABLES IN {quoted_database}" in executed
     assert f"SHOW VIEWS IN {quoted_database}" in executed
 

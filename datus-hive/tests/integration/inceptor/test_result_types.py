@@ -4,6 +4,8 @@
 
 """Real Inceptor result types, including IDs that differ from Apache Hive."""
 
+import csv
+import io
 import json
 
 import pytest
@@ -43,22 +45,45 @@ def test_inceptor_scalar_type_round_trip(connector, expression, type_name, expec
     assert result.sql_return == [{"value": expected}]
 
 
-def test_inceptor_json_payload(connector):
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ('{"nested":[1,null,"json"]}', {"nested": [1, None, "json"]}),
+        (
+            '{"customer_id":10,"tags":["vip",null],"active":true}',
+            {"customer_id": 10, "tags": ["vip", None], "active": True},
+        ),
+        ('{"inactive":false,"empty":null,"amount":-10.5}', {"inactive": False, "empty": None, "amount": -10.5}),
+        ('{"note":"50% / %s / %(name)s / :name"}', {"note": "50% / %s / %(name)s / :name"}),
+    ],
+)
+@pytest.mark.parametrize("result_format", ["list", "csv", "pandas", "arrow"])
+def test_inceptor_json_payload(connector, payload, expected, result_format):
     # CE 2024.5 replaces non-ASCII JSON strings before writing its HS2 response.
     # UTF-8 preservation at the driver boundary is covered by the wire tests;
     # use a server-supported JSON value for this engine round trip.
-    expression = 'JSON_PARSE(\'{"nested": [1, null, "json"]}\')'
+    expression = f"JSON_PARSE('{payload}')"
     with connector._ensure_engine().connect() as connection:
         cursor = connection.connection.dbapi_connection.cursor()
         try:
             cursor.execute(f"SELECT {expression} AS value")
             assert cursor.description[0][1] == "JSON_TYPE"
-            assert json.loads(cursor.fetchall()[0][0]) == {"nested": [1, None, "json"]}
+            assert json.loads(cursor.fetchall()[0][0]) == expected
         finally:
             cursor.close()
-    result = connector.execute_query(f"SELECT {expression} AS value", result_format="list")
+    result = connector.execute_query(f"SELECT {expression} AS value", result_format=result_format)
     contract.assert_success(result, "JSON result")
-    assert json.loads(result.sql_return[0]["value"]) == {"nested": [1, None, "json"]}
+    assert result.row_count == 1
+    if result_format == "list":
+        rows = result.sql_return
+    elif result_format == "csv":
+        rows = list(csv.DictReader(io.StringIO(result.sql_return)))
+    elif result_format == "pandas":
+        rows = result.sql_return.to_dict(orient="records")
+    else:
+        rows = result.sql_return.to_pylist()
+    assert len(rows) == 1
+    assert json.loads(rows[0]["value"]) == expected
 
 
 def test_system_varchar2_and_aggregate_queries(connector):
