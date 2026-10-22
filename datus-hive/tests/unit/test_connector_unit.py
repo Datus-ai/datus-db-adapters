@@ -181,7 +181,10 @@ def test_build_connect_args_minimal():
 )
 def test_kerberos_arguments_reach_engine(service_name, expected_service):
     connection = HiveConnector(HiveConfig(username="alice", auth="KERBEROS", kerberos_service_name=service_name))
-    with patch("datus_hive.connector.create_engine") as factory:
+    with (
+        patch("datus_hive.connector.create_engine") as factory,
+        patch("datus_hive.connector.configure_thrift_timeouts"),
+    ):
         engine = connection._ensure_engine()
         assert engine is factory.return_value
         assert factory.call_args.kwargs["connect_args"] == {
@@ -196,17 +199,22 @@ def test_kerberos_arguments_reach_pyhive():
         HiveConfig(host="hs2.example.com", username="alice", auth="KERBEROS", kerberos_service_name="hive")
     )
     try:
-        with patch("pyhive.hive.Connection", side_effect=RuntimeError("driver boundary")) as driver:
+        with (
+            patch("pyhive.hive.Connection", side_effect=RuntimeError("driver boundary")) as driver,
+            patch("pyhive.hive.get_installed_sasl") as sasl,
+        ):
             with pytest.raises(RuntimeError, match="driver boundary"):
                 connection._ensure_engine().connect()
-            driver.assert_called_once_with(
-                host="hs2.example.com",
-                port=10000,
-                username="alice",
-                password=None,
-                database="default",
-                auth="KERBEROS",
-                kerberos_service_name="hive",
+            args = driver.call_args.kwargs
+            assert args["username"] == "alice"
+            assert args["database"] == "default"
+            transport = args["thrift_transport"]
+            assert transport.mechanism == "GSSAPI"
+            assert transport._trans.host == "hs2.example.com"
+            assert transport._trans._timeout == 30
+            transport.sasl_client_factory()
+            sasl.assert_called_once_with(
+                host="hs2.example.com", sasl_auth="GSSAPI", service="hive", username="alice", password=None
             )
     finally:
         connection.close()

@@ -27,6 +27,8 @@ def register():
                 secure=config.get("secure", None),
                 hints=config.get("hints", None),
                 extra=config.get("extra", None),
+                timeout_seconds=config.get("timeout_seconds", 30),
+                query_timeout_seconds=config.get("query_timeout_seconds"),
             )
         else:
             # Handle other config types (like Pydantic models)
@@ -41,6 +43,8 @@ def register():
                 secure=getattr(config, "secure", None),
                 hints=getattr(config, "hints", None),
                 extra=getattr(config, "extra", None),
+                timeout_seconds=getattr(config, "timeout_seconds", 30),
+                query_timeout_seconds=getattr(config, "query_timeout_seconds", None),
             )
 
     # Register directly with factory - the ClickZetta connector is self-contained

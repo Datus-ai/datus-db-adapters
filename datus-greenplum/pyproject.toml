@@ -1,6 +1,6 @@
 [project]
 name = "datus-greenplum"
-version = "0.1.4"
+version = "0.1.5"
 description = "Greenplum database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,8 +19,8 @@ classifiers = [
 
 dependencies = [
     "datus-db-core>=0.1.7",
-    "datus-sqlalchemy>=0.1.9",
-    "datus-postgresql>=0.1.9",
+    "datus-sqlalchemy>=0.1.11",
+    "datus-postgresql>=0.1.11",
     "psycopg2-binary>=2.9.11",
     "pydantic>=2.0.0",
 ]

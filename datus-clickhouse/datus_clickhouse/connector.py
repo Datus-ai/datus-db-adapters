@@ -93,7 +93,11 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
         self.config = config
         self._default_database = database
         self.configure_connection(
-            connect_args={"verify": config.ca_cert if config.ca_cert is not None else config.verify}
+            connect_args={
+                "verify": config.ca_cert if config.ca_cert is not None else config.verify,
+                "timeout": config.timeout_seconds,
+                "ch_settings": {"max_execution_time": config.query_timeout_seconds or config.timeout_seconds},
+            }
         )
 
     # ==================== System Resources ====================

@@ -29,6 +29,7 @@ class TrinoConfig(BaseModel):
     verify: bool = Field(default=True, description="Verify the HTTPS certificate chain and hostname")
     ca_cert: str | None = Field(default=None, description="Optional PEM CA bundle file for verified HTTPS")
     timeout_seconds: int = Field(default=30, gt=0, description="Connection timeout in seconds")
+    query_timeout_seconds: int | None = Field(default=None, gt=0, description="Override the server query run deadline")
 
     @model_validator(mode="after")
     def validate_tls(self):

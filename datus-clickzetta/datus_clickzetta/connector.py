@@ -108,12 +108,17 @@ class ClickZettaConnector:
         secure: Optional[bool] = None,
         hints: Optional[Dict[str, Any]] = None,
         extra: Optional[Dict[str, Any]] = None,
+        timeout_seconds: int = 30,
+        query_timeout_seconds: Optional[int] = None,
     ):
         # Initialize minimal attributes without calling parent's __init__
         from datus_db_core import ConnectionConfig
 
-        self.config = ConnectionConfig()
-        self.timeout_seconds = 30
+        for value in (timeout_seconds, query_timeout_seconds):
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value <= 0):
+                raise ValueError("ClickZetta timeouts must be positive integer seconds")
+        self.config = ConnectionConfig(timeout_seconds=timeout_seconds)
+        self.timeout_seconds = timeout_seconds
         self.connection = None
         self.dialect = "clickzetta"
         self.db_type = "clickzetta"
@@ -124,7 +129,7 @@ class ClickZettaConnector:
                 ErrorCode.COMMON_MISSING_DEPENDENCY,
                 message=(
                     "ClickZetta connector requires the packages "
-                    "`clickzetta-connector-python` and `clickzetta-zettapark-python`. "
+                    "`clickzetta-connector` and `clickzetta-zettapark-python`. "
                     "Please install them before using the connector."
                 ),
             ) from _CLICKZETTA_IMPORT_ERROR
@@ -159,6 +164,9 @@ class ClickZettaConnector:
         self.database_name = workspace or ""
 
         merged_hints: Dict[str, Any] = dict(_DEFAULT_HINTS)
+        merged_hints["sdk.job.timeout"] = query_timeout_seconds or timeout_seconds
+        merged_hints["sdk.job.polling.timeout"] = min(timeout_seconds, 30)
+        merged_hints["sdk.query.max.retries"] = 1
         if hints:
             merged_hints.update(hints)
 
@@ -176,6 +184,15 @@ class ClickZettaConnector:
             connection_config["secure"] = secure
         if extra:
             connection_config.update(extra)
+        connection_config["hints"] = {**merged_hints, **connection_config["hints"]}
+        for key in ("http_connect_timeout", "http_read_timeout"):
+            value = connection_config.setdefault(key, timeout_seconds)
+            if not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError(f"{key} must be positive seconds")
+        effective_hints = connection_config["hints"]
+        for key in ("sdk.job.timeout", "sdk.job.polling.timeout", "sdk.query.timeout.ms", "querytimeout"):
+            if key in effective_hints and float(effective_hints[key]) <= 0:
+                raise ValueError(f"{key} must be positive")
 
         self._connection_config = connection_config
         # Note: avoid referencing Session in type annotations to prevent runtime/type issues when optional dep missing

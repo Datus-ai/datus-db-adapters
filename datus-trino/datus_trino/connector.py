@@ -57,6 +57,9 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         self._default_schema = config.schema_name
         self._default_database = config.schema_name  # In Trino, schemas map to databases
         connect_args = {
+            "request_timeout": config.timeout_seconds,
+            "max_attempts": 1,
+            "session_properties": {"query_max_run_time": f"{config.query_timeout_seconds or config.timeout_seconds}s"},
             "verify": config.ca_cert if config.ca_cert is not None else config.verify,
             "http_scheme": config.http_scheme,
             # Older Trino dialects decode credentials twice. Override with raw values.

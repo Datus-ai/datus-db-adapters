@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 
 from datus_db_core import get_logger
 from datus_sqlalchemy import SQLAlchemyConnector
+from datus_sqlalchemy.thrift import configure_thrift_timeouts
 
 from .config import SparkConfig
 
@@ -35,6 +36,8 @@ class SparkConnector(SQLAlchemyConnector):
         elif not isinstance(config, SparkConfig):
             raise TypeError(f"config must be SparkConfig or dict, got {type(config)}")
 
+        self._query_timeout = config.query_timeout_seconds or config.timeout_seconds
+
         self.spark_config = config
         self.host = config.host
         self.port = config.port
@@ -61,9 +64,13 @@ class SparkConnector(SQLAlchemyConnector):
             dialect=SPARK_DIALECT,
             timeout_seconds=config.timeout_seconds,
         )
-
         self.dialect = SPARK_DIALECT
         self._default_database = database
+
+    def _create_engine(self, connection_string, **options):
+        engine = super()._create_engine(connection_string, **options)
+        configure_thrift_timeouts(engine, self.timeout_seconds, self._query_timeout)
+        return engine
 
     # ==================== Context Manager Support ====================
 

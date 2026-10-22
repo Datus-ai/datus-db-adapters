@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Set, Union, override
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from datus_db_core import (
     CatalogSupportMixin,
@@ -68,6 +69,10 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             charset=config.charset,
             autocommit=config.autocommit,
             timeout_seconds=config.timeout_seconds,
+            connect_timeout_seconds=config.connect_timeout_seconds,
+            read_timeout_seconds=config.read_timeout_seconds,
+            write_timeout_seconds=config.write_timeout_seconds,
+            query_timeout_seconds=config.query_timeout_seconds,
         )
         super().__init__(mysql_config)
         self._deferred_database = config.database if needs_catalog_switch else ""
@@ -76,6 +81,9 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
         # Override dialect to StarRocks
         self.dialect = "starrocks"
+
+    def _query_timeout_sql(self) -> str:
+        return f"SET query_timeout = {self.config.query_timeout_seconds}"
 
     # ==================== Context Manager Support ====================
 
@@ -248,6 +256,11 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         try:
             query_result = self._execute_pandas(query)
         except Exception as e:
+            # A lost socket is not an information_schema compatibility error.
+            # Preserve the timeout and avoid another request on a fresh connection.
+            cause = e.__cause__
+            if isinstance(cause, DBAPIError) and cause.connection_invalidated:
+                raise
             # information_schema is scanned by the BE through a thrift call back to the FE,
             # which times out (THRIFT_EAGAIN) once a database holds enough objects. SHOW is
             # answered by the FE directly, so it still works when this query does not.

@@ -1,14 +1,14 @@
 [project]
 name = "datus-gaussdb"
-version = "0.1.3"
+version = "0.1.4"
 description = "GaussDB / openGauss adapter for Datus Agent"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
     "datus-db-core>=0.1.7",
-    "datus-sqlalchemy>=0.1.9",
-    "datus-postgresql>=0.1.9",
+    "datus-sqlalchemy>=0.1.11",
+    "datus-postgresql>=0.1.11",
     "gaussdb>=1.0.4,<2",
     "pg8000>=1.31.5,<1.32",
     "psycopg2-binary>=2.9.11",

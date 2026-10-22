@@ -65,6 +65,10 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
                 charset=config.charset,
                 autocommit=config.autocommit,
                 timeout_seconds=config.timeout_seconds,
+                connect_timeout_seconds=config.connect_timeout_seconds,
+                read_timeout_seconds=config.read_timeout_seconds,
+                write_timeout_seconds=config.write_timeout_seconds,
+                query_timeout_seconds=config.query_timeout_seconds,
             )
         )
         # Set after super().__init__() so the inherited MySQL dialect does not

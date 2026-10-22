@@ -35,7 +35,10 @@ class OracleConfig(BaseModel):
         alias="schema",
         description="Default schema (object namespace); defaults to the connecting user's schema",
     )
-    timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+    timeout_seconds: int = Field(
+        default=30, gt=0, description="Pool, TCP connect and database round-trip timeout in seconds"
+    )
+    call_timeout_seconds: int | None = Field(default=None, gt=0, description="Override the database round-trip timeout")
 
     @model_validator(mode="before")
     @classmethod

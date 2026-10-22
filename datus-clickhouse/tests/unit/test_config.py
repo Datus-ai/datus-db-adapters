@@ -20,6 +20,7 @@ def test_config_with_all_required_fields():
         "password": "",
         "database": None,
         "timeout_seconds": 30,
+        "query_timeout_seconds": None,
         "protocol": "http",
         "verify": True,
         "ca_cert": None,
@@ -192,10 +193,8 @@ def test_config_negative_port():
 
 
 def test_config_zero_timeout():
-    """Test that zero timeout is allowed."""
-    config = ClickHouseConfig(username="default_user", timeout_seconds=0)
-
-    assert config.timeout_seconds == 0
+    with pytest.raises(ValidationError, match="timeout_seconds"):
+        ClickHouseConfig(username="test_user", timeout_seconds=0)
 
 
 def test_config_large_port_number():

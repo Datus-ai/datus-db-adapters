@@ -116,6 +116,10 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
             charset=config.charset,
             autocommit=config.autocommit,
             timeout_seconds=config.timeout_seconds,
+            connect_timeout_seconds=config.connect_timeout_seconds,
+            read_timeout_seconds=config.read_timeout_seconds,
+            write_timeout_seconds=config.write_timeout_seconds,
+            query_timeout_seconds=config.query_timeout_seconds,
         )
         super().__init__(mysql_config)
         self._default_catalog = self.default_catalog() if config.catalog in ("", None, "def") else config.catalog
@@ -126,6 +130,9 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
 
         # Override dialect to Doris
         self.dialect = "doris"
+
+    def _query_timeout_sql(self) -> str:
+        return f"SET query_timeout = {self.config.query_timeout_seconds}"
 
     # ==================== Context Manager Support ====================
 

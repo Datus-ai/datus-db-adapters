@@ -26,6 +26,7 @@ def test_config_with_all_required_fields():
         "verify": True,
         "ca_cert": None,
         "timeout_seconds": 30,
+        "query_timeout_seconds": None,
     }
 
 

@@ -26,6 +26,8 @@ class ClickZettaConfig(BaseModel):
     secure: Optional[bool] = Field(default=None, description="Enable secure connection")
     hints: Optional[Dict[str, Any]] = Field(default=None, description="Additional connection hints")
     extra: Optional[Dict[str, Any]] = Field(default=None, description="Extra connection parameters")
+    timeout_seconds: int = Field(default=30, gt=0, description="HTTP connection/read and default SDK job timeout")
+    query_timeout_seconds: int | None = Field(default=None, gt=0, description="Override SDK job execution timeout")
 
     @field_validator("service", "username", "password", "instance", "workspace")
     @classmethod

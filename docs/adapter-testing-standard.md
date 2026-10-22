@@ -114,6 +114,17 @@ CA inputs where supported, and both base and per-database engines where present.
 Mocking a base initializer or checking only the URL misses parameters overwritten
 later by SQLAlchemy `connect_args` (Aurora review regressions in GaussDB/DWS).
 
+Timeout changes must verify default and overridden bounds at the final driver
+boundary, including all derived adapters. Reject values that silently disable
+the intended bound. Add a deterministic stalled-response test using the real
+driver against a local protocol peer (or live engine), with an independent test
+safety deadline. Cover queries, metadata, and `test_connection()`, connection
+invalidation/closure, no automatic statement replay, and recovery on a later
+explicit request. Check server-side deadline setup on replacement connections
+where supported; distinguish socket inactivity from total query execution time.
+See `docs/adapter-timeouts.md` and `datus-mysql/tests/unit/test_timeouts.py`
+(issue #165).
+
 Additionally, **every server-error fallback/degradation branch is mandatory to test** whenever the
 connector has one (e.g. primary `information_schema` query fails → fall back to `SHOW`): make the
 mocked engine raise on the primary query and assert the fallback result, including that it stays

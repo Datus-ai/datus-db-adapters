@@ -267,6 +267,25 @@ def test_handle_exception_classifies_and_logs_common_failures(exception, expecte
     assert caplog.records[-1].exc_info[2] is exception.__traceback__
 
 
+@pytest.mark.parametrize("wrapper", [sa_exc.OperationalError, sa_exc.InternalError, sa_exc.DatabaseError])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "query reached its timeout",
+        "query timed out",
+        "query timeout",
+        "query execution timed out",
+        "statement timeout",
+        "maximum statement execution time exceeded",
+        "maximum execution time exceeded",
+    ],
+)
+def test_server_query_deadline_is_execution_timeout(wrapper, reason):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    error = connector._handle_exception(wrapper("SELECT 1", {}, Exception(reason)), "SELECT 1", "query")
+    assert error.code == ErrorCode.DB_EXECUTION_TIMEOUT
+
+
 def test_ensure_engine_classifies_connection_creation_failure():
     """Connection setup failures should surface as stable Datus connection errors."""
     connector = DummySQLAlchemyConnector("postgresql://user:pass@127.0.0.1:1/test", dialect="postgresql")
@@ -338,3 +357,17 @@ def test_ensure_engine_concurrent_access():
     # All threads should get the same engine instance
     engines = list(results.values())
     assert all(e is engines[0] for e in engines)
+
+
+@pytest.mark.parametrize(
+    "reason, expected",
+    [
+        ("Expected state FINISHED, but found TIMEDOUT", ErrorCode.DB_EXECUTION_TIMEOUT),
+        ("DPY-4024: call timeout of 1000 ms exceeded", ErrorCode.DB_EXECUTION_TIMEOUT),
+        ("Code: 159: Timeout exceeded (TIMEOUT_EXCEEDED)", ErrorCode.DB_EXECUTION_TIMEOUT),
+        ("Read timed out", ErrorCode.DB_CONNECTION_TIMEOUT),
+    ],
+)
+def test_native_driver_timeout_reasons(reason, expected):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    assert connector._handle_exception(Exception(reason)).code == expected

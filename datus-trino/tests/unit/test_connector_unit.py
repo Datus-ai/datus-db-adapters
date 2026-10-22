@@ -160,7 +160,14 @@ def test_ensure_engine_forwards_http_scheme_and_verify():
 
         mock_create_engine.assert_called_once()
         connect_args = mock_create_engine.call_args.kwargs["connect_args"]
-        assert connect_args == {"verify": False, "http_scheme": "https", "user": "user"}
+        assert connect_args == {
+            "verify": False,
+            "http_scheme": "https",
+            "user": "user",
+            "request_timeout": 30,
+            "max_attempts": 1,
+            "session_properties": {"query_max_run_time": "30s"},
+        }
         assert engine is mock_create_engine.return_value
         assert connector._owns_engine is True
 
@@ -174,7 +181,14 @@ def test_ensure_engine_default_http_scheme():
         connector._ensure_engine()
 
         connect_args = mock_create_engine.call_args.kwargs["connect_args"]
-        assert connect_args == {"verify": True, "http_scheme": "http", "user": "user"}
+        assert connect_args == {
+            "verify": True,
+            "http_scheme": "http",
+            "user": "user",
+            "request_timeout": 30,
+            "max_attempts": 1,
+            "session_properties": {"query_max_run_time": "30s"},
+        }
 
 
 # ==================== Catalog Functionality Unit Tests ====================

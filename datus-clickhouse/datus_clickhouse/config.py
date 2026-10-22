@@ -26,7 +26,8 @@ class ClickHouseConfig(BaseModel):
     username: str = Field(..., description="ClickHouse username")
     password: str = Field(default="", repr=False, description="ClickHouse password")
     database: Optional[str] = Field(default=None, description="Default database name")
-    timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+    timeout_seconds: int = Field(default=30, gt=0, description="Pool and HTTP connect/read timeout in seconds")
+    query_timeout_seconds: int | None = Field(default=None, gt=0, description="Override server max_execution_time")
     protocol: Literal["http", "https"] = "http"
     verify: bool = Field(default=True, description="Verify the HTTPS certificate chain and hostname")
     ca_cert: Optional[str] = Field(default=None, description="Optional PEM CA bundle file for verified HTTPS")

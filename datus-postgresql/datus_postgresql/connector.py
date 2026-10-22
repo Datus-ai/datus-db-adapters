@@ -106,6 +106,17 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         }
         configure_database_connection(self, config, connect_args, dialect="postgresql")
 
+    def _create_engine(self, connection_string, **options):
+        from .timeouts import configure_timeouts
+
+        engine = super()._create_engine(connection_string, **options)
+        configure_timeouts(
+            engine,
+            self.config.read_timeout_seconds or self.config.timeout_seconds,
+            self.config.query_timeout_seconds or self.config.timeout_seconds,
+        )
+        return engine
+
     # ==================== System Resources ====================
 
     @override

@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 
 from datus_db_core import get_logger
 from datus_sqlalchemy import SQLAlchemyConnector
+from datus_sqlalchemy.thrift import configure_thrift_timeouts
 
 from .config import HiveConfig
 
@@ -99,6 +100,9 @@ class HiveConnector(SQLAlchemyConnector):
                     pool_pre_ping=True,
                     connect_args=connect_args,
                     **engine_args,
+                )
+                configure_thrift_timeouts(
+                    self.engine, self.timeout_seconds, self.config.query_timeout_seconds or self.timeout_seconds
                 )
                 self._owns_engine = True
                 return self.engine
