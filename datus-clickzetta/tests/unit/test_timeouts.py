@@ -71,3 +71,20 @@ def test_registry_factory_forwards_timeout_configuration(use_model):
     assert connector.timeout_seconds == 7
     assert connector._connection_config["http_read_timeout"] == 7
     assert connector._connection_config["hints"]["sdk.job.timeout"] == 11
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ({"timeout_seconds": 0}, "positive integer seconds"),
+        ({"timeout_seconds": True}, "positive integer seconds"),
+        ({"query_timeout_seconds": -1}, "positive integer seconds"),
+        ({"extra": {"http_read_timeout": 0}}, "http_read_timeout must be positive"),
+        ({"extra": {"http_connect_timeout": -1}}, "http_connect_timeout must be positive"),
+        ({"hints": {"sdk.job.timeout": 0}}, "sdk.job.timeout must be positive"),
+        ({"extra": {"hints": {"sdk.job.polling.timeout": 0}}}, "sdk.job.polling.timeout must be positive"),
+    ],
+)
+def test_constructor_rejects_values_that_disable_timeouts(options, message):
+    with pytest.raises(ValueError, match=message):
+        ClickZettaConnector(service="test", username="u", password="p", instance="i", workspace="w", **options)

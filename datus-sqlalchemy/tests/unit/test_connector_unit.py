@@ -371,3 +371,28 @@ def test_ensure_engine_concurrent_access():
 def test_native_driver_timeout_reasons(reason, expected):
     connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
     assert connector._handle_exception(Exception(reason)).code == expected
+
+
+@pytest.mark.parametrize(
+    "error, expected",
+    [
+        (sa_exc.OperationalError(None, None, Exception("read timed out")), ErrorCode.DB_CONNECTION_TIMEOUT),
+        (Exception("DPY-4024: call timeout exceeded"), ErrorCode.DB_EXECUTION_TIMEOUT),
+        (TimeoutError("Read timed out"), ErrorCode.DB_CONNECTION_TIMEOUT),
+        (ValueError("unsupported timeout option"), ErrorCode.DB_CONNECTION_FAILED),
+        (DatusDbException(ErrorCode.DB_AUTHENTICATION_FAILED), ErrorCode.DB_AUTHENTICATION_FAILED),
+    ],
+)
+def test_connection_probe_preserves_timeout_and_authentication_error_codes(error, expected):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    connector.engine = MagicMock()
+    connector._owns_engine = True
+    connector.engine.connect.side_effect = error
+    with pytest.raises(DatusDbException) as exc:
+        connector.test_connection()
+    assert exc.value.code == expected
+    connector.engine.connect.assert_called_once_with()
+    if isinstance(error, DatusDbException):
+        assert exc.value is error
+    else:
+        assert exc.value.__cause__ is error

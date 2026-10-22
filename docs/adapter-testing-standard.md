@@ -125,6 +125,13 @@ where supported; distinguish socket inactivity from total query execution time.
 See `docs/adapter-timeouts.md` and `datus-mysql/tests/unit/test_timeouts.py`
 (issue #165).
 
+Shared transport/lifecycle helpers need database-free tests in the package that
+owns them. PR coverage collects each package's own namespace during its unit
+suite; exercising a shared base only from a derived adapter's tests or from live
+integration tests does not contribute to that base package's PR coverage. Check
+timer/transport cleanup, initialization failures and timeout error propagation
+through the real event/driver boundary.
+
 Additionally, **every server-error fallback/degradation branch is mandatory to test** whenever the
 connector has one (e.g. primary `information_schema` query fails → fall back to `SHOW`): make the
 mocked engine raise on the primary query and assert the fallback result, including that it stays

@@ -195,8 +195,16 @@ including added timeout cases; repeated targeted runs are not counted twice.
 
 Total: **424 distinct integration cases passed on 11 real engines**. Skipped
 profiles are explicitly excluded from that claim. Across 18 separately invoked
-core/adapter unit suites, **2,111 tests passed**. Formatting/lint and wheel/sdist
-checks are recorded separately below.
+core/adapter unit suites, **2,111 tests passed** in the initial validation.
+The PR coverage follow-up adds 45 database-free regression cases for the fault
+proxy, Thrift authentication/query deadlines, PostgreSQL socket lifecycle and
+pre-ping cleanup, Oracle connection initialization, SDK cleanup and probe error
+classification. All **2,670 unit tests across the full 23-package workspace**
+pass. With the PR CI's unit-only collection settings, diff coverage is
+**97.61% (450/461 changed executable lines)**; live integration coverage is not
+included in that figure. Shared helpers are tested in their owning package so
+its per-package coverage collection includes those paths. Formatting/lint and
+wheel/sdist checks are recorded separately below.
 
 GaussDB/openGauss `7.0.0-RC2.B015` could not start on the local ARM64 Docker host:
 multiple fresh initializations aborted with SIGABRT/SIGTRAP (not OOM), including

@@ -23,13 +23,13 @@ def test_query_and_metadata_use_configured_deadlines():
             "api_request",
             return_value={"tableReference": {"projectId": "test-project", "datasetId": "test", "tableId": "t"}},
         ) as request:
-            client.get_table("test-project.test.t")
-        assert request.call_args.kwargs["timeout"] == 7
+            client.get_table("test-project.test.t", timeout=(99, 2))
+        assert request.call_args.kwargs["timeout"] == (7, 2)
         assert int(client.default_query_job_config.job_timeout_ms) == 7000
         with patch("google.cloud.bigquery.client._job_helpers.query_and_wait", return_value=[]) as wait:
-            client.query_and_wait("SELECT 1")
+            client.query_and_wait("SELECT 1", api_timeout=1, wait_timeout=99)
         assert wait.call_args.kwargs["wait_timeout"] == 7
-        assert wait.call_args.kwargs["api_timeout"] == 7
+        assert wait.call_args.kwargs["api_timeout"] == 1
         assert wait.call_args.kwargs["job_retry"] is None
     finally:
         client.close()
@@ -62,3 +62,36 @@ def test_context_override_retargets_sdk_billing_project_and_default_dataset():
         assert str(client.default_query_job_config.default_dataset) == "other-project.other_dataset"
     finally:
         connector.close()
+
+
+def test_service_account_file_uses_the_bounded_owned_client():
+    connector = BigQueryConnector(
+        {"project": "test-project", "credentials_path": "test-account.json", "timeout_seconds": 7}
+    )
+    with patch(
+        "google.oauth2.service_account.Credentials.from_service_account_file", return_value=AnonymousCredentials()
+    ) as load:
+        options = connector._engine_kwargs()
+    client = options["connect_args"]["client"]
+    try:
+        assert load.call_args.args == ("test-account.json",)
+        assert "https://www.googleapis.com/auth/drive" in load.call_args.kwargs["scopes"]
+        assert client.timeout_seconds == 7
+        assert int(client.default_query_job_config.job_timeout_ms) == 7000
+    finally:
+        client.close()
+        connector.close()
+
+
+def test_failed_engine_creation_closes_the_owned_http_session():
+    connector = BigQueryConnector({"project": "test-project"})
+    with (
+        patch("google.auth.default", return_value=(AnonymousCredentials(), "test-project")),
+        patch("datus_bigquery.connector.create_engine", side_effect=RuntimeError("engine setup failed")),
+        patch("google.auth.transport.requests.AuthorizedSession.close") as close,
+    ):
+        with pytest.raises(RuntimeError, match="engine setup failed"):
+            connector._get_engine("test-project")
+    close.assert_called_once_with()
+    assert connector._engines == {}
+    connector.close()
