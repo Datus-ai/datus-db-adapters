@@ -3,6 +3,159 @@
 This documents the fix for [issue #165](https://github.com/Datus-ai/datus-db-adapters/issues/165)
 and a source audit of the other adapters at `e959c5e` (2026-10-22).
 
+## Recommended production configuration
+
+Use the **interactive** profile for backend requests that execute short SQL and
+return bounded results. Use the **analytical** profile for explicitly selected
+reporting queries that may take up to two minutes. These are starting policies,
+not vendor defaults or values established by the integration benchmarks below.
+The best values depend on the request latency budget, observed healthy query
+latency, transaction duration, result size and network conditions. Cloud-service
+profiles below have configuration-level validation only, as described in the
+validation section.
+
+All values below are **seconds**. Merge each fragment into the adapter's existing
+connection configuration; host, authentication and namespace fields are omitted.
+Only pass fields supported by that adapter. The examples describe adapter input,
+not an assumed backend YAML schema.
+
+### MySQL, StarRocks, Doris and TiDB
+
+Recommended interactive fragment:
+
+```json
+{
+  "timeout_seconds": 30,
+  "connect_timeout_seconds": 5,
+  "read_timeout_seconds": 30,
+  "write_timeout_seconds": 10,
+  "query_timeout_seconds": 20
+}
+```
+
+| Setting | Interactive | Analytical | Reason for the size |
+| --- | ---: | ---: | --- |
+| `timeout_seconds` | 30 | 30 | Keeps pool checkout and unspecified transport bounds finite without increasing pool contention waits just because a query is longer. Thirty seconds is an initial ceiling; shorten it if the backend's queueing budget is smaller. |
+| `connect_timeout_seconds` | 5 | 10 | A healthy nearby endpoint should connect well inside five seconds. Ten seconds allows more connection-establishment latency for remote analytical services; increase only when healthy connection measurements justify it. This is not a bound on the entire authentication/DNS path. |
+| `read_timeout_seconds` | 30 | 150 | Leaves 10 seconds after the 20-second query limit, or 30 seconds after the 120-second limit, to receive a server timeout/error and absorb network scheduling delays. It also bounds a stalled socket. |
+| `write_timeout_seconds` | 10 | 30 | Short SQL requests should not need a long socket-write wait. Thirty seconds gives larger analytical SQL/parameter payloads more room; bulk ingestion needs its own measured policy. |
+| `query_timeout_seconds` | 20 | 120 | Twenty seconds fits short interactive queries and limits expensive accidental scans. Two minutes permits intentionally longer reports without making every request wait that long. These limits apply to the engine's supported SELECT execution policy. |
+
+Set `query_timeout_seconds` explicitly when the application owns the SELECT
+deadline. Its `None` default **preserves the server policy** in this family; it
+does not inherit `timeout_seconds`. If an administrator already maintains the
+desired session policy, omit this override instead. Confirm the engine/version
+supports the session variable before adopting it; unsupported settings fail
+connection setup. The other three overrides inherit `timeout_seconds` when
+`None`, even though the config object still displays `None`.
+
+The 10/30-second read margin is a starting allowance, not a cancellation
+guarantee. A socket read limit measures individual reads, so result streaming can
+continue longer than that value. DDL/DML need their own engine-supported limits;
+the SELECT limit does not bound every operation.
+
+### PostgreSQL, Greenplum, GaussDB, DWS and Hologres
+
+Recommended interactive fragment:
+
+```json
+{
+  "timeout_seconds": 30,
+  "connect_timeout_seconds": 5,
+  "read_timeout_seconds": 30,
+  "query_timeout_seconds": 20
+}
+```
+
+For the analytical profile, keep `timeout_seconds=30`, and use
+`connect_timeout_seconds=10`, `read_timeout_seconds=150` and
+`query_timeout_seconds=120`. The connection and query sizes have the same
+latency/resource tradeoffs as the MySQL-family table above. Here the read value
+is a **total connection-checkout lease**, including statements, fetches and
+reset. Thirty seconds suits one short statement plus cleanup; 150 seconds allows
+one two-minute statement plus 30 seconds of other work on the borrowed
+connection. It is not renewed by incoming packets or by starting another SQL
+statement. Size the lease for the whole transaction if it contains multiple
+statements or substantial application work; a late statement may have less time
+remaining than its server limit. There is no separate `write_timeout_seconds`
+field for this family.
+
+Both read and query overrides inherit `timeout_seconds` when `None`. Setting
+them explicitly avoids giving the server and socket timer identical budgets,
+which can close the socket before the server's timeout error arrives. PostgreSQL
+defines the server limit per statement in its
+[statement timeout documentation](https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-STATEMENT-TIMEOUT);
+the connection lease is an additional adapter policy.
+
+### Other repaired adapters
+
+| Adapter(s) | Interactive fragment | Analytical fragment | Reason and configuration limit |
+| --- | --- | --- | --- |
+| Hive, Spark | `{"timeout_seconds":30,"query_timeout_seconds":20}` | `{"timeout_seconds":150,"query_timeout_seconds":120}` | Allows the same 10/30-second response margin around a blocking Thrift statement. `timeout_seconds` also controls pool checkout and transport connection setup; this interface cannot retain a five-second connect limit while increasing only socket reads. The server must implement `queryTimeout`. |
+| ClickHouse, Trino | `{"timeout_seconds":30,"query_timeout_seconds":20}` | `{"timeout_seconds":150,"query_timeout_seconds":120}` | A blocking HTTP response needs room for the query and the error/response margin. The shared value also increases HTTP connection and pool waits; do not use the analytical profile on a short-latency request path unless those waits fit its budget. |
+| Oracle | `{"timeout_seconds":5,"call_timeout_seconds":30}` | `{"timeout_seconds":10,"call_timeout_seconds":150}` | Keeps TCP connection and pool waits to 5/10 seconds while allowing a database round trip 30/150 seconds. There is no query-versus-read margin to configure: the exposed call limit covers a single round trip, not total statement duration. |
+| BigQuery | `{"timeout_seconds":30,"query_timeout_seconds":20}` | `{"timeout_seconds":60,"query_timeout_seconds":120}` | Thirty seconds bounds an interactive REST call/retry budget; 60 seconds preserves the adapter's default API allowance for remote analytical jobs. The separate 20/120-second value sets foreground query waiting and the server job setting. Polling allows the analytical job to outlast an individual HTTP request. |
+| ClickZetta | `{"timeout_seconds":30,"query_timeout_seconds":20}` plus the options below | `{"timeout_seconds":30,"query_timeout_seconds":120}` plus the same options | A polled job can run for two minutes while individual HTTP requests remain bounded to 30 seconds; raising every HTTP timeout to the full job duration delays detection of network failures. |
+
+For both ClickZetta profiles, also merge these supported overrides:
+
+```json
+{
+  "extra": {
+    "http_connect_timeout": 5,
+    "http_read_timeout": 30
+  },
+  "hints": {
+    "sdk.job.polling.timeout": 20
+  }
+}
+```
+
+Five seconds bounds HTTP connection establishment; a 20-second service polling
+wait leaves 10 seconds inside the 30-second HTTP read budget for transit and
+response processing. This polling value is not the total job lifetime. Keep the
+adapter's bounded retry defaults, and avoid also setting `sdk.job.timeout`,
+`sdk.query.timeout.ms` or `querytimeout` in `hints`/`extra.hints`: those can
+override the chosen query budget, with different units. Use positive integer
+values for timeout hints.
+
+BigQuery currently uses the same query value for foreground waiting and the
+server job setting; a separate server-error delivery margin is not exposed.
+Its server cancellation is best effort, as specified for
+[`jobTimeoutMs`](https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/Job#JobConfiguration).
+Oracle's round-trip scope is specified in the
+[`call_timeout` documentation](https://python-oracledb.readthedocs.io/en/stable/api_manual/connection.html#oracledb.Connection.call_timeout).
+These differences are why the settings above do not promise a uniform total
+operation deadline across adapters.
+
+### Backend integration and tuning
+
+Upgrade the adapter packages and shared bases, then update the backend lockfile
+and deployed image. A backend that only passes `timeout_seconds` already gains
+the documented fallback protection. To use these profiles, it must also forward
+the optional fields to the adapter; this repository does not establish whether
+the backend currently does so. Do not send MySQL-only fields to every adapter.
+
+Allocate a database phase inside the backend's overall request deadline, leaving
+time for other work such as model calls, serialization and response delivery.
+Account for pool waiting, connection setup, metadata/context statements, query
+execution, fetching and cleanup; these can consume separate budgets. Merely
+making the outer timeout larger than `query_timeout_seconds` is insufficient.
+An HTTP request timeout alone does not stop a synchronous database worker; the
+adapter/driver bounds must remain finite as well.
+
+Start with the interactive profile, then compare healthy p99 connection, query,
+result-transfer and checkout durations with the configured limits. Increase a
+limit when expected successful work needs it and the request budget permits it;
+fix slow queries or pool saturation before globally lengthening waits. Use a
+separate analytical connector/configuration for longer workloads, since these
+policies are installed on physical connections. For example, a ten-minute report
+can start with a 600-second query limit and a 660-second read/lease budget where
+those controls exist, provided fetching and the whole transaction fit. Such work
+should have a correspondingly sized job/request budget. Revalidate both server
+deadline and stalled-network behavior after tuning; a successful `SELECT 1`
+alone does not verify either.
+
 ## Relevant history
 
 - `28371c0` added MySQL `connect_timeout_seconds`, `read_timeout_seconds`, and
@@ -30,7 +183,8 @@ All four adapters now share the following positive, integer-second settings:
 
 Zero and negative values are rejected. Existing workloads that legitimately wait
 longer than 30 seconds for query results must increase the read timeout. Setting
-`None` on an override inherits a finite timeout; it does not disable the bound.
+`None` on a connect/read/write override inherits a finite timeout; it does not
+disable the bound. The query override instead preserves the server policy.
 
 These socket timeouts apply to connection setup, context switching, pool health
 checks, queries, metadata, and `test_connection()`. PyMySQL closes sockets after
