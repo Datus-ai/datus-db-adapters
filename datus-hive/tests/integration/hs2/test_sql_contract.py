@@ -52,6 +52,6 @@ def test_metadata_matches_owned_objects(hs2_environment):
     }
     tables = connector.get_tables(database_name=database)
     views = connector.get_views(database_name=database)
-    assert "orders" in tables
-    assert "orders_view" in views
+    assert set(tables) == {"orders", "customers", "clock"}
+    assert set(views) == {"orders_view"}
     record["status"] = "passed"

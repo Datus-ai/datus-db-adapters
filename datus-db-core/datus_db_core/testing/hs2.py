@@ -24,7 +24,7 @@ import yaml
 
 
 def load(path: Path) -> Any:
-    return yaml.safe_load(path.read_text())
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def content_hash(root: Path) -> str:
@@ -94,7 +94,7 @@ def validate(root: Path) -> tuple[list[dict], list[dict]]:
 
 
 def load_json(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def validate_expected(expected: dict) -> None:
@@ -309,6 +309,8 @@ class Environment:
                 "checks": self.checks,
                 "cleanup_errors": errors,
             }
-            (directory / f"{self.backend}-{self.name}-{self.started}.json").write_text(json.dumps(report, indent=2))
+            (directory / f"{self.backend}-{self.name}-{self.started}.json").write_text(
+                json.dumps(report, indent=2), encoding="utf-8"
+            )
         assert content_hash(self.root) == self.input_hash, "HS2 fixture changed during execution"
         assert not errors, errors
