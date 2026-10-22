@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Union, override
 
 from sqlalchemy import text
+from sqlalchemy.engine import URL, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -64,17 +65,17 @@ class OracleConnector(SQLAlchemyConnector):
         self._default_schema = (config.schema_name or config.username).upper()
         self.configure_connection(connect_args={"tcp_connect_timeout": config.timeout_seconds, "retry_count": 0})
 
-    def _create_engine(self, connection_string, **options):
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         from sqlalchemy import event
 
         engine = super()._create_engine(connection_string, **options)
 
         @event.listens_for(engine, "connect", insert=True)
-        def set_call_timeout(connection, record):
+        def set_call_timeout(connection: Any, record: Any) -> None:
             connection.call_timeout = (self.config.call_timeout_seconds or self.config.timeout_seconds) * 1000
 
         @event.listens_for(engine, "handle_error")
-        def invalidate_timeout(context):
+        def invalidate_timeout(context: Any) -> None:
             if any(code in str(context.original_exception) for code in ("DPY-4024", "DPI-1067", "DPI-1080")):
                 context.is_disconnect = True
 

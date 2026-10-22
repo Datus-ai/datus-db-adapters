@@ -107,10 +107,10 @@ execution, and all result pages.
 | PostgreSQL, Greenplum, Hologres, DWS, GaussDB | Keep native connect timeout; add a connection-local socket deadline and `SET statement_timeout`. `read_timeout_seconds` overrides the checkout deadline, and `query_timeout_seconds` overrides the server statement limit. The default for both is `timeout_seconds` |
 | Hive, Spark | Construct a fresh Thrift transport with `TSocket.setTimeout(timeout_seconds * 1000)` for every physical connection, preserving NOSASL, NONE, LDAP/CUSTOM and Kerberos. Send `queryTimeout` on ExecuteStatement requests, defaulting to `timeout_seconds`; override with `query_timeout_seconds` |
 | Oracle | Pass `tcp_connect_timeout=timeout_seconds`, disable automatic connection retries, and set each connection's millisecond `call_timeout` before dialect initialization. `call_timeout_seconds` overrides the call budget. Timeout connections are invalidated |
-| ClickHouse | Pass HTTP `timeout=timeout_seconds` and server `max_execution_time=query_timeout_seconds or timeout_seconds` through the actual driver settings |
-| Trino | Pass `request_timeout=timeout_seconds`, `max_attempts=1`, and session `query_max_run_time=<query_timeout_seconds or timeout_seconds>s` |
+| ClickHouse | Pass HTTP `timeout=timeout_seconds` and server `max_execution_time=query_timeout_seconds or timeout_seconds` through the actual driver settings; invalidate the DBAPI connection after native or wrapped HTTP/socket I/O errors |
+| Trino | Pass `request_timeout=timeout_seconds`, `max_attempts=1`, and session `query_max_run_time=<query_timeout_seconds or timeout_seconds>s`; invalidate HTTP/socket failures even when wrapped by the native driver |
 | BigQuery | Supply an owned SDK client with finite REST request/retry and credential-refresh timeouts. Bound foreground `query_and_wait` API/wait budgets, disable job replay, and configure `job_timeout_ms`. Retain service-account/ADC authentication, BigQuery/Cloud/Drive scopes, billing project and per-request dataset context. Close SDK sessions when engines are disposed |
-| ClickZetta | Forward `http_connect_timeout`/`http_read_timeout`, default job/polling budgets and bounded SDK retry hints. Forward new timeout fields through the registry factory for dict and model configs. Extra hints retain default bounds unless explicitly overridden with positive values |
+| ClickZetta | Forward `http_connect_timeout`/`http_read_timeout`, default job/polling budgets and bounded SDK retry hints. Forward new timeout fields through the registry factory for dict and model configs. Extra hints retain default bounds; timeout hints are normalized using the SDK's integer conversion and rejected if the effective integer is nonpositive, nonfinite, boolean or otherwise invalid |
 
 For PostgreSQL-family drivers, libpq does not provide a read-timeout keyword.
 The adapter duplicates the connection socket and arms a cancellable timer around
@@ -199,11 +199,13 @@ core/adapter unit suites, **2,111 tests passed** in the initial validation.
 The PR coverage follow-up adds 45 database-free regression cases for the fault
 proxy, Thrift authentication/query deadlines, PostgreSQL socket lifecycle and
 pre-ping cleanup, Oracle connection initialization, SDK cleanup and probe error
-classification. All **2,670 unit tests across the full 23-package workspace**
-pass. With the PR CI's unit-only collection settings, diff coverage is
-**97.61% (450/461 changed executable lines)**; live integration coverage is not
-included in that figure. Shared helpers are tested in their owning package so
-its per-package coverage collection includes those paths. Formatting/lint and
+classification. That follow-up passed **2,670 unit tests across the full 23-package workspace**
+and reached **97.61% unit-only diff coverage**. The subsequent review fixes add
+83 further regression cases; **2,753 unit tests pass** on the final implementation,
+with **96.87% unit-only diff coverage (557/575 changed executable lines)**.
+Live integration coverage is not included in the PR's diff coverage figure.
+Shared helpers are tested in their owning package so per-package collection
+includes those paths. Formatting/lint and
 wheel/sdist checks are recorded separately below.
 
 GaussDB/openGauss `7.0.0-RC2.B015` could not start on the local ARM64 Docker host:
@@ -220,6 +222,39 @@ No BigQuery, ClickZetta, DWS or Hologres real-service credentials were available
 their final driver/client configuration is unit tested. No cloud-service live
 result is claimed. Existing Snowflake credentials were not used for this local
 validation request.
+
+### Review follow-up validation
+
+The duplicated live fault tests now call one shared
+`assert_stalled_response_timeout` contract. It checks one application statement,
+one DBAPI execution, no automatic physical-connect attempts, SQLAlchemy
+invalidation/close events, physical TCP closure before the proxy safety deadline,
+and exactly one fresh DBAPI connection for subsequent explicit recovery.
+Plaintext protocols additionally count a unique SQL marker across complete TCP
+streams, detecting internal HTTP retries without confusing packet fragmentation
+with requests. TLS remains enabled where negotiated; encrypted operations are
+counted at the DBAPI boundary and all old TCP connections must close. Faults in
+plaintext protocols activate only after the marked SQL arrives, allowing libpq's
+implicit BEGIN to complete first.
+
+A deliberately retrying connector is rejected by the database-free contract
+regression. The PostgreSQL family also checks timeout wiring through real
+connectors and dialects for default/overridden connect, read and statement limits,
+both base and per-database engines, and replacement connection callbacks. GaussDB
+covers all three dialects; its native driver boundary is stubbed when testing
+configuration without a vendor runtime.
+
+The strengthened tests were rerun on the same **11 real engine types**, with
+**42 targeted timeout cases passing** (33 fault-injection cases plus nine server
+or call-deadline cases). These are a targeted follow-up to the earlier 424-case
+integration run, not another full integration sweep. They exposed HTTP connection
+reuse after timeout in ClickHouse and Trino; both now invalidate native or wrapped
+socket errors. No native GaussDB or credential-dependent cloud-service validation
+has been added to the claims above.
+
+ClickZetta rejects fractional hints that the SDK would truncate to zero, plus
+NaN, infinity, booleans and malformed numeric strings. Real SDK job-request tests
+verify the effective positive `jobTimeoutMs` for seconds and millisecond aliases.
 
 ## Packaging and rollout
 

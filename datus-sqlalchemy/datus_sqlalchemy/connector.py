@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 from pandas import DataFrame
 from pyarrow import Table
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Inspector, make_url
+from sqlalchemy.engine import URL, Engine, ExceptionContext, Inspector, make_url
 from sqlalchemy.exc import (
     DatabaseError,
     DataError,
@@ -178,7 +178,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                 self.close()
             self._credential_state = version
 
-    def _create_engine(self, connection_string, **options):
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         """Shared creation path, including PostgreSQL's per-database engines."""
         url_defaults = getattr(self, "_url_defaults", None)
         if url_defaults:
@@ -211,6 +211,18 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                 validator(dbapi_connection)
 
         return engine
+
+    @staticmethod
+    def _invalidate_network_error(context: ExceptionContext) -> None:
+        """Discard transports after native or wrapped socket/HTTP I/O errors."""
+        error = context.original_exception
+        seen: set[int] = set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, OSError):
+                context.is_disconnect = True
+                return
+            error = error.__cause__ or error.__context__
 
     def __del__(self):
         """Destructor to ensure engine is properly disposed."""

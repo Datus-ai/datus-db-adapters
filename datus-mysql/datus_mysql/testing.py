@@ -9,10 +9,19 @@ import socket
 import struct
 import threading
 from contextlib import AbstractContextManager
-from typing import Callable
+from typing import Any, Callable, Self
 
 
 class StallingMySQLServer(AbstractContextManager):
+    """Minimal protocol peer with independent timeout and connection witnesses.
+
+    Args:
+        stall: Predicate selecting the first query whose reply is withheld.
+        safety_timeout: Independent connection deadline protecting the test.
+        stall_handshake: Withhold the initial greeting instead of a query reply.
+        reject: Predicate selecting session settings to reject as unsupported.
+    """
+
     def __init__(
         self,
         stall: Callable[[str], bool],
@@ -20,7 +29,7 @@ class StallingMySQLServer(AbstractContextManager):
         *,
         stall_handshake: bool = False,
         reject: Callable[[str], bool] | None = None,
-    ):
+    ) -> None:
         self.stall = stall
         self.stall_handshake = stall_handshake
         self.reject = reject
@@ -37,11 +46,11 @@ class StallingMySQLServer(AbstractContextManager):
         self._listener.settimeout(0.1)
         self._thread = threading.Thread(target=self._serve, daemon=True)
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         self._thread.start()
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: Any) -> None:
         self._stop.set()
         self._thread.join(self.safety_timeout + 1)
         self._listener.close()
@@ -49,12 +58,12 @@ class StallingMySQLServer(AbstractContextManager):
             raise RuntimeError("MySQL wire peer did not stop")
 
     @staticmethod
-    def _packet(conn, payload, sequence=0):
+    def _packet(conn: socket.socket, payload: bytes, sequence: int = 0) -> None:
         conn.sendall(struct.pack("<I", len(payload))[:3] + bytes([sequence]) + payload)
 
     @staticmethod
-    def _receive(conn):
-        def exact(size):
+    def _receive(conn: socket.socket) -> bytes:
+        def exact(size: int) -> bytes:
             result = b""
             while len(result) < size:
                 chunk = conn.recv(size - len(result))
@@ -66,15 +75,22 @@ class StallingMySQLServer(AbstractContextManager):
         header = exact(4)
         return exact(int.from_bytes(header[:3], "little"))
 
-    def _result(self, conn, value):
+    def _result(self, conn: socket.socket, value: bytes | None, name: bytes = b"value", kind: int = 0xFD) -> None:
         # A protocol-4.1 text result with one VAR_STRING column and one row.
-        column = b"\x03def\x00\x00\x00\x05value\x00\x0c\x21\x00\xff\x00\x00\x00\xfd\x00\x00\x00\x00\x00"
+        column = (
+            b"\x03def\x00\x00\x00"
+            + bytes([len(name)])
+            + name
+            + b"\x00\x0c\x21\x00\xff\x00\x00\x00"
+            + bytes([kind])
+            + b"\x00\x00\x00\x00\x00"
+        )
         eof = b"\xfe\x00\x00\x02\x00"
         row = b"\xfb" if value is None else bytes([len(value)]) + value
         for sequence, payload in enumerate((b"\x01", column, eof, row, eof), 1):
             self._packet(conn, payload, sequence)
 
-    def _session(self, conn):
+    def _session(self, conn: socket.socket) -> None:
         if self.stall_handshake and not self.stalled.is_set():
             self._stall(conn)
             return
@@ -122,17 +138,20 @@ class StallingMySQLServer(AbstractContextManager):
                     value = b""
                 elif "LOWER_CASE_TABLE_NAMES" in normalized:
                     value = b"0"
-                self._result(conn, value)
+                if normalized.startswith("SELECT 42 AS ANSWER"):
+                    self._result(conn, b"42", name=b"answer", kind=3)
+                else:
+                    self._result(conn, value)
             else:
                 self._packet(conn, ok, 1)
 
-    def _stall(self, conn):
+    def _stall(self, conn: socket.socket) -> None:
         self.stalled.set()
         # A correctly bounded client closes this socket after its timeout.
         if conn.recv(1) == b"":
             self.client_closed.set()
 
-    def _serve(self):
+    def _serve(self) -> None:
         while not self._stop.is_set():
             try:
                 conn, _ = self._listener.accept()

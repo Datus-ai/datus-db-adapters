@@ -9,6 +9,7 @@ from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.engine import URL, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -106,7 +107,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         }
         configure_database_connection(self, config, connect_args, dialect="postgresql")
 
-    def _create_engine(self, connection_string, **options):
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         from .timeouts import configure_timeouts
 
         engine = super()._create_engine(connection_string, **options)

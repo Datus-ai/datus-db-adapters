@@ -1,13 +1,26 @@
 """Connection-local PyHive transport and query deadlines for Hive/Spark."""
 
+from typing import Any
+
 from sqlalchemy import event
+from sqlalchemy.engine import Dialect, Engine, ExceptionContext
+from sqlalchemy.pool import ConnectionPoolEntry
 
 
-def configure_thrift_timeouts(engine, seconds, query_seconds):
+def configure_thrift_timeouts(engine: Engine, seconds: int, query_seconds: int) -> None:
+    """Install fresh bounded Thrift transports and per-statement server limits.
+
+    Args:
+        engine: PyHive-compatible engine, including Spark and Inceptor.
+        seconds: Connect, read and write inactivity timeout in seconds.
+        query_seconds: Server ExecuteStatement queryTimeout, in seconds.
+    """
     from thrift.transport import TSocket, TTransport
 
     @event.listens_for(engine, "do_connect")
-    def bounded_transport(dialect, record, args, original_params):
+    def bounded_transport(
+        dialect: Dialect, record: ConnectionPoolEntry, args: list[Any], original_params: dict[str, Any]
+    ) -> Any:
         from pyhive.hive import get_installed_sasl
 
         # SQLAlchemy reuses its parameter template for subsequent connections.
@@ -49,17 +62,17 @@ def configure_thrift_timeouts(engine, seconds, query_seconds):
             raise
 
     @event.listens_for(engine, "connect")
-    def query_deadline(connection, record):
+    def query_deadline(connection: Any, record: ConnectionPoolEntry) -> None:
         execute = connection._client.ExecuteStatement
 
-        def bounded_execute(request):
+        def bounded_execute(request: Any) -> Any:
             request.queryTimeout = query_seconds
             return execute(request)
 
         connection._client.ExecuteStatement = bounded_execute
 
     @event.listens_for(engine, "handle_error")
-    def close_failed_transport(context):
+    def close_failed_transport(context: ExceptionContext) -> None:
         if isinstance(context.original_exception, (TTransport.TTransportException, OSError)):
             context.is_disconnect = True
             if context.connection is not None:

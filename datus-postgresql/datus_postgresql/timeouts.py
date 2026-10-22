@@ -8,13 +8,23 @@ different connection when a deadline races with cleanup.
 
 import socket
 import threading
+from typing import Any
 
 from sqlalchemy import event
+from sqlalchemy.engine import Engine, ExceptionContext
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.pool import ConnectionPoolEntry
 
 
 class SocketDeadline:
-    def __init__(self, connection, seconds):
+    """Interrupt one native database socket after a cancellable lease deadline.
+
+    Args:
+        connection: DBAPI connection exposing fileno() or pg8000's _usock.
+        seconds: Positive lease budget; receipt of data does not reset it.
+    """
+
+    def __init__(self, connection: Any, seconds: float) -> None:
         fileno = getattr(connection, "fileno", None)
         descriptor = fileno() if fileno else connection._usock.fileno()
         borrowed = socket.socket(fileno=descriptor)
@@ -29,7 +39,7 @@ class SocketDeadline:
         self._timer.daemon = True
         self._timer.start()
 
-    def _expire(self):
+    def _expire(self) -> None:
         with self._lock:
             if self._active:
                 self.expired = True
@@ -38,24 +48,31 @@ class SocketDeadline:
                 except OSError:
                     pass
 
-    def close(self):
+    def close(self) -> None:
+        """Cancel the timer and release the duplicated descriptor."""
         with self._lock:
             self._active = False
             self._timer.cancel()
             self.socket.close()
 
 
-def configure_timeouts(engine, seconds, query_seconds):
-    """Bound initialization, pre-ping, checkout SQL, fetch, and pool reset."""
+def configure_timeouts(engine: Engine, seconds: float, query_seconds: int) -> None:
+    """Install connection-local initialization, checkout and pre-ping deadlines.
+
+    Args:
+        engine: Engine whose physical connections should receive these bounds.
+        seconds: Socket lease budget, including fetches and pool reset.
+        query_seconds: Server statement timeout, in seconds.
+    """
     key = "datus_socket_deadline"
 
-    def stop(connection, record, *args):
+    def stop(connection: Any, record: ConnectionPoolEntry, *args: Any) -> SocketDeadline | None:
         deadline = record.info.pop(key, None)
         if deadline is not None:
             deadline.close()
         return deadline
 
-    def arm(connection, record, *args):
+    def arm(connection: Any, record: ConnectionPoolEntry, *args: Any) -> None:
         stop(connection, record)
         record.info[key] = SocketDeadline(connection, seconds)
 
@@ -66,14 +83,14 @@ def configure_timeouts(engine, seconds, query_seconds):
     event.listen(engine, "invalidate", stop)
 
     @event.listens_for(engine, "checkin")
-    def checked_in(connection, record):
+    def checked_in(connection: Any, record: ConnectionPoolEntry) -> None:
         deadline = stop(connection, record)
         if deadline is not None and deadline.expired and connection is not None:
             record.invalidate()
 
     ping = engine.dialect.do_ping
 
-    def bounded_ping(connection):
+    def bounded_ping(connection: Any) -> bool:
         deadline = SocketDeadline(connection, seconds)
         try:
             return ping(connection)
@@ -83,7 +100,7 @@ def configure_timeouts(engine, seconds, query_seconds):
     engine.dialect.do_ping = bounded_ping
 
     @event.listens_for(engine, "handle_error", retval=True)
-    def classify_deadline(context):
+    def classify_deadline(context: ExceptionContext) -> OperationalError | None:
         if context.connection is not None:
             deadline = context.connection.info.get(key)
             if deadline is not None and deadline.expired:
@@ -96,7 +113,7 @@ def configure_timeouts(engine, seconds, query_seconds):
                 )
 
     @event.listens_for(engine, "connect")
-    def statement_deadline(connection, record):
+    def statement_deadline(connection: Any, record: ConnectionPoolEntry) -> None:
         previous = connection.autocommit
         connection.autocommit = True
         try:

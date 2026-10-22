@@ -110,7 +110,7 @@ class ClickZettaConnector:
         extra: Optional[Dict[str, Any]] = None,
         timeout_seconds: int = 30,
         query_timeout_seconds: Optional[int] = None,
-    ):
+    ) -> None:
         # Initialize minimal attributes without calling parent's __init__
         from datus_db_core import ConnectionConfig
 
@@ -191,8 +191,19 @@ class ClickZettaConnector:
                 raise ValueError(f"{key} must be positive seconds")
         effective_hints = connection_config["hints"]
         for key in ("sdk.job.timeout", "sdk.job.polling.timeout", "sdk.query.timeout.ms", "querytimeout"):
-            if key in effective_hints and float(effective_hints[key]) <= 0:
-                raise ValueError(f"{key} must be positive")
+            if key not in effective_hints:
+                continue
+            # Match the SDK's int conversion before checking the bound: a
+            # positive fraction can otherwise become zero and disable polling
+            # cancellation. Normalize aliases in both hints and extra.hints.
+            raw_value = effective_hints[key]
+            try:
+                value = int(raw_value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"{key} must be positive integer units") from exc
+            if isinstance(raw_value, bool) or value <= 0:
+                raise ValueError(f"{key} must be positive integer units")
+            effective_hints[key] = value
 
         self._connection_config = connection_config
         # Note: avoid referencing Session in type annotations to prevent runtime/type issues when optional dep missing

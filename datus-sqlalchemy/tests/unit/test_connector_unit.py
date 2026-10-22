@@ -396,3 +396,21 @@ def test_connection_probe_preserves_timeout_and_authentication_error_codes(error
         assert exc.value is error
     else:
         assert exc.value.__cause__ is error
+
+
+@pytest.mark.parametrize("chain", ["direct", "cause", "context", "cycle", "server"])
+def test_network_error_invalidation_follows_native_exception_chain(chain):
+    from types import SimpleNamespace
+
+    from requests.exceptions import ReadTimeout
+
+    error = ReadTimeout("HTTP response stalled") if chain == "direct" else RuntimeError("driver error")
+    if chain == "cause":
+        error.__cause__ = ReadTimeout("response stalled")
+    elif chain == "context":
+        error.__context__ = OSError("socket closed")
+    elif chain == "cycle":
+        error.__cause__ = error
+    context = SimpleNamespace(original_exception=error, is_disconnect=False)
+    SQLAlchemyConnector._invalidate_network_error(context)
+    assert context.is_disconnect is (chain in ("direct", "cause", "context"))

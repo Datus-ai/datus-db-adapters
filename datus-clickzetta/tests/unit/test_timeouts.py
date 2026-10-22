@@ -88,3 +88,40 @@ def test_registry_factory_forwards_timeout_configuration(use_model):
 def test_constructor_rejects_values_that_disable_timeouts(options, message):
     with pytest.raises(ValueError, match=message):
         ClickZettaConnector(service="test", username="u", password="p", instance="i", workspace="w", **options)
+
+
+@pytest.mark.parametrize("key", ["sdk.job.timeout", "sdk.job.polling.timeout", "sdk.query.timeout.ms", "querytimeout"])
+@pytest.mark.parametrize("value", [0.5, float("nan"), float("inf"), True, "0.5"])
+@pytest.mark.parametrize("carrier", ["hints", "extra"])
+def test_sdk_timeout_hint_cannot_truncate_to_zero(key, value, carrier):
+    options = {"hints": {key: value}} if carrier == "hints" else {"extra": {"hints": {key: value}}}
+    with pytest.raises(ValueError, match="positive integer"):
+        ClickZettaConnector(service="test", username="u", password="p", instance="i", workspace="w", **options)
+
+
+@pytest.mark.parametrize(
+    "key, raw, milliseconds",
+    [("sdk.job.timeout", "2", 2000), ("sdk.query.timeout.ms", 1500.5, 1500), ("querytimeout", 1, 1)],
+)
+def test_normalized_hint_reaches_real_sdk_job_request(key, raw, milliseconds):
+    import json
+
+    from clickzetta.connector.v0.client import Client
+    from clickzetta.connector.v0.enums import JobID
+
+    connector = ClickZettaConnector(
+        service="test.invalid", username="u", password="p", instance="i", workspace="w", hints={key: raw}
+    )
+    sdk = Client(**dict(connector._connection_config, magic_token="test-token"))
+    try:
+        with patch("clickzetta.connector.v0.client.execute_with_retrying", return_value="submitted") as submit:
+            assert (
+                sdk.submit_sql_job("token", "SELECT 1", JobID("job", "w", 1), processed_sql="SELECT 1") == "submitted"
+            )
+        request = json.loads(submit.call_args.args[0].keywords["data"])
+        assert request["jobDesc"]["jobTimeoutMs"] == milliseconds
+        assert request["jobDesc"]["hybridPollingTimeout"] > 0
+        assert isinstance(connector._connection_config["hints"][key], int)
+    finally:
+        sdk.close()
+        connector.close()

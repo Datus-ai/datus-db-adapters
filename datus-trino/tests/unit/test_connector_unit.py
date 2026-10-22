@@ -5,6 +5,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine
 
 from datus_db_core import CatalogSupportMixin
 from datus_trino import TrinoConfig, TrinoConnector
@@ -155,7 +156,7 @@ def test_ensure_engine_forwards_http_scheme_and_verify():
     )
     connector = TrinoConnector(config)
 
-    with patch("datus_sqlalchemy.connector.create_engine") as mock_create_engine:
+    with patch("datus_sqlalchemy.connector.create_engine", wraps=create_engine) as mock_create_engine:
         engine = connector._ensure_engine()
 
         mock_create_engine.assert_called_once()
@@ -168,7 +169,7 @@ def test_ensure_engine_forwards_http_scheme_and_verify():
             "max_attempts": 1,
             "session_properties": {"query_max_run_time": "30s"},
         }
-        assert engine is mock_create_engine.return_value
+        assert engine.url.drivername == "trino"
         assert connector._owns_engine is True
 
 
@@ -177,7 +178,7 @@ def test_ensure_engine_default_http_scheme():
     config = TrinoConfig(host="localhost", port=8080, username="user")
     connector = TrinoConnector(config)
 
-    with patch("datus_sqlalchemy.connector.create_engine") as mock_create_engine:
+    with patch("datus_sqlalchemy.connector.create_engine", wraps=create_engine) as mock_create_engine:
         connector._ensure_engine()
 
         connect_args = mock_create_engine.call_args.kwargs["connect_args"]

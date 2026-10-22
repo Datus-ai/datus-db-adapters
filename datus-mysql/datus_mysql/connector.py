@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from sqlalchemy import event, text
+from sqlalchemy.engine import URL, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -112,12 +113,12 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         """MySQL and TiDB use milliseconds for their SELECT execution deadline."""
         return f"SET SESSION max_execution_time = {self.config.query_timeout_seconds * 1000}"
 
-    def _create_engine(self, connection_string, **options):
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         engine = super()._create_engine(connection_string, **options)
         if self.config.query_timeout_seconds is not None:
 
             @event.listens_for(engine, "connect")
-            def set_query_timeout(dbapi_connection, connection_record):
+            def set_query_timeout(dbapi_connection: Any, connection_record: Any) -> None:
                 # Configure every physical connection, including replacements after
                 # a disconnect. Fail setup if the requested deadline is unsupported.
                 with dbapi_connection.cursor() as cursor:

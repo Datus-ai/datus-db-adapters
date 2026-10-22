@@ -5,6 +5,8 @@
 from typing import Any, Dict, List, Optional, Set, Union, override
 from urllib.parse import quote_plus
 
+from sqlalchemy.engine import URL, Engine
+
 from datus_db_core import get_logger
 from datus_sqlalchemy import SQLAlchemyConnector
 from datus_sqlalchemy.thrift import configure_thrift_timeouts
@@ -67,7 +69,7 @@ class SparkConnector(SQLAlchemyConnector):
         self.dialect = SPARK_DIALECT
         self._default_database = database
 
-    def _create_engine(self, connection_string, **options):
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         engine = super()._create_engine(connection_string, **options)
         configure_thrift_timeouts(engine, self.timeout_seconds, self._query_timeout)
         return engine
