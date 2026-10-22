@@ -202,7 +202,8 @@ pre-ping cleanup, Oracle connection initialization, SDK cleanup and probe error
 classification. That follow-up passed **2,670 unit tests across the full 23-package workspace**
 and reached **97.61% unit-only diff coverage**. The subsequent review fixes add
 83 further regression cases; **2,753 unit tests pass** on the final implementation,
-with **96.87% unit-only diff coverage (557/575 changed executable lines)**.
+with **97.26% unit-only diff coverage (640/658 changed executable lines)**,
+confirmed after committing all new files and by the PR coverage workflow.
 Live integration coverage is not included in the PR's diff coverage figure.
 Shared helpers are tested in their owning package so per-package collection
 includes those paths. Formatting/lint and
