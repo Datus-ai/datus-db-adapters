@@ -1,11 +1,43 @@
+import struct
 from unittest.mock import patch
 
 import pymysql
 import pytest
 from pydantic import ValidationError
 
+from datus_db_core import DatusDbException, ErrorCode
 from datus_doris import DorisConfig, DorisConnector
 from datus_mysql.testing import StallingMySQLServer
+
+
+def test_server_query_timeout_response_is_not_a_connection_timeout():
+    """Replay Doris 4.1.3's deadline error through the real PyMySQL driver."""
+    sql = 'SELECT SUM(SIN(number)) FROM numbers("number"="1000000000")'
+
+    class DorisDeadlineServer(StallingMySQLServer):
+        @staticmethod
+        def _packet(conn, payload, sequence=0):
+            if payload.startswith(b"\xff"):
+                payload = (
+                    b"\xff"
+                    + struct.pack("<H", 1105)
+                    + b"#HY000errCode = 2, detailMessage = query is timeout, killed by timeout checker"
+                )
+            StallingMySQLServer._packet(conn, payload, sequence)
+
+    with DorisDeadlineServer(lambda sql: False, reject=lambda statement: statement == sql) as server:
+        connector = DorisConnector({"username": "test", "port": server.port, "query_timeout_seconds": 1})
+        try:
+            with pytest.raises(DatusDbException) as exc:
+                connector._execute_query(sql)
+            assert exc.value.code == ErrorCode.DB_EXECUTION_TIMEOUT
+            assert "query is timeout" in str(exc.value)
+            assert server.statements.count(sql) == 1
+            assert connector._execute_query("SELECT 42 AS answer") == [{"answer": 42}]
+            assert server.connections == 1
+        finally:
+            connector.close()
+        assert connector.engine is None
 
 
 @pytest.mark.parametrize(

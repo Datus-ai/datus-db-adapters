@@ -34,12 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          # A restored sdist cache can lack build sources (merge run 39930406280).
-          # Keep reuse within this job, without restoring or saving that snapshot.
-          enable-cache: false
-          cache-local-path: ${{ runner.temp }}/uv-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index }}
+        uses: ./.github/actions/setup-uv
 
       - name: Resolve changed test base
         id: changed-base
@@ -154,12 +149,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          # A restored sdist cache can lack build sources (merge run 39930406280).
-          # Keep reuse within this job, without restoring or saving that snapshot.
-          enable-cache: false
-          cache-local-path: ${{ runner.temp }}/uv-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index }}
+        uses: ./.github/actions/setup-uv
 
       - name: Run ${{ matrix.adapter }} integration tests
         run: ci/run-integration-tests.sh "${{ matrix.adapter }}"
@@ -196,12 +186,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          # A restored sdist cache can lack build sources (merge run 39930406280).
-          # Keep reuse within this job, without restoring or saving that snapshot.
-          enable-cache: false
-          cache-local-path: ${{ runner.temp }}/uv-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index }}
+        uses: ./.github/actions/setup-uv
 
       - name: Run Oracle integration tests without parallel Compose load
         run: ci/run-integration-tests.sh oracle
@@ -241,12 +226,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          # A restored sdist cache can lack build sources (merge run 39930406280).
-          # Keep reuse within this job, without restoring or saving that snapshot.
-          enable-cache: false
-          cache-local-path: ${{ runner.temp }}/uv-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index }}
+        uses: ./.github/actions/setup-uv
       - name: Run HANA integration tests after other heavy databases
         run: ci/run-integration-tests.sh hana
       - name: Stop HANA integration services

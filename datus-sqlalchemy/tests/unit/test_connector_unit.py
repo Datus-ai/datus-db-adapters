@@ -274,6 +274,7 @@ def test_handle_exception_classifies_and_logs_common_failures(exception, expecte
         "query reached its timeout",
         "query timed out",
         "query timeout",
+        "errCode = 2, detailMessage = query is timeout, killed by timeout checker",
         "query execution timed out",
         "statement timeout",
         "maximum statement execution time exceeded",

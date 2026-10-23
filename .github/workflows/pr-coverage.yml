@@ -58,12 +58,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          # A restored sdist cache can lack build sources (merge run 39930406280).
-          # Keep reuse within this job, without restoring or saving that snapshot.
-          enable-cache: false
-          cache-local-path: ${{ runner.temp }}/uv-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index }}
+        uses: ./.github/actions/setup-uv
 
       - name: Run unit tests with coverage
         id: metrics

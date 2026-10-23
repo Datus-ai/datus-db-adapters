@@ -1,0 +1,34 @@
+name: Set up uv with a complete dependency cache
+description: Restore immutable dependency snapshots into each runner's own workspace.
+inputs:
+  version:
+    description: uv version; included in the snapshot key.
+    default: "0.13.5"
+  python-version:
+    description: Python compatibility version; installed by the caller.
+    default: "3.12"
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      id: uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: ${{ inputs.version }}
+        python-version: ${{ inputs.python-version }}
+        enable-cache: false
+        cache-local-path: ${{ github.workspace }}/.cache/uv
+
+    - name: Restore complete dependency snapshot
+      uses: actions/cache@v4
+      with:
+        # A relative archive path keeps the cache version and tar entries stable
+        # across runner directories. Live writes stay in each checkout's copy.
+        path: .cache/uv
+        key: uv-complete-v1-${{ runner.os }}-${{ runner.arch }}-py${{ inputs.python-version }}-uv${{ steps.uv.outputs.uv-version }}-${{ hashFiles('pyproject.toml', 'datus-*/pyproject.toml', '.github/actions/setup-uv/action.yml', 'ci/uv_cache.py') }}
+        # No restore-keys: never fall back to the old pruned source snapshots.
+        # actions/cache saves only after job success, without `uv cache prune --ci`.
+
+    - name: Validate restored source cache
+      shell: bash
+      run: python "${{ github.action_path }}/../../../ci/uv_cache.py"
