@@ -41,6 +41,11 @@ select only affected Compose and cloud targets from the transitive package graph
   initialization is resource-intensive; other selected Compose targets remain
   parallel.
 
+Shared runners may already host unrelated services. The Doris CI target lets
+Docker allocate its loopback HTTP management port instead of reserving `48030`;
+the suite uses its separate SQL endpoint. An explicit `DORIS_HTTP_HOST_PORT`
+override is still honored. Do not stop unrelated containers to free a CI port.
+
 Manual dispatch runs the full enabled sweep. The scheduled Monday run is the
 weekly full Compose and enabled cloud safety net. MaxCompute is explicitly disabled in
 `ci/integration-targets.toml` until a live CI instance and repository secrets
