@@ -361,6 +361,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                 "query reached its timeout",
                 "query timed out",
                 "query timeout",
+                "query is timeout",
                 "query execution timed out",
                 "statement timeout",
                 "maximum statement execution time exceeded",

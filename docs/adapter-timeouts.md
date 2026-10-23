@@ -241,6 +241,12 @@ versions; Doris also has separate INSERT timeout rules. This option does not
 promise a deadline for every DDL/DML statement or asynchronous job. No extra
 `KILL QUERY` connection or automatic statement retry is introduced.
 
+Doris 4.1.3 can report its server deadline as `query is timeout, killed by
+timeout checker` (MySQL error 1105). This is classified as `DB_EXECUTION_TIMEOUT`,
+alongside the other server cancellation messages, rather than a socket or
+connection timeout. A driver-protocol regression replays that response and checks
+that the query is sent once and a later explicit query can reuse the connection.
+
 Primary references: [PyMySQL connection parameters](https://pymysql.readthedocs.io/en/latest/modules/connections.html),
 [MySQL max_execution_time](https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_max_execution_time),
 [TiDB system variables](https://docs.pingcap.com/tidbcloud/system-variables/#max_execution_time),
