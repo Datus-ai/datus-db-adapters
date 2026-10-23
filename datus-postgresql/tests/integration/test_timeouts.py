@@ -49,7 +49,7 @@ def test_reused_writer_validator_has_deadline_before_checkout_sql(config, engine
 
     with BlackholeProxy(config.host, config.port, safety_timeout=5) as proxy:
         settings = config.model_dump()
-        settings.update(host="127.0.0.1", port=proxy.port, timeout_seconds=1, query_timeout_seconds=3)
+        settings.update(host="localhost", port=proxy.port, timeout_seconds=1, query_timeout_seconds=3)
         connector = PostgreSQLConnector(settings)
         writer_config = config.model_copy(
             update={"aurora": True, "host": "writer.cluster-example.us-east-1.rds.amazonaws.com"}

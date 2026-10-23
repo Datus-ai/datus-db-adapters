@@ -130,6 +130,14 @@ recovery. Testing pre-ping and the validator separately does not cover this gap.
 See `docs/adapter-timeouts.md` and `datus-mysql/tests/unit/test_timeouts.py`
 (issue #165).
 
+Run fault-injection cases under the verified-TLS profile as well as plaintext.
+The local proxy's client hostname must match its server certificate (`localhost`
+for the CI DNS-only certificates). Keep CA and hostname verification enabled;
+an IP mismatch before the injected fault is not timeout coverage. A database-free
+TLS protocol peer must also exercise the shared contract so PR CI catches this
+before the merge queue runs the full TLS integration suites. Disposable CA chains
+must pass strict X.509 server verification, including CA key-usage extensions.
+
 Shared transport/lifecycle helpers need database-free tests in the package that
 owns them. PR coverage collects each package's own namespace during its unit
 suite; exercising a shared base only from a derived adapter's tests or from live

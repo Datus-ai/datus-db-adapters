@@ -185,7 +185,9 @@ def assert_stalled_response_timeout(
     marker = f"datus_timeout_{uuid.uuid4().hex}".encode()
     with BlackholeProxy(config.host, config.port, safety_timeout=max_seconds + 3) as proxy:
         settings = config.model_dump()
-        settings.update(host="127.0.0.1", port=proxy.port, timeout_seconds=1)
+        # The verified-TLS fixtures identify the loopback endpoint as localhost.
+        # Using its IP here would fail hostname verification before fault injection.
+        settings.update(host="localhost", port=proxy.port, timeout_seconds=1)
         settings.update(settings_overrides or {})
         connector = connector_factory(settings)
         try:

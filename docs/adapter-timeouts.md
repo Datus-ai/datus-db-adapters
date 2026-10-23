@@ -434,6 +434,29 @@ local PostgreSQL protocol/lifecycle coverage, not a live Aurora service test.
 The testing standard now explicitly requires composed checkout-validator
 coverage rather than testing pre-ping and validation only in isolation.
 
+### Verified-TLS fault-proxy follow-up
+
+Merge-queue run `39924728989` exposed 14 fault-test failures across MySQL,
+PostgreSQL, ClickHouse and Trino: the local proxy settings used `127.0.0.1`,
+while the verified server certificates identify `localhost`. The shared contract
+and PostgreSQL writer-validator cases now use that DNS name, retaining CA and
+hostname verification. A database-free HTTPS protocol peer exercises the real
+ClickHouse driver through the full shared contract for queries, metadata and
+connection probes; a negative case verifies that the IP is still rejected.
+
+Disposable CAs now include explicit critical CA constraints and signing key usage,
+which strict X.509 verification requires (also exercised by Python 3.13). The
+certificate regression checks strict server verification plus wrong-CA and
+wrong-hostname rejection without weakening the generated server identity.
+
+Local validation on 2026-10-23 passed the complete verified-TLS suites on four
+real databases: **PostgreSQL 47, MySQL 39, ClickHouse 43 and Trino 38 cases**,
+**167 in total**, with no skips. This includes certificate rejection, timeout
+invalidation/physical closure, no replay and subsequent explicit recovery.
+All invocation-owned Compose projects and volumes were removed. Separately,
+**637 unit tests** passed across SQLAlchemy, PostgreSQL, MySQL, ClickHouse and
+Trino, including four new TLS fault-proxy regressions.
+
 ## Packaging and rollout
 
 Prepared patch versions (not published):
