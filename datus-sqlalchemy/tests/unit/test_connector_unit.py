@@ -374,28 +374,36 @@ def test_native_driver_timeout_reasons(reason, expected):
 
 
 @pytest.mark.parametrize(
-    "error, expected",
+    "error_factory, expected",
     [
-        (sa_exc.OperationalError(None, None, Exception("read timed out")), ErrorCode.DB_CONNECTION_TIMEOUT),
-        (Exception("DPY-4024: call timeout exceeded"), ErrorCode.DB_EXECUTION_TIMEOUT),
-        (TimeoutError("Read timed out"), ErrorCode.DB_CONNECTION_TIMEOUT),
-        (ValueError("unsupported timeout option"), ErrorCode.DB_CONNECTION_FAILED),
-        (DatusDbException(ErrorCode.DB_AUTHENTICATION_FAILED), ErrorCode.DB_AUTHENTICATION_FAILED),
+        (lambda: sa_exc.OperationalError(None, None, Exception("read timed out")), ErrorCode.DB_CONNECTION_TIMEOUT),
+        (lambda: Exception("DPY-4024: call timeout exceeded"), ErrorCode.DB_EXECUTION_TIMEOUT),
+        (lambda: TimeoutError("Read timed out"), ErrorCode.DB_CONNECTION_TIMEOUT),
+        (lambda: ValueError("unsupported timeout option"), ErrorCode.DB_CONNECTION_FAILED),
+        (lambda: DatusDbException(ErrorCode.DB_AUTHENTICATION_FAILED), ErrorCode.DB_AUTHENTICATION_FAILED),
     ],
 )
-def test_connection_probe_preserves_timeout_and_authentication_error_codes(error, expected):
+def test_connection_probe_preserves_timeout_and_authentication_error_codes(error_factory, expected):
+    # Collection-time exceptions retain tracebacks (and mock engines) after being raised.
+    error = error_factory()
     connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
-    connector.engine = MagicMock()
+    engine = MagicMock()
+    connector.engine = engine
     connector._owns_engine = True
-    connector.engine.connect.side_effect = error
-    with pytest.raises(DatusDbException) as exc:
-        connector.test_connection()
-    assert exc.value.code == expected
-    connector.engine.connect.assert_called_once_with()
-    if isinstance(error, DatusDbException):
-        assert exc.value is error
-    else:
-        assert exc.value.__cause__ is error
+    engine.connect.side_effect = error
+    try:
+        with pytest.raises(DatusDbException) as exc:
+            connector.test_connection()
+        assert exc.value.code == expected
+        engine.connect.assert_called_once_with()
+        if isinstance(error, DatusDbException):
+            assert exc.value is error
+        else:
+            assert exc.value.__cause__ is error
+    finally:
+        connector.close()
+    assert connector.engine is None
+    engine.dispose.assert_called_once_with()
 
 
 @pytest.mark.parametrize("chain", ["direct", "cause", "context", "cycle", "server"])

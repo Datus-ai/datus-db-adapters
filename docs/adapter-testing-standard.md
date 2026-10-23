@@ -137,6 +137,13 @@ integration tests does not contribute to that base package's PR coverage. Check
 timer/transport cleanup, initialization failures and timeout error propagation
 through the real event/driver boundary.
 
+Connection-failure tests must create fresh exceptions inside each invocation
+(parametrize factories instead of exception instances), close connectors in
+`finally`, and assert the engine is detached and disposed. Mock side-effect
+exceptions retain tracebacks that can keep connectors alive until interpreter
+shutdown. When investigating a shutdown hang, verify the pytest subprocess exits
+within a bounded time; a passing test summary alone does not prove cleanup.
+
 Additionally, **every server-error fallback/degradation branch is mandatory to test** whenever the
 connector has one (e.g. primary `information_schema` query fails → fall back to `SHOW`): make the
 mocked engine raise on the primary query and assert the fallback result, including that it stays
