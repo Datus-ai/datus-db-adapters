@@ -52,8 +52,16 @@ copies; GitHub's immutable snapshot is the only shared state. The archive uses a
 relative path so runners with different workspace roots can reuse it. Cache keys
 include OS, architecture, Python compatibility version, exact uv version, package
 metadata and the cache implementation; no fallback keys restore older snapshots.
-The first job on a cache miss builds the snapshot, so downstream parallel jobs
-can reuse it after that job succeeds. The first cold run still pays setup costs.
+When its event has cache-write access, a successful job on a cache miss saves
+the snapshot for subsequent jobs within the same cache scope. The first cold
+run still pays setup costs. PR-triggered snapshots belong to the PR merge ref;
+they do not populate the default branch's cache.
+
+Coverage runs on `pull_request_target`, with read-only access to default-branch
+caches. A coverage miss stays cold until a trusted default-branch job saves the
+matching key: the scheduled Adapter CI run or a manual dispatch of Adapter CI
+on `main` is the cache writer. Do not grant coverage a write-capable cache mode
+for PR code. See [GitHub's cache access rules](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-access-for-low-trust-workflow-triggers).
 
 Snapshots retain both sources and wheels: merge-group run `39930406280` restored
 an incomplete PyHive source cache and failed before pytest because `setup.py` and
