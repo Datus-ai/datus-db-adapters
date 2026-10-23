@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 from pandas import DataFrame
 from pyarrow import Table
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Inspector, make_url
+from sqlalchemy.engine import URL, Engine, ExceptionContext, Inspector, make_url
 from sqlalchemy.exc import (
     DatabaseError,
     DataError,
@@ -178,7 +178,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                 self.close()
             self._credential_state = version
 
-    def _create_engine(self, connection_string, **options):
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         """Shared creation path, including PostgreSQL's per-database engines."""
         url_defaults = getattr(self, "_url_defaults", None)
         if url_defaults:
@@ -211,6 +211,18 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                 validator(dbapi_connection)
 
         return engine
+
+    @staticmethod
+    def _invalidate_network_error(context: ExceptionContext) -> None:
+        """Discard transports after native or wrapped socket/HTTP I/O errors."""
+        error = context.original_exception
+        seen: set[int] = set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, OSError):
+                context.is_disconnect = True
+                return
+            error = error.__cause__ or error.__context__
 
     def __del__(self):
         """Destructor to ensure engine is properly disposed."""
@@ -340,6 +352,36 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         # Table not found
         if isinstance(e, NoSuchTableError):
             return DatusDbException(ErrorCode.DB_TABLE_NOT_EXISTS, message_args={"table_name": str(e)})
+
+        # Server query deadlines can use different DBAPI exception wrappers.
+        # Keep these separate from network/connection timeouts (7e73607).
+        if isinstance(e, DatabaseError) and any(
+            marker in error_msg_lower
+            for marker in (
+                "query reached its timeout",
+                "query timed out",
+                "query timeout",
+                "query execution timed out",
+                "statement timeout",
+                "maximum statement execution time exceeded",
+                "maximum execution time exceeded",
+                "exceeded_time_limit",
+                "found timedout",
+            )
+        ):
+            return DatusDbException(ErrorCode.DB_EXECUTION_TIMEOUT, message_args=message_args)
+
+        # Native SDKs and HTTP/Thrift drivers do not always use SQLAlchemy's
+        # DatabaseError wrappers. Keep their timeout reason visible to callers.
+        if any(
+            marker in error_msg_lower
+            for marker in ("dpy-4024", "dpi-1067", "exceeded_time_limit", "timeout_exceeded", "found timedout")
+        ):
+            return DatusDbException(ErrorCode.DB_EXECUTION_TIMEOUT, message_args=message_args)
+        if not isinstance(e, SQLAlchemyError) and any(
+            marker in error_msg_lower for marker in ("timed out", "read timeout", "socket timeout")
+        ):
+            return DatusDbException(ErrorCode.DB_CONNECTION_TIMEOUT, message_args=message_args)
 
         # Connection and operational errors
         if isinstance(e, (OperationalError, InterfaceError)):
@@ -693,9 +735,15 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
             with self._conn() as conn:
                 conn.execute(text("SELECT 1"))
             return True
+        except SQLAlchemyError as e:
+            raise self._handle_exception(e, operation="connection test") from e
         except Exception as e:
             if isinstance(e, DatusDbException):
                 raise
+            if any(marker in str(e).lower() for marker in ("timeout", "timed out", "dpy-4024", "dpi-1067")):
+                mapped = self._handle_exception(e, operation="connection test")
+                if mapped.code in (ErrorCode.DB_CONNECTION_TIMEOUT, ErrorCode.DB_EXECUTION_TIMEOUT):
+                    raise mapped from e
             raise DatusDbException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={"error_message": "Connection test failed"},

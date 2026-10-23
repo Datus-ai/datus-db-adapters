@@ -8,7 +8,9 @@ ADAPTER_SERVICES=("doris:600" "hive-metastore:600")
 
 export_adapter_env() {
   export DORIS_QUERY_HOST_PORT="${DORIS_QUERY_HOST_PORT:-49030}"
-  export DORIS_HTTP_HOST_PORT="${DORIS_HTTP_HOST_PORT:-48030}"
+  # Tests use the SQL endpoint; let Docker allocate the management port so an
+  # unrelated service on a shared runner cannot block database startup.
+  export DORIS_HTTP_HOST_PORT="${DORIS_HTTP_HOST_PORT:-127.0.0.1:0}"
   export DORIS_HOST="127.0.0.1"
   export DORIS_PORT="$DORIS_QUERY_HOST_PORT"
   export DORIS_USER="root"

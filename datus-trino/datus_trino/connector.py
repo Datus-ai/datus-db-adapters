@@ -4,6 +4,8 @@
 
 from typing import Any, Dict, List, Optional, Set, Union, override
 
+from sqlalchemy import event
+from sqlalchemy.engine import URL, Engine
 from trino.auth import BasicAuthentication
 
 from datus_db_core import CatalogSupportMixin, MigrationTargetMixin, get_logger
@@ -57,6 +59,9 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         self._default_schema = config.schema_name
         self._default_database = config.schema_name  # In Trino, schemas map to databases
         connect_args = {
+            "request_timeout": config.timeout_seconds,
+            "max_attempts": 1,
+            "session_properties": {"query_max_run_time": f"{config.query_timeout_seconds or config.timeout_seconds}s"},
             "verify": config.ca_cert if config.ca_cert is not None else config.verify,
             "http_scheme": config.http_scheme,
             # Older Trino dialects decode credentials twice. Override with raw values.
@@ -65,6 +70,11 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         if config.password:
             connect_args["auth"] = BasicAuthentication(config.username, config.password)
         self.configure_connection(connect_args=connect_args)
+
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
+        engine = super()._create_engine(connection_string, **options)
+        event.listen(engine, "handle_error", self._invalidate_network_error)
+        return engine
 
     # ==================== Context Manager Support ====================
 

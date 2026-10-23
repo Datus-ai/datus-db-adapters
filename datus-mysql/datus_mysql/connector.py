@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Optional, Set, Union, override
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine import URL, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -105,10 +106,25 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         if config.auth_mode == "iam":
             connect_args["auth_plugin_map"] = {"mysql_clear_password": None}
         for key in ("read_timeout", "write_timeout"):
-            value = getattr(config, f"{key}_seconds")
-            if value is not None:
-                connect_args[key] = value
+            connect_args[key] = getattr(config, f"{key}_seconds") or config.timeout_seconds
         configure_database_connection(self, config, connect_args, dialect="mysql")
+
+    def _query_timeout_sql(self) -> str:
+        """MySQL and TiDB use milliseconds for their SELECT execution deadline."""
+        return f"SET SESSION max_execution_time = {self.config.query_timeout_seconds * 1000}"
+
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
+        engine = super()._create_engine(connection_string, **options)
+        if self.config.query_timeout_seconds is not None:
+
+            @event.listens_for(engine, "connect")
+            def set_query_timeout(dbapi_connection: Any, connection_record: Any) -> None:
+                # Configure every physical connection, including replacements after
+                # a disconnect. Fail setup if the requested deadline is unsupported.
+                with dbapi_connection.cursor() as cursor:
+                    cursor.execute(self._query_timeout_sql())
+
+        return engine
 
     # ==================== System Resources ====================
 

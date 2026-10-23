@@ -5,6 +5,8 @@
 from typing import Any, Dict, List, Optional, Set, Union, override
 
 from pydantic import BaseModel, Field
+from sqlalchemy import event
+from sqlalchemy.engine import URL, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -93,8 +95,17 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
         self.config = config
         self._default_database = database
         self.configure_connection(
-            connect_args={"verify": config.ca_cert if config.ca_cert is not None else config.verify}
+            connect_args={
+                "verify": config.ca_cert if config.ca_cert is not None else config.verify,
+                "timeout": config.timeout_seconds,
+                "ch_settings": {"max_execution_time": config.query_timeout_seconds or config.timeout_seconds},
+            }
         )
+
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
+        engine = super()._create_engine(connection_string, **options)
+        event.listen(engine, "handle_error", self._invalidate_network_error)
+        return engine
 
     # ==================== System Resources ====================
 

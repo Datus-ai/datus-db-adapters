@@ -360,8 +360,12 @@ def test_protocol_selection_reaches_real_sqlalchemy_dbapi_boundary(server_type, 
         with patch(driver_name, side_effect=RuntimeError("driver boundary")) as driver:
             with pytest.raises(RuntimeError, match="driver boundary"):
                 connector._ensure_engine().connect()
-            driver.assert_called_once_with(
-                host="hs2.example.com", port=10000, username="hive", password=None, database="default"
-            )
+            args = driver.call_args.kwargs
+            assert args["username"] == "hive"
+            assert args["database"] == "default"
+            transport = args["thrift_transport"]
+            assert transport.mechanism == "PLAIN"
+            assert transport._trans.host == "hs2.example.com"
+            assert transport._trans._timeout == 30
     finally:
         connector.close()

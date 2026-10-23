@@ -101,4 +101,6 @@ class DWSConfig(PostgreSQLConfig):
             "not match the server certificate issuer"
         ),
     )
-    timeout_seconds: int = Field(default=30, gt=0, description="Connection and pool timeout in seconds")
+    timeout_seconds: int = Field(
+        default=30, gt=0, description="Pool, socket-operation and default query deadline in seconds"
+    )

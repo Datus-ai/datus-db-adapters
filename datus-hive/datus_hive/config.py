@@ -60,7 +60,8 @@ class HiveConfig(BaseModel):
         default=None, description="Kerberos service component of the server principal (usually hive)"
     )
     configuration: Dict[str, Any] = Field(default_factory=dict, description="Hive session configuration")
-    timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+    timeout_seconds: int = Field(default=30, gt=0, description="Pool and Thrift connect/read/write timeout in seconds")
+    query_timeout_seconds: int | None = Field(default=None, gt=0, description="Override Thrift statement queryTimeout")
 
     @model_validator(mode="after")
     def validate_kerberos(self) -> Self:

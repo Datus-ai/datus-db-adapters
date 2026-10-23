@@ -24,4 +24,5 @@ class SparkConfig(BaseModel):
     auth_mechanism: Literal["NONE", "NOSASL", "LDAP", "KERBEROS", "CUSTOM"] = Field(
         default="NONE", description="Authentication mechanism (NONE, NOSASL, LDAP, KERBEROS, CUSTOM)"
     )
-    timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+    timeout_seconds: int = Field(default=30, gt=0, description="Pool and Thrift connect/read/write timeout in seconds")
+    query_timeout_seconds: int | None = Field(default=None, gt=0, description="Override Thrift statement queryTimeout")

@@ -2,6 +2,17 @@
 
 Apache Doris database adapter for Datus.
 
+## Timeouts
+
+`timeout_seconds` (default `30`, positive seconds) bounds pool checkout and is
+also the default for PyMySQL connect, read, and write timeouts. Override these
+independently with `connect_timeout_seconds`, `read_timeout_seconds`, and
+`write_timeout_seconds`. `None` inherits the finite default. Long queries may
+need a larger read timeout. Optional `query_timeout_seconds` configures the
+server's SELECT deadline on every physical connection; it defaults to `None`
+(preserve server settings). Socket inactivity timeouts are not total query
+deadlines. See [timeout semantics and adapter audit](../docs/adapter-timeouts.md).
+
 ## Features
 
 - MySQL-protocol connection and SQL execution
