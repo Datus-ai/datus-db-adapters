@@ -113,13 +113,13 @@ def test_statement_failure_is_not_replayed():
 
     connector = Connector("sqlite://")
     conn = MagicMock()
-    conn.execute.side_effect = OperationalError("INSERT INTO t VALUES (1)", {}, RuntimeError("connection lost"))
+    conn.exec_driver_sql.side_effect = OperationalError("INSERT INTO t VALUES (1)", {}, RuntimeError("connection lost"))
     engine = MagicMock()
     engine.connect.return_value = conn
     with patch("datus_sqlalchemy.connector.create_engine", return_value=engine):
         result = connector.execute_insert("INSERT INTO t VALUES (1)")
     assert not result.success
-    conn.execute.assert_called_once()
+    conn.exec_driver_sql.assert_called_once()
     conn.rollback.assert_called_once()
 
 

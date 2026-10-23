@@ -419,7 +419,7 @@ def test_metadata_discovery_preserves_view_lookup_errors(connector, method, mess
     connector._owns_engine = True
     connector.engine.connect.return_value = connection
 
-    def execute(statement):
+    def execute(statement, **kwargs):
         sql = str(statement)
         result = MagicMock()
         if sql.startswith("SHOW VIEWS"):
@@ -428,11 +428,11 @@ def test_metadata_discovery_preserves_view_lookup_errors(connector, method, mess
             result.fetchall.return_value = [row("base_table"), row("ordinary_view")]
         return result
 
-    connection.execute.side_effect = execute
+    connection.exec_driver_sql.side_effect = execute
     with pytest.raises(DatusDbException, match=message) as raised:
         getattr(connector, method)(database_name="default")
     assert raised.value.__cause__ is error
-    queries = [str(call.args[0]) for call in connection.execute.call_args_list]
+    queries = [str(call.args[0]) for call in connection.exec_driver_sql.call_args_list]
     assert "SHOW VIEWS IN `default`" in queries
     assert not any(sql.startswith("SHOW CREATE") for sql in queries)
     connector.close()
@@ -447,13 +447,13 @@ def test_successful_empty_view_inventory(connector, method, expected):
     connector._owns_engine = True
     connector.engine.connect.return_value = connection
 
-    def execute(statement):
+    def execute(statement, **kwargs):
         sql = str(statement)
         result = MagicMock()
         result.fetchall.return_value = [row("base_table")] if sql.startswith("SHOW TABLES") else []
         return result
 
-    connection.execute.side_effect = execute
+    connection.exec_driver_sql.side_effect = execute
     assert getattr(connector, method)(database_name="default") == expected
     connector.close()
 

@@ -683,7 +683,8 @@ def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expe
     ]
     constraint_result = MagicMock()
     constraint_result.fetchall.return_value = constraints
-    connection.execute.side_effect = [schema_result, constraint_result]
+    connection.exec_driver_sql.return_value = schema_result
+    connection.execute.return_value = constraint_result
 
     ddl = connector._get_ddl("public", "orders", database_name="other_db")
 
