@@ -46,6 +46,14 @@ Docker allocate its loopback HTTP management port instead of reserving `48030`;
 the suite uses its separate SQL endpoint. An explicit `DORIS_HTTP_HOST_PORT`
 override is still honored. Do not stop unrelated containers to free a CI port.
 
+Validation workflows disable restored uv caches and use a cache directory unique
+to the run, attempt, job, and matrix entry. Commands within one job still reuse
+downloads and builds. Merge-group run `39930406280` restored an incomplete
+PyHive source cache and failed before pytest: both `setup.py` and `pyproject.toml`
+were missing. Dependency-based cache keys alone did not prevent that snapshot
+from being reused. Fresh job caches avoid that failure at the cost of downloading
+and building dependencies again for each job; test failures still fail immediately.
+
 Manual dispatch runs the full enabled sweep. The scheduled Monday run is the
 weekly full Compose and enabled cloud safety net. MaxCompute is explicitly disabled in
 `ci/integration-targets.toml` until a live CI instance and repository secrets
