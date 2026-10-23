@@ -46,13 +46,22 @@ Docker allocate its loopback HTTP management port instead of reserving `48030`;
 the suite uses its separate SQL endpoint. An explicit `DORIS_HTTP_HOST_PORT`
 override is still honored. Do not stop unrelated containers to free a CI port.
 
-Validation workflows disable restored uv caches and use a cache directory unique
-to the run, attempt, job, and matrix entry. Commands within one job still reuse
-downloads and builds. Merge-group run `39930406280` restored an incomplete
-PyHive source cache and failed before pytest: both `setup.py` and `pyproject.toml`
-were missing. Dependency-based cache keys alone did not prevent that snapshot
-from being reused. Fresh job caches avoid that failure at the cost of downloading
-and building dependencies again for each job; test failures still fail immediately.
+Validation workflows use `.github/actions/setup-uv` to restore complete uv cache
+snapshots into `.cache/uv` in each runner's own checkout. Jobs write to their own
+copies; GitHub's immutable snapshot is the only shared state. The archive uses a
+relative path so runners with different workspace roots can reuse it. Cache keys
+include OS, architecture, Python compatibility version, exact uv version, package
+metadata and the cache implementation; no fallback keys restore older snapshots.
+The first job on a cache miss builds the snapshot, so downstream parallel jobs
+can reuse it after that job succeeds. The first cold run still pays setup costs.
+
+Snapshots retain both sources and wheels: merge-group run `39930406280` restored
+an incomplete PyHive source cache and failed before pytest because `setup.py` and
+`pyproject.toml` were missing. The cache action does not prune source files before
+saving. Before installation, `ci/uv_cache.py` invalidates incomplete PyPI source
+entries through `uv cache clean <package>` while preserving healthy packages.
+Repair failures fail the job; dependency installation and tests are not retried.
+The pinned uv version and namespace can be advanced together after validation.
 
 Manual dispatch runs the full enabled sweep. The scheduled Monday run is the
 weekly full Compose and enabled cloud safety net. MaxCompute is explicitly disabled in

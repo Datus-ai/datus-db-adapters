@@ -137,6 +137,16 @@ def test_shared_integration_infrastructure_change_selects_all_compose_targets(pa
     assert selection.cloud_targets == set()
 
 
+@pytest.mark.parametrize("path", [".github/actions/setup-uv/action.yml", "ci/uv_cache.py"])
+def test_shared_cache_change_exercises_all_unit_and_live_targets(path: str) -> None:
+    selection = select(path)
+    full = select_all(REPO_ROOT)
+
+    assert selection.unit_packages == full.unit_packages
+    assert selection.compose_targets == full.compose_targets
+    assert selection.cloud_targets == full.cloud_targets
+
+
 @pytest.mark.parametrize(
     "path",
     [
