@@ -23,6 +23,8 @@ _DOC_NAMES = frozenset({"README", "README.md", "LICENSE", "LICENSE.md", "CHANGEL
 _GLOBAL_ALL_INTEGRATION_PATHS = frozenset(
     {
         ".github/workflows/test.yml",
+        ".github/actions/setup-uv/action.yml",
+        "ci/uv_cache.py",
         "ci/integration-targets.toml",
         "ci/select_affected.py",
     }
@@ -30,6 +32,8 @@ _GLOBAL_ALL_INTEGRATION_PATHS = frozenset(
 _GLOBAL_ALL_UNIT_PATHS = frozenset(
     {
         ".github/workflows/test.yml",
+        ".github/actions/setup-uv/action.yml",
+        "ci/uv_cache.py",
         "ci/run-unit-tests.sh",
         "ci/select_affected.py",
     }
