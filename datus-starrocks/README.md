@@ -157,6 +157,15 @@ result = connector.execute_query(f"SELECT * FROM {full_name} LIMIT 10")
 
 ## Testing
 
+The Compose environment pins StarRocks 4.0.16 and is also used by Datus-agent
+nightly tests. Only FE metadata and BE storage are persisted, so the executable
+files and configuration come from the selected image.
+
+The new volumes do not reuse the legacy `starrocks_data` volume mounted at
+`/data`. Existing data in that volume is left untouched. Recreate and seed test
+databases when switching from the 3.3 test image; do not mount the old volume
+over the new image's deployment directory.
+
 ### Quick Start
 
 ```bash
@@ -239,7 +248,7 @@ datus-starrocks/
 ├── scripts/
 │   ├── test.sh              # Test runner script
 │   └── init_tpch_data.py    # Manual TPC-H data initialization
-├── docker-compose.yml       # StarRocks 3.3-latest test container
+├── docker-compose.yml       # StarRocks 4.0.16 test container
 ├── pyproject.toml
 └── README.md
 ```
