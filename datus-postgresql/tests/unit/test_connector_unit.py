@@ -645,6 +645,7 @@ def test_get_schema_empty_table_name_short_circuit():
 
 
 def test_get_ddl_uses_requested_database_for_table_schema():
+    """Test that _get_ddl retrieves table schema from the specified database_name."""
     connector = _make_pg_connector_for_metadata(database_name="default_db")
     connector.get_schema = MagicMock(return_value=[])
 
@@ -680,6 +681,7 @@ def test_get_ddl_uses_requested_database_for_table_schema():
     ],
 )
 def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expected_constraints):
+    """Test that reconstructed table DDL preserves server constraint order, types, and names."""
     connector = _make_pg_connector_for_metadata(database_name="default_db")
     connector.dialect = "postgresql"
     connector._conn = MagicMock()
@@ -706,6 +708,39 @@ def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expe
     assert [call.kwargs["database_name"] for call in connector._conn.call_args_list] == ["other_db", "other_db"]
     assert connection.execute.call_args.args[1] == {"schema_name": "public", "table_name": "orders"}
     assert "c.contype IN ('p', 'u', 'f')" in str(connection.execute.call_args.args[0])
+
+
+def test_table_ddl_emits_unvalidated_foreign_keys_as_alter_table():
+    """Test that unvalidated constraints (NOT VALID) are emitted as separate ALTER TABLE statements."""
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector.dialect = "postgresql"
+    connector._conn = MagicMock()
+    connection = connector._conn.return_value.__enter__.return_value
+    row = namedtuple("SchemaRow", _SCHEMA_COLS)
+    schema_result = MagicMock()
+    schema_result.fetchall.return_value = [
+        row("public", "orders", "id", "integer", "NO", None, True, None),
+        row("public", "orders", "customer_id", "integer", "NO", None, False, None),
+    ]
+    constraint_result = MagicMock()
+    constraint_result.fetchall.return_value = [
+        ("orders_pk", True, "PRIMARY KEY (id)"),
+        ("orders_customer_fk", False, "FOREIGN KEY (customer_id) REFERENCES customers(id) NOT VALID"),
+    ]
+    connection.exec_driver_sql.return_value = schema_result
+    connection.execute.return_value = constraint_result
+
+    ddl = connector._get_ddl("public", "orders", database_name="other_db")
+
+    expected_ddl = (
+        'CREATE TABLE "other_db"."public"."orders" (\n'
+        '    "id" integer NOT NULL,\n'
+        '    "customer_id" integer NOT NULL,\n'
+        '    CONSTRAINT "orders_pk" PRIMARY KEY (id)\n'
+        ");\n"
+        'ALTER TABLE "other_db"."public"."orders" ADD CONSTRAINT "orders_customer_fk" FOREIGN KEY (customer_id) REFERENCES customers(id) NOT VALID;'
+    )
+    assert ddl == expected_ddl
 
 
 def test_unique_index_definitions_preserve_predicates_and_bind_identifiers():

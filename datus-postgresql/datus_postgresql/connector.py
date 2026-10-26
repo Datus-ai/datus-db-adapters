@@ -320,7 +320,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             with self._conn(database_name=database_name) as conn:
                 constraints = conn.execute(
                     text("""
-                        SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid) AS definition
+                        SELECT c.conname, c.convalidated, pg_catalog.pg_get_constraintdef(c.oid) AS definition
                         FROM pg_catalog.pg_constraint c
                         JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
                         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
@@ -335,13 +335,32 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                     """),
                     {"schema_name": schema_name, "table_name": table_name},
                 ).fetchall()
-            col_defs.extend(
-                f"    CONSTRAINT {self.quote_identifier(name)} {definition}" for name, definition in constraints
-            )
+
+            table_constraints = []
+            unvalidated_alter_statements = []
+            for row in constraints:
+                if len(row) >= 3:
+                    name, is_validated, definition = row[0], row[1], row[2]
+                else:
+                    name, definition = row[0], row[1]
+                    is_validated = "NOT VALID" not in definition
+
+                # PostgreSQL forbids NOT VALID inside CREATE TABLE definitions.
+                # Emit unvalidated foreign keys as standalone ALTER TABLE statements.
+                if (not is_validated or "NOT VALID" in definition) and "NOT VALID" in definition:
+                    unvalidated_alter_statements.append(
+                        f"ALTER TABLE {full_name} ADD CONSTRAINT {self.quote_identifier(name)} {definition};"
+                    )
+                else:
+                    table_constraints.append(f"    CONSTRAINT {self.quote_identifier(name)} {definition}")
+
+            col_defs.extend(table_constraints)
 
             ddl = f"CREATE TABLE {full_name} (\n"
             ddl += ",\n".join(col_defs)
             ddl += "\n);"
+            if unvalidated_alter_statements:
+                ddl += "\n" + "\n".join(unvalidated_alter_statements)
             return ddl
 
     def _get_unique_index_definitions(self, schema_name: str, table_name: str, database_name: str = "") -> List[str]:
