@@ -714,8 +714,8 @@ class MaxComputeConnector(BaseSqlConnector):
         schema_name: str = "",
         tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
-        project, schema, objects = self._list_objects(catalog_name, database_name, schema_name)
-        requested = set()
+        project, schema = self._validate_context(catalog_name, database_name, schema_name)
+        requested = []
         for table_name in tables or []:
             requested_project, requested_schema, requested_name = self._resolve_table(
                 table_name,
@@ -734,7 +734,23 @@ class MaxComputeConnector(BaseSqlConnector):
                         )
                     },
                 )
-            requested.add(requested_name)
+            if requested_name not in requested:
+                requested.append(requested_name)
+        if requested:
+            from odps.errors import NoSuchObject
+
+            objects = []
+            for name in requested:
+                if _matches_ignore_patterns(name, self.config.ignore_table_patterns):
+                    continue
+                try:
+                    table = self._odps.get_table(name, project=project, schema=schema or None)
+                    table.reload()
+                except NoSuchObject:
+                    continue
+                objects.append(table)
+        else:
+            _, _, objects = self._list_objects(catalog_name, database_name, schema_name)
         return [
             self._metadata_entry(project, schema, table, "table")
             for table in objects

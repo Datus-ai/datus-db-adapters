@@ -34,13 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          # Without a glob the key is static, and a GitHub cache key can never be
-          # overwritten: one pruned snapshot (sdists without sources) was restored
-          # by every run and broke any sdist build. Key it on the dependency set.
-          cache-dependency-glob: "**/pyproject.toml"
+        uses: ./.github/actions/setup-uv
 
       - name: Resolve changed test base
         id: changed-base
@@ -155,13 +149,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          # Without a glob the key is static, and a GitHub cache key can never be
-          # overwritten: one pruned snapshot (sdists without sources) was restored
-          # by every run and broke any sdist build. Key it on the dependency set.
-          cache-dependency-glob: "**/pyproject.toml"
+        uses: ./.github/actions/setup-uv
 
       - name: Run ${{ matrix.adapter }} integration tests
         run: ci/run-integration-tests.sh "${{ matrix.adapter }}"
@@ -198,13 +186,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          # Without a glob the key is static, and a GitHub cache key can never be
-          # overwritten: one pruned snapshot (sdists without sources) was restored
-          # by every run and broke any sdist build. Key it on the dependency set.
-          cache-dependency-glob: "**/pyproject.toml"
+        uses: ./.github/actions/setup-uv
 
       - name: Run Oracle integration tests without parallel Compose load
         run: ci/run-integration-tests.sh oracle
@@ -244,7 +226,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: ./.github/actions/setup-uv
       - name: Run HANA integration tests after other heavy databases
         run: ci/run-integration-tests.sh hana
       - name: Stop HANA integration services

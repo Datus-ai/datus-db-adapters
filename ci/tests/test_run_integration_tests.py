@@ -11,6 +11,31 @@ CI_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = CI_ROOT.parent
 RUNNER = CI_ROOT / "run-integration-tests.sh"
 GAUSSDB_DEFINITION = CI_ROOT / "integration" / "adapters" / "gaussdb.sh"
+DORIS_DEFINITION = CI_ROOT / "integration" / "adapters" / "doris.sh"
+
+
+@pytest.mark.parametrize("http_port", [None, "127.0.0.1:18030"])
+def test_doris_ci_does_not_reserve_a_fixed_management_port(http_port: str | None) -> None:
+    env = dict(os.environ)
+    env.pop("DORIS_HTTP_HOST_PORT", None)
+    env.pop("DORIS_QUERY_HOST_PORT", None)
+    if http_port is not None:
+        env["DORIS_HTTP_HOST_PORT"] = http_port
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; export_adapter_env; printf "%s\\n" "$DORIS_HTTP_HOST_PORT" "$DORIS_QUERY_HOST_PORT" "$DORIS_PORT"',
+            "doris-port-check",
+            str(DORIS_DEFINITION),
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.stdout.splitlines() == [http_port or "127.0.0.1:0", "49030", "49030"]
 
 
 def test_gaussdb_client_ca_files_are_private_before_export() -> None:

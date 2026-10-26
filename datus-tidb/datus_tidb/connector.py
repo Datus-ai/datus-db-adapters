@@ -65,6 +65,10 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
                 charset=config.charset,
                 autocommit=config.autocommit,
                 timeout_seconds=config.timeout_seconds,
+                connect_timeout_seconds=config.connect_timeout_seconds,
+                read_timeout_seconds=config.read_timeout_seconds,
+                write_timeout_seconds=config.write_timeout_seconds,
+                query_timeout_seconds=config.query_timeout_seconds,
             )
         )
         # Set after super().__init__() so the inherited MySQL dialect does not
@@ -91,6 +95,7 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
         table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """Get table/view metadata, refusing the materialized-view type.
 
@@ -103,7 +108,7 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
                 ErrorCode.COMMON_FIELD_INVALID,
                 "TiDB has no materialized views; use a view or a TiFlash replica instead",
             )
-        return super()._get_metadata(table_type, catalog_name, database_name)
+        return super()._get_metadata(table_type, catalog_name, database_name, tables=tables)
 
     # ==================== Utility Methods ====================
 

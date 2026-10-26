@@ -1,6 +1,6 @@
 [project]
 name = "datus-spark"
-version = "0.1.4"
+version = "0.1.5"
 description = "Spark SQL database adapter for Datus"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
@@ -17,8 +17,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.7",
-    "datus-sqlalchemy>=0.1.9",
+    "datus-db-core>=0.1.9",
+    "datus-sqlalchemy>=0.1.11",
     "pyhive>=0.7.0",
     "thrift>=0.16.0",
     "thrift-sasl>=0.4.3",

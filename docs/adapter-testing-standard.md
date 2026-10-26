@@ -114,6 +114,44 @@ CA inputs where supported, and both base and per-database engines where present.
 Mocking a base initializer or checking only the URL misses parameters overwritten
 later by SQLAlchemy `connect_args` (Aurora review regressions in GaussDB/DWS).
 
+Timeout changes must verify default and overridden bounds at the final driver
+boundary, including all derived adapters. Reject values that silently disable
+the intended bound. Add a deterministic stalled-response test using the real
+driver against a local protocol peer (or live engine), with an independent test
+safety deadline. Cover queries, metadata, and `test_connection()`, connection
+invalidation/closure, no automatic statement replay, and recovery on a later
+explicit request. Check server-side deadline setup on replacement connections
+where supported; distinguish socket inactivity from total query execution time.
+On reused pools with SQL-executing checkout validators (for example Aurora's
+writer-role probe), also stall the validator's query and rollback after pre-ping
+has succeeded. Exercise the real listener order and verify the lease is armed
+before validation, then check invalidation, timer/socket cleanup and explicit
+recovery. Testing pre-ping and the validator separately does not cover this gap.
+See `docs/adapter-timeouts.md` and `datus-mysql/tests/unit/test_timeouts.py`
+(issue #165).
+
+Run fault-injection cases under the verified-TLS profile as well as plaintext.
+The local proxy's client hostname must match its server certificate (`localhost`
+for the CI DNS-only certificates). Keep CA and hostname verification enabled;
+an IP mismatch before the injected fault is not timeout coverage. A database-free
+TLS protocol peer must also exercise the shared contract so PR CI catches this
+before the merge queue runs the full TLS integration suites. Disposable CA chains
+must pass strict X.509 server verification, including CA key-usage extensions.
+
+Shared transport/lifecycle helpers need database-free tests in the package that
+owns them. PR coverage collects each package's own namespace during its unit
+suite; exercising a shared base only from a derived adapter's tests or from live
+integration tests does not contribute to that base package's PR coverage. Check
+timer/transport cleanup, initialization failures and timeout error propagation
+through the real event/driver boundary.
+
+Connection-failure tests must create fresh exceptions inside each invocation
+(parametrize factories instead of exception instances), close connectors in
+`finally`, and assert the engine is detached and disposed. Mock side-effect
+exceptions retain tracebacks that can keep connectors alive until interpreter
+shutdown. When investigating a shutdown hang, verify the pytest subprocess exits
+within a bounded time; a passing test summary alone does not prove cleanup.
+
 Additionally, **every server-error fallback/degradation branch is mandatory to test** whenever the
 connector has one (e.g. primary `information_schema` query fails → fall back to `SHOW`): make the
 mocked engine raise on the primary query and assert the fallback result, including that it stays
@@ -299,6 +337,13 @@ Never inline or copy TPC-H data. Three pieces, no data duplication anywhere:
 `ROW_COUNTS`, one JOIN, one aggregation, and `result_format` in `csv`/`arrow`/`pandas`.
 
 ### Metadata tests — exact comparison
+
+Targeted DDL reads must restrict metadata at the database/SDK boundary, including
+fallbacks and auxiliary view/foreign-table lookups. Unit tests must assert the
+emitted name predicate or targeted SDK request, preserve unfiltered bulk reads,
+and cover quoted names and missing tables. The shared live table contract also
+reads the newly created table's DDL and checks its columns. Returning only the
+requested table after downloading the whole catalog does not satisfy this contract.
 
 Create the objects you assert on. `metadata_objects_setup` creates known tables/views, then:
 

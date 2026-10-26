@@ -240,10 +240,9 @@ def test_config_port_out_of_range():
 
 
 def test_config_zero_timeout():
-    """Test that zero timeout is allowed."""
-    config = StarRocksConfig(username="test_user", timeout_seconds=0)
-
-    assert config.timeout_seconds == 0
+    """A zero timeout must not silently disable the socket deadline."""
+    with pytest.raises(ValidationError, match="timeout_seconds"):
+        StarRocksConfig(username="test_user", timeout_seconds=0)
 
 
 def test_config_to_dict():

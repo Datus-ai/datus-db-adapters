@@ -1,6 +1,6 @@
 [project]
 name = "datus-trino"
-version = "0.1.4"
+version = "0.1.5"
 description = "Trino database adapter for Datus"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
@@ -17,8 +17,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.8",
-    "datus-sqlalchemy>=0.1.10",
+    "datus-db-core>=0.1.9",
+    "datus-sqlalchemy>=0.1.11",
     "trino[sqlalchemy]>=0.328.0",
     "pydantic>=2.0.0",
 ]

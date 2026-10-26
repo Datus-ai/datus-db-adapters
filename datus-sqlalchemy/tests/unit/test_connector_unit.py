@@ -83,7 +83,7 @@ def test_per_operation_connections_are_independent():
     query_result = MagicMock()
     query_result.fetchall.return_value = [MagicMock(_asdict=lambda: {"id": 1})]
     conn1.execute.return_value = MagicMock()  # for do_switch_context
-    conn2.execute.return_value = query_result  # for the actual query
+    conn2.exec_driver_sql.return_value = query_result  # for the actual query
 
     with patch("datus_sqlalchemy.connector.create_engine", return_value=engine):
         connector.execute_content_set("USE analytics")
@@ -166,7 +166,7 @@ def test_execute_query_with_context_params():
     mock_conn = MagicMock()
     query_result = MagicMock()
     query_result.fetchall.return_value = [MagicMock(_asdict=lambda: {"id": 1})]
-    mock_conn.execute.return_value = query_result
+    mock_conn.exec_driver_sql.return_value = query_result
 
     engine = MagicMock()
     engine.connect.return_value = mock_conn
@@ -188,7 +188,7 @@ def test_execute_insert_with_context_params():
     mock_result = MagicMock()
     mock_result.rowcount = 1
     mock_result.inserted_primary_key = None
-    mock_conn.execute.return_value = mock_result
+    mock_conn.exec_driver_sql.return_value = mock_result
 
     engine = MagicMock()
     engine.connect.return_value = mock_conn
@@ -208,7 +208,7 @@ def test_execute_ddl_with_context_params():
     mock_conn = MagicMock()
     mock_result = MagicMock()
     mock_result.rowcount = 0
-    mock_conn.execute.return_value = mock_result
+    mock_conn.exec_driver_sql.return_value = mock_result
 
     engine = MagicMock()
     engine.connect.return_value = mock_conn
@@ -265,6 +265,26 @@ def test_handle_exception_classifies_and_logs_common_failures(exception, expecte
     assert "query failed; sql_preview='SELECT 1'; sql_chars=8" in caplog.text
     assert caplog.text.count("SELECT 1") == 1
     assert caplog.records[-1].exc_info[2] is exception.__traceback__
+
+
+@pytest.mark.parametrize("wrapper", [sa_exc.OperationalError, sa_exc.InternalError, sa_exc.DatabaseError])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "query reached its timeout",
+        "query timed out",
+        "query timeout",
+        "errCode = 2, detailMessage = query is timeout, killed by timeout checker",
+        "query execution timed out",
+        "statement timeout",
+        "maximum statement execution time exceeded",
+        "maximum execution time exceeded",
+    ],
+)
+def test_server_query_deadline_is_execution_timeout(wrapper, reason):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    error = connector._handle_exception(wrapper("SELECT 1", {}, Exception(reason)), "SELECT 1", "query")
+    assert error.code == ErrorCode.DB_EXECUTION_TIMEOUT
 
 
 def test_ensure_engine_classifies_connection_creation_failure():
@@ -338,3 +358,68 @@ def test_ensure_engine_concurrent_access():
     # All threads should get the same engine instance
     engines = list(results.values())
     assert all(e is engines[0] for e in engines)
+
+
+@pytest.mark.parametrize(
+    "reason, expected",
+    [
+        ("Expected state FINISHED, but found TIMEDOUT", ErrorCode.DB_EXECUTION_TIMEOUT),
+        ("DPY-4024: call timeout of 1000 ms exceeded", ErrorCode.DB_EXECUTION_TIMEOUT),
+        ("Code: 159: Timeout exceeded (TIMEOUT_EXCEEDED)", ErrorCode.DB_EXECUTION_TIMEOUT),
+        ("Read timed out", ErrorCode.DB_CONNECTION_TIMEOUT),
+    ],
+)
+def test_native_driver_timeout_reasons(reason, expected):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    assert connector._handle_exception(Exception(reason)).code == expected
+
+
+@pytest.mark.parametrize(
+    "error_factory, expected",
+    [
+        (lambda: sa_exc.OperationalError(None, None, Exception("read timed out")), ErrorCode.DB_CONNECTION_TIMEOUT),
+        (lambda: Exception("DPY-4024: call timeout exceeded"), ErrorCode.DB_EXECUTION_TIMEOUT),
+        (lambda: TimeoutError("Read timed out"), ErrorCode.DB_CONNECTION_TIMEOUT),
+        (lambda: ValueError("unsupported timeout option"), ErrorCode.DB_CONNECTION_FAILED),
+        (lambda: DatusDbException(ErrorCode.DB_AUTHENTICATION_FAILED), ErrorCode.DB_AUTHENTICATION_FAILED),
+    ],
+)
+def test_connection_probe_preserves_timeout_and_authentication_error_codes(error_factory, expected):
+    # Collection-time exceptions retain tracebacks (and mock engines) after being raised.
+    error = error_factory()
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    engine = MagicMock()
+    connector.engine = engine
+    connector._owns_engine = True
+    engine.connect.side_effect = error
+    try:
+        with pytest.raises(DatusDbException) as exc:
+            connector.test_connection()
+        assert exc.value.code == expected
+        engine.connect.assert_called_once_with()
+        if isinstance(error, DatusDbException):
+            assert exc.value is error
+        else:
+            assert exc.value.__cause__ is error
+    finally:
+        connector.close()
+    assert connector.engine is None
+    engine.dispose.assert_called_once_with()
+
+
+@pytest.mark.parametrize("chain", ["direct", "cause", "context", "cycle", "server"])
+def test_network_error_invalidation_follows_native_exception_chain(chain):
+    from types import SimpleNamespace
+
+    from requests.exceptions import ReadTimeout
+
+    error = ReadTimeout("HTTP response stalled") if chain == "direct" else RuntimeError("driver error")
+    if chain == "cause":
+        error.__cause__ = ReadTimeout("response stalled")
+    elif chain == "context":
+        error.__context__ = OSError("socket closed")
+    elif chain == "cycle":
+        error.__cause__ = error
+    context = SimpleNamespace(original_exception=error, is_disconnect=False)
+    SQLAlchemyConnector._invalidate_network_error(context)
+    assert context.is_disconnect is (chain in ("direct", "cause", "context"))

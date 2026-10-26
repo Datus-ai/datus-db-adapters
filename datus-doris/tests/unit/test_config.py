@@ -21,6 +21,10 @@ def test_config_defaults():
         "database": None,
         "charset": "utf8mb4",
         "autocommit": True,
+        "connect_timeout_seconds": None,
+        "read_timeout_seconds": None,
+        "write_timeout_seconds": None,
+        "query_timeout_seconds": None,
         "timeout_seconds": 30,
     }
 
@@ -48,6 +52,10 @@ def test_config_custom_values():
         "database": "analytics",
         "charset": "utf8",
         "autocommit": False,
+        "connect_timeout_seconds": None,
+        "read_timeout_seconds": None,
+        "write_timeout_seconds": None,
+        "query_timeout_seconds": None,
         "timeout_seconds": 60,
     }
 

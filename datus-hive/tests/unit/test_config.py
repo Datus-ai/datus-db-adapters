@@ -22,6 +22,7 @@ def test_config_defaults_and_required_fields():
         "kerberos_service_name": None,
         "configuration": {},
         "timeout_seconds": 30,
+        "query_timeout_seconds": None,
     }
 
 

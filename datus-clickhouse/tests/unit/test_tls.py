@@ -91,7 +91,8 @@ def test_final_dbapi_arguments(ca_file, protocol, verify, use_ca, password, data
                 engine.connect()
         assert connect.call_args.args == (f"{protocol}://localhost:18443/", database, config.username, password)
         assert connect.call_args.kwargs["verify"] == (str(ca_file) if use_ca else verify)
-        assert "timeout" not in connect.call_args.kwargs  # TLS does not change query timeout semantics.
+        assert connect.call_args.kwargs["timeout"] == config.timeout_seconds
+        assert connect.call_args.kwargs["ch_settings"] == {"max_execution_time": config.timeout_seconds}
         assert Path(ca_file).name not in connector.connection_string
     finally:
         connector.close()

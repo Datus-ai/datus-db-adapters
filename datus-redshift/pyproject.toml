@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datus-redshift"
-version = "0.1.4"
+version = "0.1.5"
 description = "Amazon Redshift adapter for Datus Agent"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,7 +14,7 @@ authors = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.7",
+    "datus-db-core>=0.1.9",
     "redshift_connector>=2.0.0",
     "pydantic>=2.0.0",
     "pyarrow>=14.0.0",

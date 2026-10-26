@@ -39,19 +39,26 @@ def test_to_dict_reports_only_non_secret_connection_identity(connector):
 
 
 def test_engine_creation_uses_null_pool_and_unwraps_credentials_only_for_driver(connector):
-    engine = MagicMock()
-    with patch("datus_bigquery.connector.create_engine", return_value=engine) as create:
-        assert connector._ensure_engine() is engine
+    from google.auth.credentials import AnonymousCredentials
+    from sqlalchemy import create_engine
 
-    create.assert_called_once_with(
-        "bigquery://my-project/analytics",
-        poolclass=NullPool,
-        credentials_info={"type": "service_account", "private_key": "secret"},
-        billing_project_id="billing-project",
-        location="US",
-    )
-    assert "secret" not in connector.connection_string
-    assert "credentials" not in str(connector.to_dict()).lower()
+    with (
+        patch(
+            "google.oauth2.service_account.Credentials.from_service_account_info", return_value=AnonymousCredentials()
+        ) as credentials,
+        patch("datus_bigquery.connector.create_engine", wraps=create_engine) as create,
+    ):
+        engine = connector._ensure_engine()
+    try:
+        assert create.call_args.args[0] == "bigquery://my-project/analytics?user_supplied_client=true"
+        assert create.call_args.kwargs["poolclass"] is NullPool
+        assert create.call_args.kwargs["connect_args"]["client"].project == "billing-project"
+        assert credentials.call_args.args[0] == {"type": "service_account", "private_key": "secret"}
+        assert engine.pool.__class__ is NullPool
+        assert "secret" not in connector.connection_string
+        assert "credentials" not in str(connector.to_dict()).lower()
+    finally:
+        connector.close()
 
 
 def test_per_call_context_uses_matching_engine_without_old_signature_type_error(connector):
@@ -68,14 +75,23 @@ def test_per_call_context_uses_matching_engine_without_old_signature_type_error(
 
 
 def test_engine_cache_is_keyed_by_project_and_dataset(connector):
-    first = MagicMock()
-    second = MagicMock()
-    with patch("datus_bigquery.connector.create_engine", side_effect=[first, second]) as create:
-        assert connector._get_engine("p1", "d1") is first
-        assert connector._get_engine("p1", "d1") is first
-        assert connector._get_engine("p1", "d2") is second
+    from google.auth.credentials import AnonymousCredentials
+    from sqlalchemy import create_engine
 
-    assert create.call_count == 2
+    with (
+        patch(
+            "google.oauth2.service_account.Credentials.from_service_account_info", return_value=AnonymousCredentials()
+        ),
+        patch("datus_bigquery.connector.create_engine", wraps=create_engine) as create,
+    ):
+        try:
+            first = connector._get_engine("p1", "d1")
+            assert connector._get_engine("p1", "d1") is first
+            second = connector._get_engine("p1", "d2")
+            assert second is not first
+            assert create.call_count == 2
+        finally:
+            connector.close()
 
 
 def test_close_disposes_every_cached_engine_once(connector):
@@ -157,8 +173,18 @@ def test_ddl_methods_preserve_table_type_and_filter_tables(connector, requested)
             "ddl": ["CREATE TABLE orders (id INT64)", None],
         }
     )
-    with patch.object(connector, "_execute_pandas", return_value=frame):
+    from types import SimpleNamespace
+
+    engine = MagicMock()
+    connection = engine.connect.return_value
+    connection.exec_driver_sql.return_value.fetchall.return_value = [
+        SimpleNamespace(_asdict=lambda row=row: row) for row in frame.to_dict("records")
+    ]
+    with patch.object(connector, "_get_engine", return_value=engine):
         tables = connector.get_tables_with_ddl(tables=[requested])
+    sql = connection.exec_driver_sql.call_args.args[0]
+    assert "AND table_name IN ('orders')" in sql
+    assert "`my-project`.`analytics`.INFORMATION_SCHEMA.TABLES" in sql
 
     assert tables == [
         {
@@ -196,7 +222,7 @@ def test_get_schema_escapes_table_literal_and_handles_null_default(connector):
     with patch.object(connector, "_execute_pandas", return_value=frame) as execute:
         schema = connector.get_schema(table_name="owner's_table")
 
-    assert "owner''s_table" in execute.call_args.args[0]
+    assert r"owner\'s_table" in execute.call_args.args[0]
     assert schema == [
         {
             "cid": 1,

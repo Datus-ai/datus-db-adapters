@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union, override
 
 from pandas import isna
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.pool import NullPool
 
 from datus_db_core import TABLE_TYPE, DatusDbException, ErrorCode, get_logger
@@ -15,6 +15,7 @@ from datus_sqlalchemy import SQLAlchemyConnector
 
 from .config import BigQueryConfig
 from .handlers import parse_bigquery_identifier
+from .timeouts import create_client
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,7 @@ class BigQueryConnector(SQLAlchemyConnector):
             kwargs["billing_project_id"] = config.billing_project_id
         if config.location:
             kwargs["location"] = config.location
+        kwargs["connect_args"] = {"client": create_client(config)}
         return kwargs
 
     def _get_engine(self, project: str, dataset: str = ""):
@@ -75,7 +77,21 @@ class BigQueryConnector(SQLAlchemyConnector):
                 self._engines.move_to_end(key)
                 return self._engines[key]
 
-            engine = create_engine(self._build_connection_string(project, dataset), **self._engine_kwargs())
+            options = self._engine_kwargs()
+            client = options["connect_args"]["client"]
+            client.project = self.bigquery_config.billing_project_id or project
+            # Context overrides must also retarget the client's default dataset.
+            job_config = client.default_query_job_config
+            job_config.default_dataset = f"{project}.{dataset}" if dataset else None
+            client.default_query_job_config = job_config
+            try:
+                engine = create_engine(
+                    self._build_connection_string(project, dataset) + "?user_supplied_client=true", **options
+                )
+            except Exception:
+                client.close()
+                raise
+            event.listen(engine, "engine_disposed", lambda engine: client.close())
             self._engines[key] = engine
             while len(self._engines) > _MAX_ENGINES:
                 _, evicted = self._engines.popitem(last=False)
@@ -254,7 +270,7 @@ class BigQueryConnector(SQLAlchemyConnector):
 
     @staticmethod
     def _sql_literal(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
     @staticmethod
     def _qualify_listed_name(
@@ -327,9 +343,13 @@ class BigQueryConnector(SQLAlchemyConnector):
         project = catalog_name or self.catalog_name
         dataset = self._require_dataset(database_name, "read object DDL")
         types = ", ".join(self._sql_literal(table_type) for table_type in table_types)
+        name_filter = ""
+        if tables:
+            names = [self._resolve_table(name, project, dataset)[2] for name in tables]
+            name_filter = " AND table_name IN (" + ", ".join(self._sql_literal(name) for name in names) + ")"
         sql = (
             f"SELECT table_name, ddl FROM {self._information_schema(project, dataset, 'TABLES')} "
-            f"WHERE table_type IN ({types}) ORDER BY table_name"
+            f"WHERE table_type IN ({types}){name_filter} ORDER BY table_name"
         )
         df = self._execute_pandas(sql, catalog_name=project, database_name=dataset)
         if df.empty:

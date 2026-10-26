@@ -469,6 +469,16 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
 _CONTEXT_CMD_RE = re.compile(r"^\s*(use|set|switch)\b", flags=re.IGNORECASE)
 
 
+def hive_name_pattern_literal(names: list[str]) -> str:
+    """Quote exact names for Hive/Spark SHOW patterns, not SQL LIKE patterns.
+
+    These engines expand ``*`` and split on ``|`` before compiling the regex.
+    Hex escapes keep those characters literal through that preprocessing.
+    """
+    pattern = "|".join(re.escape(name).replace(r"\*", r"\x2a").replace(r"\|", r"\x7c") for name in names)
+    return "'" + pattern.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def _identifier_name(value: Any) -> str:
     if value is None:
         return ""

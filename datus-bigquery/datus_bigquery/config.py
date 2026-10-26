@@ -33,6 +33,9 @@ class BigQueryConfig(BaseModel):
     billing_project_id: Optional[str] = Field(default=None, description="Optional billing/quota project")
     location: Optional[str] = Field(default=None, description="BigQuery job location, for example US or EU")
     timeout_seconds: int = Field(default=60, gt=0, description="Datus operation timeout in seconds")
+    query_timeout_seconds: int | None = Field(
+        default=None, gt=0, description="Override foreground wait and server job timeout"
+    )
 
     @model_validator(mode="before")
     @classmethod

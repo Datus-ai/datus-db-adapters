@@ -53,13 +53,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          # Without a glob the key is static, and a GitHub cache key can never be
-          # overwritten: one pruned snapshot (sdists without sources) was restored
-          # by every run and broke any sdist build. Key it on the dependency set.
-          cache-dependency-glob: "**/pyproject.toml"
+        uses: ./.github/actions/setup-uv
 
       # Credentials start here rather than at job level: the three steps above
       # are third-party actions, and a job-level env would put the connection

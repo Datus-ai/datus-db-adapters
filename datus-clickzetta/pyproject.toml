@@ -1,6 +1,6 @@
 [project]
 name = "datus-clickzetta"
-version = "0.1.5"
+version = "0.1.6"
 description = "ClickZetta database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,9 +18,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.7",
-    "clickzetta-connector-python",
-    "clickzetta-zettapark-python",
+    "datus-db-core>=0.1.9",
+    "clickzetta-connector>=1.0.31",
+    "clickzetta-zettapark-python>=0.1.16",
     "pandas>=2.0.0",
     "pyarrow>=10.0.0",
     "pydantic>=2.0.0",

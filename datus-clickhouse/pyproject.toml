@@ -1,6 +1,6 @@
 [project]
 name = "datus-clickhouse"
-version = "0.1.4"
+version = "0.1.5"
 description = "ClickHouse database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,8 +18,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.8",
-    "datus-sqlalchemy>=0.1.10",
+    "datus-db-core>=0.1.9",
+    "datus-sqlalchemy>=0.1.11",
     "clickhouse-sqlalchemy>=0.3.2",
 ]
 

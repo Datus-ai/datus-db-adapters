@@ -2,6 +2,14 @@
 
 Spark SQL database adapter for Datus, connecting via HiveServer2/Thrift protocol.
 
+## Timeouts
+
+`timeout_seconds` must be positive and now bounds driver I/O as well as pool
+checkout where applicable. Long operations may need a larger value. Server
+execution deadlines and supported overrides are described in the shared
+[timeout policy and real-database validation](../docs/adapter-timeouts.md).
+A socket/RPC timeout is distinct from an overall operation deadline.
+
 ## Installation
 
 ```bash

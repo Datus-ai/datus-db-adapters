@@ -29,7 +29,15 @@ class PostgreSQLConfig(DatabaseAuthConfig):
         default="prefer",
         description="SSL mode (disable, allow, prefer, require, verify-ca, verify-full)",
     )
-    timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
+    timeout_seconds: int = Field(
+        default=30, gt=0, description="Pool, socket-operation and default query deadline in seconds"
+    )
+    read_timeout_seconds: Optional[int] = Field(
+        default=None, gt=0, description="Override the connection checkout deadline"
+    )
+    query_timeout_seconds: Optional[int] = Field(
+        default=None, gt=0, description="Override the server statement timeout"
+    )
     sslrootcert: Optional[str] = None
     sslcert: Optional[str] = None
     sslkey: Optional[str] = Field(default=None, repr=False)

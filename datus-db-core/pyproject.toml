@@ -1,6 +1,6 @@
 [project]
 name = "datus-db-core"
-version = "0.1.8"
+version = "0.1.9"
 description = "Core database abstractions for Datus adapters"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,6 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+testing = ["PyYAML>=6.0"]
 aws = ["boto3>=1.34.0"]
 
 [project.urls]

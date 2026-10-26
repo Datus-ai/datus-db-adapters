@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Union, override
 
 from sqlalchemy import text
+from sqlalchemy.engine import URL, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -62,6 +63,23 @@ class OracleConnector(SQLAlchemyConnector):
         # with a plain ConnectionConfig (which lacks service_name, etc.)
         self.config = config
         self._default_schema = (config.schema_name or config.username).upper()
+        self.configure_connection(connect_args={"tcp_connect_timeout": config.timeout_seconds, "retry_count": 0})
+
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
+        from sqlalchemy import event
+
+        engine = super()._create_engine(connection_string, **options)
+
+        @event.listens_for(engine, "connect", insert=True)
+        def set_call_timeout(connection: Any, record: Any) -> None:
+            connection.call_timeout = (self.config.call_timeout_seconds or self.config.timeout_seconds) * 1000
+
+        @event.listens_for(engine, "handle_error")
+        def invalidate_timeout(context: Any) -> None:
+            if any(code in str(context.original_exception) for code in ("DPY-4024", "DPI-1067", "DPI-1080")):
+                context.is_disconnect = True
+
+        return engine
 
     # ==================== System Resources ====================
 
@@ -210,6 +228,7 @@ class OracleConnector(SQLAlchemyConnector):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """List objects from the ALL_* dictionary views (no DBA_* required)."""
         self.connect()
@@ -225,7 +244,13 @@ class OracleConnector(SQLAlchemyConnector):
             sys_list = ", ".join(f"'{s}'" for s in sorted(self._sys_schemas()))
             owner_filter = f"OWNER NOT IN ({sys_list})"
 
-        sql = f"SELECT OWNER, {name_column} AS TABLE_NAME FROM {view} WHERE {owner_filter} ORDER BY {name_column}"
+        from datus_db_core import list_to_in_str
+
+        name_filter = list_to_in_str(f"AND {name_column} IN", [name.upper() for name in tables] if tables else None)
+        sql = (
+            f"SELECT OWNER, {name_column} AS TABLE_NAME FROM {view} "
+            f"WHERE {owner_filter} {name_filter} ORDER BY {name_column}"
+        )
         query_result = self._execute_pandas(sql)
 
         result = []
@@ -270,7 +295,7 @@ class OracleConnector(SQLAlchemyConnector):
         filter_tables = self._reset_filter_tables(tables, catalog_name, database_name, schema_name)
         ddl_type = _get_metadata_view(table_type)["ddl_type"]
 
-        for meta in self._get_metadata(table_type, catalog_name, database_name, schema_name):
+        for meta in self._get_metadata(table_type, catalog_name, database_name, schema_name, tables=tables):
             full_name = self.full_name(schema_name=meta["schema_name"], table_name=meta["table_name"])
             if filter_tables and full_name not in filter_tables:
                 continue

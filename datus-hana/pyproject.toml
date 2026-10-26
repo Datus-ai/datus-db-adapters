@@ -5,7 +5,7 @@ description = "SAP HANA database adapter for Datus using the official Python cli
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
-dependencies = ["datus-db-core>=0.1.8", "hdbcli>=2.30.27,<3", "sqlglot>=27.27.0,<31", "pandas>=2.1.4", "pyarrow>=14.0.0"]
+dependencies = ["datus-db-core>=0.1.9", "hdbcli>=2.30.27,<3", "sqlglot>=27.27.0,<31", "pandas>=2.1.4", "pyarrow>=14.0.0"]
 
 [project.entry-points."datus.adapters"]
 hana = "datus_hana:register"

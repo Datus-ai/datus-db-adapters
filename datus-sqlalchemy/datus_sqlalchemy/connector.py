@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 from pandas import DataFrame
 from pyarrow import Table
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Inspector, make_url
+from sqlalchemy.engine import URL, Engine, ExceptionContext, Inspector, make_url
 from sqlalchemy.exc import (
     DatabaseError,
     DataError,
@@ -100,6 +100,10 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
     Thread-safe: each operation checks out a connection from the engine pool,
     applies the current thread's context via do_switch_context(), executes,
     and returns the connection to the pool.
+
+    SQL strings are complete, parameter-free statements. Use exec_driver_sql
+    with no_parameters=True to preserve literal colons and percent signs without
+    SQLAlchemy bind parsing or DBAPI interpolation of an empty parameter set.
     """
 
     def __init__(self, connection_string: str, dialect: str = "", timeout_seconds: int = 30):
@@ -174,7 +178,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                 self.close()
             self._credential_state = version
 
-    def _create_engine(self, connection_string, **options):
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         """Shared creation path, including PostgreSQL's per-database engines."""
         url_defaults = getattr(self, "_url_defaults", None)
         if url_defaults:
@@ -207,6 +211,18 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
                 validator(dbapi_connection)
 
         return engine
+
+    @staticmethod
+    def _invalidate_network_error(context: ExceptionContext) -> None:
+        """Discard transports after native or wrapped socket/HTTP I/O errors."""
+        error = context.original_exception
+        seen: set[int] = set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, OSError):
+                context.is_disconnect = True
+                return
+            error = error.__cause__ or error.__context__
 
     def __del__(self):
         """Destructor to ensure engine is properly disposed."""
@@ -267,7 +283,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
 
         Usage:
             with self._conn(database_name="db1") as conn:
-                result = conn.execute(text(sql))
+                result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
         """
         effective_catalog = catalog_name or self.catalog_name
         effective_database = database_name or self.database_name
@@ -336,6 +352,37 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         # Table not found
         if isinstance(e, NoSuchTableError):
             return DatusDbException(ErrorCode.DB_TABLE_NOT_EXISTS, message_args={"table_name": str(e)})
+
+        # Server query deadlines can use different DBAPI exception wrappers.
+        # Keep these separate from network/connection timeouts (7e73607).
+        if isinstance(e, DatabaseError) and any(
+            marker in error_msg_lower
+            for marker in (
+                "query reached its timeout",
+                "query timed out",
+                "query timeout",
+                "query is timeout",
+                "query execution timed out",
+                "statement timeout",
+                "maximum statement execution time exceeded",
+                "maximum execution time exceeded",
+                "exceeded_time_limit",
+                "found timedout",
+            )
+        ):
+            return DatusDbException(ErrorCode.DB_EXECUTION_TIMEOUT, message_args=message_args)
+
+        # Native SDKs and HTTP/Thrift drivers do not always use SQLAlchemy's
+        # DatabaseError wrappers. Keep their timeout reason visible to callers.
+        if any(
+            marker in error_msg_lower
+            for marker in ("dpy-4024", "dpi-1067", "exceeded_time_limit", "timeout_exceeded", "found timedout")
+        ):
+            return DatusDbException(ErrorCode.DB_EXECUTION_TIMEOUT, message_args=message_args)
+        if not isinstance(e, SQLAlchemyError) and any(
+            marker in error_msg_lower for marker in ("timed out", "read timeout", "socket timeout")
+        ):
+            return DatusDbException(ErrorCode.DB_CONNECTION_TIMEOUT, message_args=message_args)
 
         # Connection and operational errors
         if isinstance(e, (OperationalError, InterfaceError)):
@@ -441,7 +488,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
 
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                result = conn.execute(text(sql))
+                result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 rows = result.fetchall()
                 return [row._asdict() for row in rows]
         except DatusDbException:
@@ -456,7 +503,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute INSERT statement."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
 
                 # Get inserted primary key or row count
@@ -487,7 +534,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute UPDATE statement."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
                 return ExecuteSQLResult(
                     success=True,
@@ -506,7 +553,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute DELETE statement."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
                 return ExecuteSQLResult(
                     success=True,
@@ -525,7 +572,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute DDL statement (CREATE, ALTER, DROP, etc.)."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                res = conn.execute(text(sql))
+                res = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
                 return ExecuteSQLResult(
                     success=True,
@@ -596,7 +643,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute query and return Arrow table."""
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                result = conn.execute(text(sql))
+                result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 if result.returns_rows:
                     df = DataFrame(result.fetchall(), columns=result.keys())
                     table = Table.from_pandas(df)
@@ -630,7 +677,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """Execute USE/SET commands."""
         try:
             with self._conn() as conn:
-                conn.execute(text(sql))
+                conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
                 conn.commit()
 
             # Update thread-local context if applicable
@@ -657,7 +704,7 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
                 for query in queries:
-                    result = conn.execute(text(query))
+                    result = conn.exec_driver_sql(query, execution_options={"no_parameters": True})
                     if result.returns_rows:
                         df = DataFrame(result.fetchall(), columns=list(result.keys()))
                         results.append(df.to_dict(orient="records"))
@@ -689,9 +736,15 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
             with self._conn() as conn:
                 conn.execute(text("SELECT 1"))
             return True
+        except SQLAlchemyError as e:
+            raise self._handle_exception(e, operation="connection test") from e
         except Exception as e:
             if isinstance(e, DatusDbException):
                 raise
+            if any(marker in str(e).lower() for marker in ("timeout", "timed out", "dpy-4024", "dpi-1067")):
+                mapped = self._handle_exception(e, operation="connection test")
+                if mapped.code in (ErrorCode.DB_CONNECTION_TIMEOUT, ErrorCode.DB_EXECUTION_TIMEOUT):
+                    raise mapped from e
             raise DatusDbException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={"error_message": "Connection test failed"},
@@ -899,7 +952,9 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         """
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                result = conn.execute(text(sql).execution_options(stream_results=True, max_row_buffer=max_rows))
+                result = conn.exec_driver_sql(
+                    sql, execution_options={"no_parameters": True, "stream_results": True, "max_row_buffer": max_rows}
+                )
                 if result.returns_rows:
                     if with_header:
                         yield result.keys()

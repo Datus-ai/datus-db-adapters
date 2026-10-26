@@ -129,6 +129,13 @@ def assert_table_contract(connector: Any, case: TableContractCase) -> None:
         schema = connector.get_schema(**dict(case.schema_kwargs, table_name=case.table_name))
         assert_schema_columns(schema, case.expected_columns)
 
+        definitions = connector.get_tables_with_ddl(**dict(case.schema_kwargs, tables=[case.table_name]))
+        assert [entry["table_name"].casefold() for entry in definitions] == [case.table_name.casefold()]
+        definition = definitions[0]["definition"]
+        assert definition.strip() and not definition.startswith("-- DDL not available"), definition
+        for column in case.expected_columns:
+            assert column.casefold() in definition.casefold(), f"{case.adapter_name} DDL omitted column {column!r}"
+
         result = connector.execute({"sql_query": case.qualified_select_sql}, result_format="list")
         assert_success(result, f"{case.adapter_name} qualified contract SELECT")
         rows = _assert_payload(result, f"{case.adapter_name} qualified contract SELECT")

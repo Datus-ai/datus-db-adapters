@@ -1,6 +1,6 @@
 [project]
 name = "datus-tidb"
-version = "0.1.0"
+version = "0.1.1"
 description = "TiDB database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,9 +18,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.7",
-    "datus-mysql>=0.1.8",
-    "datus-sqlalchemy>=0.1.9",
+    "datus-db-core>=0.1.9",
+    "datus-mysql>=0.1.10",
+    "datus-sqlalchemy>=0.1.11",
     "pymysql>=1.1.1",
     "pydantic>=2.0.0",
 ]

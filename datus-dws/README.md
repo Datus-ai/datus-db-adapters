@@ -8,6 +8,14 @@ transport unchanged and overrides only what DWS does differently — its system
 schema set, its native table-definition function, and the Oracle-compatibility
 semantics of ORA mode.
 
+## Timeouts
+
+`timeout_seconds` must be positive and now bounds driver I/O as well as pool
+checkout where applicable. Long operations may need a larger value. Server
+execution deadlines and supported overrides are described in the shared
+[timeout policy and real-database validation](../docs/adapter-timeouts.md).
+A socket/RPC timeout is distinct from an overall operation deadline.
+
 ## Installation
 
 ```bash

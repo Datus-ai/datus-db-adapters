@@ -9,6 +9,7 @@ from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.engine import URL, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -106,6 +107,17 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         }
         configure_database_connection(self, config, connect_args, dialect="postgresql")
 
+    def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
+        from .timeouts import configure_timeouts
+
+        engine = super()._create_engine(connection_string, **options)
+        configure_timeouts(
+            engine,
+            self.config.read_timeout_seconds or self.config.timeout_seconds,
+            self.config.query_timeout_seconds or self.config.timeout_seconds,
+        )
+        return engine
+
     # ==================== System Resources ====================
 
     @override
@@ -145,6 +157,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """
         Get metadata for tables/views from INFORMATION_SCHEMA or pg_catalog.
@@ -182,10 +195,14 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                     )
                 else:
                     cmp = list_to_in_str("schemaname not in", sys_schemas)
-                return f"{base_query} WHERE {cmp}"
+                return f"{base_query} WHERE {cmp} {list_to_in_str('AND matviewname IN', tables)}"
 
             query_result = self._execute_pandas(_build_mv(False), database_name=database_name)
-            if len(query_result) == 0 and schema_name:
+            if (
+                len(query_result) == 0
+                and schema_name
+                and (not tables or not self._metadata_schema_exists(database_name, schema_name))
+            ):
                 query_result = self._execute_pandas(_build_mv(True), database_name=database_name)
                 self._raise_if_ambiguous_schema(query_result, schema_name)
         else:
@@ -205,10 +222,17 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                     )
                 else:
                     cmp = list_to_in_str("table_schema not in", sys_schemas)
-                return f"{base_query} WHERE table_catalog = '{safe_db}' AND {cmp} {type_filter}"
+                return (
+                    f"{base_query} WHERE table_catalog = '{safe_db}' AND {cmp} {type_filter} "
+                    f"{list_to_in_str('AND table_name IN', tables)}"
+                )
 
             query_result = self._execute_pandas(_build_tv(False), database_name=database_name)
-            if len(query_result) == 0 and schema_name:
+            if (
+                len(query_result) == 0
+                and schema_name
+                and (not tables or not self._metadata_schema_exists(database_name, schema_name))
+            ):
                 query_result = self._execute_pandas(_build_tv(True), database_name=database_name)
                 self._raise_if_ambiguous_schema(query_result, schema_name)
 
@@ -232,6 +256,15 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 }
             )
         return result
+
+    def _metadata_schema_exists(self, database_name: str, schema_name: str) -> bool:
+        """A missing selected table must not redirect a read to a case-variant schema."""
+        safe_schema = schema_name.replace("'", "''")
+        rows = self._execute_pandas(
+            f"SELECT nspname FROM pg_namespace WHERE nspname = '{safe_schema}'",
+            database_name=database_name,
+        )
+        return not rows.empty
 
     def _get_ddl(
         self,
@@ -379,7 +412,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         }
         object_type = object_type_map.get(table_type, "TABLE")
 
-        for meta in self._get_metadata(table_type, catalog_name, database_name, schema_name):
+        for meta in self._get_metadata(table_type, catalog_name, database_name, schema_name, tables=tables):
             metadata_database = meta["database_name"]
             full_name = self.full_name(
                 database_name=metadata_database,

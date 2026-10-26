@@ -4,10 +4,12 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+
+from datus_mysql.config import MySQLTimeoutConfig
 
 
-class TiDBConfig(BaseModel):
+class TiDBConfig(MySQLTimeoutConfig):
     """TiDB-specific configuration."""
 
     model_config = ConfigDict(extra="forbid")
@@ -23,4 +25,3 @@ class TiDBConfig(BaseModel):
     database: Optional[str] = Field(default=None, description="Default database name")
     charset: str = Field(default="utf8mb4", description="Character set to use")
     autocommit: bool = Field(default=True, description="Enable autocommit mode")
-    timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")

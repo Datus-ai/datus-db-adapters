@@ -41,6 +41,36 @@ select only affected Compose and cloud targets from the transitive package graph
   initialization is resource-intensive; other selected Compose targets remain
   parallel.
 
+Shared runners may already host unrelated services. The Doris CI target lets
+Docker allocate its loopback HTTP management port instead of reserving `48030`;
+the suite uses its separate SQL endpoint. An explicit `DORIS_HTTP_HOST_PORT`
+override is still honored. Do not stop unrelated containers to free a CI port.
+
+Validation workflows use `.github/actions/setup-uv` to restore complete uv cache
+snapshots into `.cache/uv` in each runner's own checkout. Jobs write to their own
+copies; GitHub's immutable snapshot is the only shared state. The archive uses a
+relative path so runners with different workspace roots can reuse it. Cache keys
+include OS, architecture, Python compatibility version, exact uv version, package
+metadata and the cache implementation; no fallback keys restore older snapshots.
+When its event has cache-write access, a successful job on a cache miss saves
+the snapshot for subsequent jobs within the same cache scope. The first cold
+run still pays setup costs. PR-triggered snapshots belong to the PR merge ref;
+they do not populate the default branch's cache.
+
+Coverage runs on `pull_request_target`, with read-only access to default-branch
+caches. A coverage miss stays cold until a trusted default-branch job saves the
+matching key: the scheduled Adapter CI run or a manual dispatch of Adapter CI
+on `main` is the cache writer. Do not grant coverage a write-capable cache mode
+for PR code. See [GitHub's cache access rules](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-access-for-low-trust-workflow-triggers).
+
+Snapshots retain both sources and wheels: merge-group run `39930406280` restored
+an incomplete PyHive source cache and failed before pytest because `setup.py` and
+`pyproject.toml` were missing. The cache action does not prune source files before
+saving. Before installation, `ci/uv_cache.py` invalidates incomplete PyPI source
+entries through `uv cache clean <package>` while preserving healthy packages.
+Repair failures fail the job; dependency installation and tests are not retried.
+The pinned uv version and namespace can be advanced together after validation.
+
 Manual dispatch runs the full enabled sweep. The scheduled Monday run is the
 weekly full Compose and enabled cloud safety net. MaxCompute is explicitly disabled in
 `ci/integration-targets.toml` until a live CI instance and repository secrets

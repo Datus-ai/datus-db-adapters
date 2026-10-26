@@ -6,6 +6,14 @@ wire protocol, so the adapter builds on `datus-postgresql` and adds the pieces
 that differ: the official `gaussdb` client driver, GaussDB-only system schemas,
 distribution-aware DDL, and A/B/PG compatibility-mode SQL rules.
 
+## Timeouts
+
+`timeout_seconds` must be positive and now bounds driver I/O as well as pool
+checkout where applicable. Long operations may need a larger value. Server
+execution deadlines and supported overrides are described in the shared
+[timeout policy and real-database validation](../docs/adapter-timeouts.md).
+A socket/RPC timeout is distinct from an overall operation deadline.
+
 ## Installation
 
 ```bash

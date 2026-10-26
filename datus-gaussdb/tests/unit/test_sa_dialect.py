@@ -659,3 +659,37 @@ def test_libpq_dialects_swap_inline_pem_for_a_path():
 
     assert kwargs["sslrootcert"] != _STUB_CERT
     assert open(kwargs["sslrootcert"], encoding="utf-8").read() == _STUB_CERT
+
+
+@pytest.mark.parametrize("driver", ["gaussdb", "psycopg2", "pg8000"])
+@pytest.mark.parametrize(
+    "overrides, expected",
+    [
+        ({}, (30, 30, 30)),
+        ({"timeout_seconds": 7}, (7, 7, 7)),
+        ({"timeout_seconds": 7, "read_timeout_seconds": 3, "query_timeout_seconds": 2}, (7, 3, 2)),
+        (
+            {"timeout_seconds": 7, "connect_timeout_seconds": 2, "read_timeout_seconds": 3, "query_timeout_seconds": 2},
+            (2, 3, 2),
+        ),
+    ],
+)
+def test_connector_timeout_wiring_for_all_drivers(monkeypatch, driver, overrides, expected):
+    from datus_gaussdb import GaussDBConnector
+    from datus_postgresql.testing import assert_engine_timeout_configuration
+
+    if driver == "gaussdb":
+        module = _stub_gaussdb_module()
+        module.connect = MagicMock()
+        monkeypatch.setattr(sa_dialect, "import_gaussdb", lambda: module)
+        _stub_gaussdb_submodules(monkeypatch)
+    connector = GaussDBConnector(
+        {"host": "db.test", "username": "reader", "password": "test", "database": "app", "driver": driver, **overrides}
+    )
+    try:
+        for engine in (connector._ensure_engine(), connector._get_engine("other_database")):
+            assert_engine_timeout_configuration(
+                engine, connect_seconds=expected[0], read_seconds=expected[1], query_seconds=expected[2]
+            )
+    finally:
+        connector.close()
