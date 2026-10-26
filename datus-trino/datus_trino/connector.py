@@ -243,7 +243,17 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
         catalog = catalog_name or self.catalog_name
         schema = schema_name or database_name or self.schema_name
         filter_tables = self._reset_filter_tables(tables, catalog_name, database_name, schema_name)
-        names = self.get_tables(catalog_name=catalog, schema_name=schema)
+        if tables:
+            from datus_db_core import list_to_in_str, to_sql_literal
+
+            rows = self._execute_pandas(
+                f"SELECT table_name FROM {self.quote_identifier(catalog)}.information_schema.tables "
+                f"WHERE table_schema = {to_sql_literal(schema, True)} "
+                f"{list_to_in_str('AND table_name IN', tables)}"
+            )
+            names = rows.iloc[:, 0].tolist() if not rows.empty else []
+        else:
+            names = self.get_tables(catalog_name=catalog, schema_name=schema)
         return self._objects_with_ddl("TABLE", names, catalog, schema, filter_tables)
 
     @override

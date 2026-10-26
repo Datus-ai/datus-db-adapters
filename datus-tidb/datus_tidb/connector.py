@@ -95,6 +95,7 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
         table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """Get table/view metadata, refusing the materialized-view type.
 
@@ -107,7 +108,7 @@ class TiDBConnector(MySQLConnector, MigrationTargetMixin):
                 ErrorCode.COMMON_FIELD_INVALID,
                 "TiDB has no materialized views; use a view or a TiFlash replica instead",
             )
-        return super()._get_metadata(table_type, catalog_name, database_name)
+        return super()._get_metadata(table_type, catalog_name, database_name, tables=tables)
 
     # ==================== Utility Methods ====================
 

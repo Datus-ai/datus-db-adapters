@@ -2,12 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
 
 from datus_db_core import DatusDbException, connector_registry
-from datus_mysql import MySQLConnector
 from datus_tidb import TiDBConfig, TiDBConnector, register
 
 
@@ -73,12 +73,39 @@ def test_materialized_view_metadata_is_refused_with_a_readable_reason(connector)
         connector._get_metadata(table_type="mv")
 
 
-@pytest.mark.parametrize("table_type", ["table", "view"])
-def test_supported_table_types_reach_the_inherited_lookup(connector, table_type):
-    with patch.object(MySQLConnector, "_get_metadata", return_value=[]) as inherited:
-        assert connector._get_metadata(table_type=table_type, database_name="analytics") == []
+@pytest.mark.parametrize("table_type, tables", [("table", None), ("table", ["orders"]), ("view", None)])
+def test_supported_ddl_types_keep_database_side_name_filter(connector, table_type, tables):
+    queries = []
 
-    inherited.assert_called_once_with(table_type, "", "analytics")
+    def execute(sql, **kwargs):
+        queries.append(sql)
+        if "information_schema" in sql:
+            assert f"information_schema.{table_type.upper()}S" in sql
+            assert "TABLE_SCHEMA = 'analytics'" in sql
+            assert ("TABLE_NAME IN ('orders')" in sql) == bool(tables)
+            return pd.DataFrame({"TABLE_SCHEMA": ["analytics"], "TABLE_NAME": ["orders"]})
+        assert sql == f"SHOW CREATE {table_type.upper()} `analytics`.`orders`"
+        return pd.DataFrame({"Name": ["orders"], "Definition": ["test definition"]})
+
+    connector.connect = MagicMock()
+    connector._execute_pandas = MagicMock(side_effect=execute)
+    result = (
+        connector.get_tables_with_ddl(tables=tables, database_name="analytics")
+        if table_type == "table"
+        else connector.get_views_with_ddl(database_name="analytics")
+    )
+    assert result == [
+        {
+            "identifier": "analytics.orders",
+            "catalog_name": "",
+            "schema_name": "",
+            "database_name": "analytics",
+            "table_name": "orders",
+            "table_type": table_type,
+            "definition": "test definition",
+        }
+    ]
+    assert len(queries) == 2
 
 
 def test_identifiers_use_backticks(connector):

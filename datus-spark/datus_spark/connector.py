@@ -214,7 +214,15 @@ class SparkConnector(SQLAlchemyConnector):
         """Get tables with DDL statements (via `SHOW CREATE TABLE`)."""
         db = database_name or self.database_name
         filter_tables = self._reset_filter_tables(tables, catalog_name, database_name, schema_name)
-        names = self.get_tables(catalog_name=catalog_name, database_name=db, schema_name=schema_name)
+        if tables:
+            from datus_db_core.sql_utils import hive_name_pattern_literal
+
+            rows = self._execute_pandas(
+                f"SHOW TABLES IN {self.quote_identifier(db)} LIKE {hive_name_pattern_literal(tables)}"
+            )
+            names = rows.iloc[:, 1 if len(rows.columns) >= 2 else 0].tolist() if not rows.empty else []
+        else:
+            names = self.get_tables(catalog_name=catalog_name, database_name=db, schema_name=schema_name)
         return self._objects_with_ddl("table", names, db, filter_tables)
 
     @override

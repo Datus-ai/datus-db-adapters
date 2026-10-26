@@ -430,3 +430,57 @@ def test_get_sample_rows_propagates_catalog_to_metadata_listing():
     connector.full_name.assert_called_once_with(catalog_name="cat1", database_name="db1", table_name="t1")
     assert result[0]["catalog_name"] == "cat1"
     assert result[0]["identifier"] == "cat1.db1.t1"
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("tables", [["orders"], None, []])
+def test_ddl_metadata_filters_names_at_database_and_keeps_bulk_listing(tables):
+    import pandas as pd
+
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
+        connector = MySQLConnector({"host": "localhost", "username": "u", "password": "p", "database": "testdb"})
+    connector.connect = MagicMock()
+    connector.dialect = "mysql"
+    queries = []
+
+    def execute(sql, **kwargs):
+        queries.append(sql)
+        if "information_schema" in sql:
+            expected_filter = "AND TABLE_NAME IN ('orders')"
+            assert (expected_filter in sql) == bool(tables)
+            assert "TABLE_SCHEMA = 'testdb'" in sql
+            names = ["orders"] if tables else ["orders", "customers"]
+            return pd.DataFrame({"TABLE_SCHEMA": ["testdb"] * len(names), "TABLE_NAME": names})
+        assert sql in ("SHOW CREATE TABLE `testdb`.`orders`", "SHOW CREATE TABLE `testdb`.`customers`")
+        return pd.DataFrame({"Table": ["t"], "Create Table": ["CREATE TABLE t (id BIGINT)"]})
+
+    connector._execute_pandas = MagicMock(side_effect=execute)
+    result = connector.get_tables_with_ddl(tables=tables)
+    names = ["orders"] if tables else ["orders", "customers"]
+    assert result == [
+        {
+            "identifier": f"testdb.{name}",
+            "catalog_name": "",
+            "schema_name": "",
+            "database_name": "testdb",
+            "table_name": name,
+            "table_type": "table",
+            "definition": "CREATE TABLE t (id BIGINT)",
+        }
+        for name in names
+    ]
+    assert len(queries) == 1 + len(names)
+
+
+@pytest.mark.acceptance
+def test_filtered_ddl_missing_table_stays_empty():
+    import pandas as pd
+
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
+        connector = MySQLConnector({"host": "localhost", "username": "u", "password": "p", "database": "testdb"})
+    connector.connect = MagicMock()
+    connector._execute_pandas = MagicMock(return_value=pd.DataFrame({"TABLE_SCHEMA": [], "TABLE_NAME": []}))
+    assert connector.get_tables_with_ddl(tables=["missing"]) == []
+    sql = connector._execute_pandas.call_args.args[0]
+    assert "AND TABLE_NAME IN ('missing')" in sql
+    assert connector._execute_pandas.call_count == 1

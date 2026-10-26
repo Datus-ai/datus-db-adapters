@@ -54,6 +54,10 @@ def test_writable_contract_runs_the_shared_assertions_through_the_sdk(make_conne
             Columns=[{"Name": name, "Type": kind} for name, kind in zip(case.expected_columns, types, strict=True)],
         ),
     )
+    metadata(stubber, dict(Name=case.table_name, TableType="EXTERNAL_TABLE"))
+    start(stubber, f"SHOW CREATE TABLE `{case.table_name}`")
+    status(stubber, statement_type="UTILITY")
+    results(stubber, [[case.create_sql]], [{"Name": "createtab_stmt", "Type": "varchar"}], header=False)
     aliases = (
         "id_value",
         "mixed_value",

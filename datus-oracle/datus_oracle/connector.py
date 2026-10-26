@@ -228,6 +228,7 @@ class OracleConnector(SQLAlchemyConnector):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """List objects from the ALL_* dictionary views (no DBA_* required)."""
         self.connect()
@@ -243,7 +244,13 @@ class OracleConnector(SQLAlchemyConnector):
             sys_list = ", ".join(f"'{s}'" for s in sorted(self._sys_schemas()))
             owner_filter = f"OWNER NOT IN ({sys_list})"
 
-        sql = f"SELECT OWNER, {name_column} AS TABLE_NAME FROM {view} WHERE {owner_filter} ORDER BY {name_column}"
+        from datus_db_core import list_to_in_str
+
+        name_filter = list_to_in_str(f"AND {name_column} IN", [name.upper() for name in tables] if tables else None)
+        sql = (
+            f"SELECT OWNER, {name_column} AS TABLE_NAME FROM {view} "
+            f"WHERE {owner_filter} {name_filter} ORDER BY {name_column}"
+        )
         query_result = self._execute_pandas(sql)
 
         result = []
@@ -288,7 +295,7 @@ class OracleConnector(SQLAlchemyConnector):
         filter_tables = self._reset_filter_tables(tables, catalog_name, database_name, schema_name)
         ddl_type = _get_metadata_view(table_type)["ddl_type"]
 
-        for meta in self._get_metadata(table_type, catalog_name, database_name, schema_name):
+        for meta in self._get_metadata(table_type, catalog_name, database_name, schema_name, tables=tables):
             full_name = self.full_name(schema_name=meta["schema_name"], table_name=meta["table_name"])
             if filter_tables and full_name not in filter_tables:
                 continue

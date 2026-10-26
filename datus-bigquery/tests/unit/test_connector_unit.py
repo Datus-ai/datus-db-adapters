@@ -173,8 +173,18 @@ def test_ddl_methods_preserve_table_type_and_filter_tables(connector, requested)
             "ddl": ["CREATE TABLE orders (id INT64)", None],
         }
     )
-    with patch.object(connector, "_execute_pandas", return_value=frame):
+    from types import SimpleNamespace
+
+    engine = MagicMock()
+    connection = engine.connect.return_value
+    connection.exec_driver_sql.return_value.fetchall.return_value = [
+        SimpleNamespace(_asdict=lambda row=row: row) for row in frame.to_dict("records")
+    ]
+    with patch.object(connector, "_get_engine", return_value=engine):
         tables = connector.get_tables_with_ddl(tables=[requested])
+    sql = connection.exec_driver_sql.call_args.args[0]
+    assert "AND table_name IN ('orders')" in sql
+    assert "`my-project`.`analytics`.INFORMATION_SCHEMA.TABLES" in sql
 
     assert tables == [
         {
@@ -212,7 +222,7 @@ def test_get_schema_escapes_table_literal_and_handles_null_default(connector):
     with patch.object(connector, "_execute_pandas", return_value=frame) as execute:
         schema = connector.get_schema(table_name="owner's_table")
 
-    assert "owner''s_table" in execute.call_args.args[0]
+    assert r"owner\'s_table" in execute.call_args.args[0]
     assert schema == [
         {
             "cid": 1,

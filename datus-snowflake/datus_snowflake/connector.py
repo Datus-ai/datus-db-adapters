@@ -739,55 +739,55 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         meta_name = meta_name.upper()
         sql = f'SHOW TERSE {meta_name} IN DATABASE "{database_name}"'
 
-        try:
-            query_tables = self.execute_query_to_dict(sql)
-            if not query_tables:
-                return pa.table([])
+        if not tables:
+            try:
+                query_tables = self.execute_query_to_dict(sql)
+                if not query_tables:
+                    return pa.table([])
 
-            query_tables = pa.Table.from_pylist(query_tables)
+                query_tables = pa.Table.from_pylist(query_tables)
 
-            if schema_name:
-                query_tables = query_tables.filter(pc.equal(query_tables["schema_name"], schema_name))
-            else:
-                query_tables = query_tables.filter(
-                    pc.invert(
-                        pc.is_in(
-                            query_tables["schema_name"],
-                            pa.array(self._sys_schemas(), type=pa.string()),
+                if schema_name:
+                    query_tables = query_tables.filter(pc.equal(query_tables["schema_name"], schema_name))
+                else:
+                    query_tables = query_tables.filter(
+                        pc.invert(
+                            pc.is_in(
+                                query_tables["schema_name"],
+                                pa.array(self._sys_schemas(), type=pa.string()),
+                            )
                         )
                     )
-                )
 
-            if tables:
-                query_tables = query_tables.filter(pc.is_in(query_tables["name"], pa.array(tables, type=pa.string())))
-
-            return query_tables
-        except Exception as e:
-            logger.warning(f"Failed to get meta using {sql}, falling back to INFORMATION_SCHEMA: {e}")
-
-            # Fallback to INFORMATION_SCHEMA
-            select_table_name = f'"{database_name}".INFORMATION_SCHEMA.TABLES'
-
-            if meta_name == "TABLES":
-                table_type = "BASE TABLE"
-            elif meta_name == "VIEWS":
-                table_type = "VIEW"
-            else:
-                table_type = "MATERIALIZED VIEW"
-
-            sql = f"""SELECT TABLE_CATALOG as "database_name", TABLE_SCHEMA as "schema_name", TABLE_NAME as "name"
-            FROM {select_table_name} WHERE TABLE_TYPE = '{table_type}'"""
-
-            if schema_name:
-                sql += f" AND TABLE_SCHEMA = {to_sql_literal(schema_name, True)}"
-            if tables:
-                sql += list_to_in_str(prefix=" AND TABLE_NAME IN ", values=tables)
-
-            try:
-                tables_result, _ = self._do_execute_arrow(sql)
-                return tables_result
+                return query_tables
             except Exception as e:
-                raise _handle_snowflake_exception(e, sql) from e
+                logger.warning(f"Failed to get meta using {sql}, falling back to INFORMATION_SCHEMA: {e}")
+
+        # Selected reads go directly to filtered metadata, bypassing SHOW's full catalog.
+        select_table_name = f"{self.quote_identifier(database_name)}.INFORMATION_SCHEMA.TABLES"
+
+        if meta_name == "TABLES":
+            table_type = "BASE TABLE"
+        elif meta_name == "VIEWS":
+            table_type = "VIEW"
+        else:
+            table_type = "MATERIALIZED VIEW"
+
+        sql = f"""SELECT TABLE_CATALOG as "database_name", TABLE_SCHEMA as "schema_name", TABLE_NAME as "name"
+        FROM {select_table_name} WHERE TABLE_TYPE = '{table_type}'"""
+
+        if schema_name:
+            sql += f" AND TABLE_SCHEMA = {to_sql_literal(schema_name, True)}"
+        else:
+            sql += list_to_in_str(" AND TABLE_SCHEMA NOT IN", sorted(self._sys_schemas()))
+        if tables:
+            sql += list_to_in_str(prefix=" AND TABLE_NAME IN ", values=tables, escape_backslash=True)
+
+        try:
+            tables_result, _ = self._do_execute_arrow(sql)
+            return tables_result
+        except Exception as e:
+            raise _handle_snowflake_exception(e, sql) from e
 
     def _metadata_to_dict(
         self, tables: pa.Table, table_type: TABLE_TYPE, catalog_name: str = ""
