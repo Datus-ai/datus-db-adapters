@@ -667,6 +667,16 @@ def test_get_ddl_uses_requested_database_for_table_schema():
             ',\n    CONSTRAINT "orders_pk" PRIMARY KEY (tenant_id, id)'
             ',\n    CONSTRAINT "Unique ""Email" UNIQUE (email, tenant_id)',
         ),
+        (
+            [
+                ("orders_pk", "PRIMARY KEY (tenant_id, id)"),
+                ('Unique "Email', "UNIQUE (email, tenant_id)"),
+                ("orders_customer_fk", "FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE"),
+            ],
+            ',\n    CONSTRAINT "orders_pk" PRIMARY KEY (tenant_id, id)'
+            ',\n    CONSTRAINT "Unique ""Email" UNIQUE (email, tenant_id)'
+            ',\n    CONSTRAINT "orders_customer_fk" FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE',
+        ),
     ],
 )
 def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expected_constraints):
@@ -695,6 +705,7 @@ def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expe
     )
     assert [call.kwargs["database_name"] for call in connector._conn.call_args_list] == ["other_db", "other_db"]
     assert connection.execute.call_args.args[1] == {"schema_name": "public", "table_name": "orders"}
+    assert "c.contype IN ('p', 'u', 'f')" in str(connection.execute.call_args.args[0])
 
 
 def test_unique_index_definitions_preserve_predicates_and_bind_identifiers():

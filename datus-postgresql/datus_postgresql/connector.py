@@ -316,7 +316,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 col_defs.append(col_def)
 
             # Column-level pk flags cannot recover the declared composite-key order.
-            # Let PostgreSQL render constraints, including their names and options.
+            # Let PostgreSQL render constraints, including their names, options, and foreign keys.
             with self._conn(database_name=database_name) as conn:
                 constraints = conn.execute(
                     text("""
@@ -325,8 +325,13 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                         JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
                         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
                         WHERE n.nspname = :schema_name AND t.relname = :table_name
-                          AND c.contype IN ('p', 'u')
-                        ORDER BY c.contype, c.conname
+                          AND c.contype IN ('p', 'u', 'f')
+                        ORDER BY CASE c.contype
+                            WHEN 'p' THEN 1
+                            WHEN 'u' THEN 2
+                            WHEN 'f' THEN 3
+                            ELSE 4
+                        END, c.conname
                     """),
                     {"schema_name": schema_name, "table_name": table_name},
                 ).fetchall()
