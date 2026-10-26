@@ -182,7 +182,7 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
 
         # Build and execute query
         type_filter = list_to_in_str("and TABLE_TYPE in ", metadata_config.table_types)
-        name_filter = list_to_in_str("AND TABLE_NAME IN", tables)
+        name_filter = list_to_in_str("AND TABLE_NAME IN", tables, escape_backslash=True)
         query = (
             f"SELECT TABLE_SCHEMA, TABLE_NAME "
             f"FROM information_schema.{metadata_config.info_table} "

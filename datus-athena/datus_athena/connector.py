@@ -478,13 +478,17 @@ class AthenaConnector(BaseSqlConnector, CatalogSupportMixin, MigrationTargetMixi
         schema_name: str = "",
         tables: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        catalog, database, objects = self._objects(catalog_name, database_name, schema_name)
+        catalog, database = self._context(catalog_name, database_name, schema_name)
         requested = set()
         for table in tables or []:
             resolved = self._resolve_table(table, catalog, database)
             if resolved[:2] != (catalog, database):
                 raise ValueError(f"Table {table!r} is outside requested catalog/database")
             requested.add(resolved[2])
+        if requested:
+            objects = (self._table_metadata(catalog, database, name) for name in sorted(requested))
+        else:
+            _, _, objects = self._objects(catalog, database)
         entries = []
         for meta in objects:
             name = meta["Name"]

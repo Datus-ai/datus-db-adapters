@@ -104,7 +104,10 @@ def test_columns_include_partitions_once(make_connector, sdk):
 def test_original_ddl_and_metadata_shape(make_connector, sdk, kind, name, sql):
     _, stubber = sdk
     conn = make_connector()
-    object_page(stubber, [TABLE, VIEW])
+    if kind == "table":
+        metadata(stubber)
+    else:
+        object_page(stubber, [TABLE, VIEW])
     start(stubber, sql)
     status(stubber, statement_type="UTILITY")
     results(

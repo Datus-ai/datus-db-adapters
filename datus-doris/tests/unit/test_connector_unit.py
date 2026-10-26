@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,33 @@ from datus_db_core import SQLType
 from datus_doris import DorisConfig, DorisConnector
 from datus_doris.handlers import build_doris_uri, parse_doris_identifier, resolve_doris_context
 from datus_doris.skills import get_doris_sql_generation_notes
+
+
+@pytest.mark.parametrize("requested", ["orders", "`internal`.`db`.`orders`"])
+def test_targeted_ddl_filters_table_and_materialized_view_catalogs(requested):
+    connector = DorisConnector(dict(username="u", database="db"))
+    engine = MagicMock()
+    connection = engine.connect.return_value
+
+    def execute(sql, **kwargs):
+        if "information_schema" in sql:
+            assert "TABLE_NAME IN (" in sql and "'orders'" in sql
+            rows = [{"TABLE_SCHEMA": "db", "TABLE_NAME": "orders"}]
+        elif "mv_infos" in sql:
+            assert "WHERE Name IN (" in sql and "'orders'" in sql
+            rows = []
+        else:
+            assert sql == "SHOW CREATE TABLE `internal`.`db`.`orders`"
+            rows = [{"Table": "orders", "Create Table": "CREATE TABLE orders (id INT)"}]
+        result = MagicMock()
+        result.fetchall.return_value = [SimpleNamespace(_asdict=lambda row=row: row) for row in rows]
+        return result
+
+    connection.exec_driver_sql.side_effect = execute
+    with patch.object(connector, "_ensure_engine", return_value=engine):
+        result = connector.get_tables_with_ddl(tables=[requested])
+    assert [(row["table_name"], row["definition"]) for row in result] == [("orders", "CREATE TABLE orders (id INT)")]
+    assert connection.exec_driver_sql.call_count == 3
 
 
 def _connector(config=None, **overrides) -> DorisConnector:

@@ -338,6 +338,13 @@ Never inline or copy TPC-H data. Three pieces, no data duplication anywhere:
 
 ### Metadata tests — exact comparison
 
+Targeted DDL reads must restrict metadata at the database/SDK boundary, including
+fallbacks and auxiliary view/foreign-table lookups. Unit tests must assert the
+emitted name predicate or targeted SDK request, preserve unfiltered bulk reads,
+and cover quoted names and missing tables. The shared live table contract also
+reads the newly created table's DDL and checks its columns. Returning only the
+requested table after downloading the whole catalog does not satisfy this contract.
+
 Create the objects you assert on. `metadata_objects_setup` creates known tables/views, then:
 
 ```python

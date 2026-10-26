@@ -246,7 +246,7 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             where = list_to_in_str("TABLE_SCHEMA NOT IN", list(self._sys_databases()))
 
         type_filter = list_to_in_str("AND TABLE_TYPE IN", metadata_config.table_types)
-        name_filter = list_to_in_str("AND TABLE_NAME IN", tables)
+        name_filter = list_to_in_str("AND TABLE_NAME IN", tables, escape_backslash=True)
 
         # Use catalog-qualified information_schema — no SET CATALOG needed
         query = (
@@ -326,7 +326,9 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
         # Only SHOW FULL TABLES carries a Table_type column. Plain SHOW TABLES lumps views
         # in with tables, so there is no honest way to answer either request from it.
-        name_filter = list_to_in_str(f"WHERE {self.quote_identifier('Tables_in_' + database_name)} IN", tables)
+        name_filter = list_to_in_str(
+            f"WHERE {self.quote_identifier('Tables_in_' + database_name)} IN", tables, escape_backslash=True
+        )
         rows = self._try_show(targets, "SHOW FULL TABLES FROM", catalog_name, suffix=name_filter)
         if rows is None or len(rows.columns) < 2:
             return None

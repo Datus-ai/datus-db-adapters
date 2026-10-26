@@ -270,7 +270,7 @@ class BigQueryConnector(SQLAlchemyConnector):
 
     @staticmethod
     def _sql_literal(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
     @staticmethod
     def _qualify_listed_name(
@@ -343,9 +343,13 @@ class BigQueryConnector(SQLAlchemyConnector):
         project = catalog_name or self.catalog_name
         dataset = self._require_dataset(database_name, "read object DDL")
         types = ", ".join(self._sql_literal(table_type) for table_type in table_types)
+        name_filter = ""
+        if tables:
+            names = [self._resolve_table(name, project, dataset)[2] for name in tables]
+            name_filter = " AND table_name IN (" + ", ".join(self._sql_literal(name) for name in names) + ")"
         sql = (
             f"SELECT table_name, ddl FROM {self._information_schema(project, dataset, 'TABLES')} "
-            f"WHERE table_type IN ({types}) ORDER BY table_name"
+            f"WHERE table_type IN ({types}){name_filter} ORDER BY table_name"
         )
         df = self._execute_pandas(sql, catalog_name=project, database_name=dataset)
         if df.empty:

@@ -446,3 +446,20 @@ class TestMetadataIdentifier:
     def test_table_only(self):
         result = metadata_identifier(table_name="users", dialect="snowflake")
         assert result == "users"
+
+
+@pytest.mark.parametrize("name", ["orders", "order.items", "a*b|c", "a'quote", "a\\b", "\u4e2d\u6587"])
+def test_hive_show_pattern_matches_literal_names(name):
+    import ast
+    import re
+
+    from datus_db_core.sql_utils import hive_name_pattern_literal
+
+    literal = hive_name_pattern_literal([name, "second_table"])
+    pattern = ast.literal_eval(literal)
+    # Hive/Spark expand stars before compiling each alternative.
+    expanded = pattern.replace("*", ".*")
+    assert re.fullmatch(expanded, name)
+    assert re.fullmatch(expanded, "second_table")
+    assert re.fullmatch(expanded, "unrelated_table") is None
+    assert re.fullmatch(expanded, name + "_extra") is None

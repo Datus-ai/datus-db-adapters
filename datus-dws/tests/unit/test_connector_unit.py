@@ -61,7 +61,7 @@ def test_table_metadata_preserves_native_ddl_when_index_catalog_fails(monkeypatc
     monkeypatch.setattr(
         connector,
         "_get_metadata",
-        lambda *_args: [
+        lambda *_args, **_kwargs: [
             {
                 "identifier": "reporting.datus_dws_probe.col_hash_compress",
                 "catalog_name": "",

@@ -134,6 +134,7 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
         table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """
         Get metadata for tables/views from INFORMATION_SCHEMA.
@@ -166,7 +167,7 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
         query = (
             f"SELECT TABLE_SCHEMA, TABLE_NAME "
             f"FROM information_schema.{metadata_config.info_table} "
-            f"WHERE {where} {type_filter}"
+            f"WHERE {where} {type_filter} {list_to_in_str('AND TABLE_NAME IN', tables, escape_backslash=True)}"
         )
 
         query_result = self._execute_pandas(query)
@@ -237,7 +238,7 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
         filter_tables = self._reset_filter_tables(tables, catalog_name, database_name)
         metadata_config = _get_metadata_config(table_type)
 
-        for meta in self._get_metadata(table_type, catalog_name, database_name):
+        for meta in self._get_metadata(table_type, catalog_name, database_name, tables=tables):
             full_name = self.full_name(database_name=meta["database_name"], table_name=meta["table_name"])
 
             # Skip if not in filter list

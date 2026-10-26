@@ -303,6 +303,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         table_type: str = "table",
         catalog_name: str = "",
         database_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """
         Get metadata for tables/views using catalog-qualified information_schema.
@@ -316,7 +317,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         database_name = database_name or self.database_name
 
         if table_type == "mv":
-            return self._get_materialized_view_metadata(current_catalog, database_name)
+            return self._get_materialized_view_metadata(current_catalog, database_name, tables=tables)
 
         from datus_mysql.connector import _get_metadata_config
 
@@ -335,7 +336,7 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         query = (
             f"SELECT TABLE_SCHEMA, TABLE_NAME "
             f"FROM {self.quote_identifier(current_catalog)}.information_schema.{metadata_config.info_table} "
-            f"WHERE {where} {type_filter}"
+            f"WHERE {where} {type_filter} {list_to_in_str('AND TABLE_NAME IN', tables, escape_backslash=True)}"
         )
 
         query_result = self._execute_pandas(query)
@@ -359,12 +360,14 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         if table_type == "table" and current_catalog == self.default_catalog():
             materialized_views = {
                 (mv["database_name"], mv["table_name"])
-                for mv in self._get_materialized_view_metadata(current_catalog, database_name)
+                for mv in self._get_materialized_view_metadata(current_catalog, database_name, tables=tables)
             }
             result = [meta for meta in result if (meta["database_name"], meta["table_name"]) not in materialized_views]
         return result
 
-    def _get_materialized_view_metadata(self, catalog_name: str, database_name: str = "") -> List[Dict[str, str]]:
+    def _get_materialized_view_metadata(
+        self, catalog_name: str, database_name: str = "", tables: Optional[List[str]] = None
+    ) -> List[Dict[str, str]]:
         """Return independently queryable Doris asynchronous materialized views."""
         if catalog_name != self.default_catalog():
             return []
@@ -373,7 +376,8 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         result: List[Dict[str, str]] = []
         for db_name in databases:
             safe_db = db_name.replace("\\", "\\\\").replace('"', '\\"')
-            rows = self._execute_pandas(f'SELECT Name, QuerySql FROM mv_infos("database"="{safe_db}")')
+            name_filter = list_to_in_str("WHERE Name IN", tables, escape_backslash=True)
+            rows = self._execute_pandas(f'SELECT Name, QuerySql FROM mv_infos("database"="{safe_db}") {name_filter}')
             for i in range(len(rows)):
                 table_name = str(rows["Name"][i])
                 result.append(
@@ -470,9 +474,20 @@ class DorisConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSuppor
         from datus_mysql.connector import _get_metadata_config
 
         requested = set(tables or [])
+        # Keep raw-name matching, including dots, and preselect qualified names
+        # even when the caller leaves the database unspecified. The final full
+        # name check below still excludes objects in a different scope.
+        names = list(tables or [])
+        for name in tables or []:
+            try:
+                parsed = parse_doris_identifier(name)
+            except ValueError:
+                continue
+            if parsed["database_name"] and parsed["table_name"] not in names:
+                names.append(parsed["table_name"])
         metadata_config = _get_metadata_config(table_type)
         result = []
-        for meta in self._get_metadata(table_type, catalog_name, database_name):
+        for meta in self._get_metadata(table_type, catalog_name, database_name, tables=names):
             full_name = self.full_name(
                 catalog_name=meta["catalog_name"],
                 database_name=meta["database_name"],

@@ -433,9 +433,11 @@ class BaseSqlConnector(ABC):
         raise NotImplementedError()
 
 
-def list_to_in_str(prefix: str, values: Optional[List[str]] = None) -> str:
+def list_to_in_str(prefix: str, values: Optional[List[str]] = None, *, escape_backslash: bool = False) -> str:
     if not values:
         return ""
+    if escape_backslash:
+        values = [value.replace("\\", "\\\\") for value in values]
     value_str = ",".join(to_sql_literal(v, around_with_quotes=True) for v in values)
     return f"{prefix} ({value_str})"
 
