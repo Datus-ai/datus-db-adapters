@@ -153,6 +153,7 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         table_type: TABLE_TYPE = "table",
         catalog_name: str = "",
         database_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """
         Get metadata for tables/views from INFORMATION_SCHEMA.
@@ -161,6 +162,7 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             table_type: Type of object (table, view, mv)
             catalog_name: Catalog name (unused in MySQL)
             database_name: Database name to query
+            tables: Optional exact table names to filter at the database
 
         Returns:
             List of metadata dictionaries
@@ -180,10 +182,11 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
 
         # Build and execute query
         type_filter = list_to_in_str("and TABLE_TYPE in ", metadata_config.table_types)
+        name_filter = list_to_in_str("AND TABLE_NAME IN", tables)
         query = (
             f"SELECT TABLE_SCHEMA, TABLE_NAME "
             f"FROM information_schema.{metadata_config.info_table} "
-            f"WHERE {where} {type_filter}"
+            f"WHERE {where} {type_filter} {name_filter}"
         )
 
         query_result = self._execute_pandas(query)
@@ -245,8 +248,10 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         filter_tables = self._reset_filter_tables(tables, catalog_name, database_name)
         metadata_config = _get_metadata_config(table_type)
 
-        for meta in self._get_metadata(table_type, catalog_name, database_name):
-            full_name = self.full_name(database_name=meta["database_name"], table_name=meta["table_name"])
+        for meta in self._get_metadata(table_type, catalog_name, database_name, tables=tables):
+            full_name = self.full_name(
+                catalog_name=meta["catalog_name"], database_name=meta["database_name"], table_name=meta["table_name"]
+            )
 
             # Skip if not in filter list
             if filter_tables and full_name not in filter_tables:
@@ -489,7 +494,7 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
     ) -> List[str]:
         """Reset filter tables with full names."""
         database_name = database_name or self.database_name
-        return super()._reset_filter_tables(tables, "", database_name, "")
+        return super()._reset_filter_tables(tables, catalog_name, database_name, "")
 
     # ==================== MigrationTargetMixin ====================
 

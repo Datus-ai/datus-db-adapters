@@ -960,3 +960,58 @@ def test_get_schema_queries_catalog_qualified_information_schema():
 
     assert len(captured) == 1
     assert "`hive_cat`.information_schema.columns" in captured[0]
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("fallback", [False, True])
+def test_targeted_ddl_keeps_names_and_catalog_scoped_in_primary_and_fallback(fallback):
+    queries = []
+
+    def execute(sql, **kwargs):
+        queries.append(sql)
+        if "information_schema" in sql:
+            assert "FROM `requested`.information_schema.TABLES" in sql
+            assert "TABLE_SCHEMA = 'dbx'" in sql and "TABLE_NAME IN ('orders')" in sql
+            if fallback:
+                raise RuntimeError("THRIFT_EAGAIN")
+            return pd.DataFrame({"TABLE_SCHEMA": ["dbx"], "TABLE_NAME": ["orders"]})
+        if sql.startswith("SHOW FULL TABLES"):
+            assert sql == "SHOW FULL TABLES FROM `requested`.`dbx` WHERE `Tables_in_dbx` IN ('orders')"
+            assert kwargs["catalog_name"] == "requested"
+            return pd.DataFrame({"Tables_in_dbx": ["orders"], "Table_type": ["BASE TABLE"]})
+        assert sql == "SHOW CREATE TABLE `requested`.`dbx`.`orders`"
+        return pd.DataFrame({"Table": ["orders"], "Create Table": ["CREATE TABLE orders (id BIGINT)"]})
+
+    connector = _fallback_connector(execute)
+    result = connector.get_tables_with_ddl(tables=["orders"], catalog_name="requested", database_name="dbx")
+    assert result == [
+        {
+            "identifier": "requested.dbx.orders",
+            "catalog_name": "requested",
+            "schema_name": "",
+            "database_name": "dbx",
+            "table_name": "orders",
+            "table_type": "table",
+            "definition": "CREATE TABLE orders (id BIGINT)",
+        }
+    ]
+    assert len(queries) == (3 if fallback else 2)
+
+
+@pytest.mark.acceptance
+def test_targeted_ddl_escapes_identifier_and_name_filter():
+    queries = []
+    name = "order'`s"
+
+    def execute(sql, **kwargs):
+        queries.append(sql)
+        if "information_schema" in sql:
+            assert "TABLE_NAME IN ('order''`s')" in sql
+            return pd.DataFrame({"TABLE_SCHEMA": ["db`x"], "TABLE_NAME": [name]})
+        assert sql == "SHOW CREATE TABLE `default_catalog`.`db``x`.`order'``s`"
+        return pd.DataFrame({"Table": [name], "Create Table": ["CREATE TABLE quoted_name (id BIGINT)"]})
+
+    connector = _fallback_connector(execute)
+    result = connector.get_tables_with_ddl(tables=[name], database_name="db`x")
+    assert result[0]["table_name"] == name and result[0]["definition"] == "CREATE TABLE quoted_name (id BIGINT)"
+    assert len(queries) == 2

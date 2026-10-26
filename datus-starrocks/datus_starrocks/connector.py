@@ -222,6 +222,7 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         table_type: str = "table",
         catalog_name: str = "",
         database_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """
         Get metadata for tables/views using catalog-qualified information_schema.
@@ -245,12 +246,13 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             where = list_to_in_str("TABLE_SCHEMA NOT IN", list(self._sys_databases()))
 
         type_filter = list_to_in_str("AND TABLE_TYPE IN", metadata_config.table_types)
+        name_filter = list_to_in_str("AND TABLE_NAME IN", tables)
 
         # Use catalog-qualified information_schema — no SET CATALOG needed
         query = (
             f"SELECT TABLE_SCHEMA, TABLE_NAME "
             f"FROM {self.quote_identifier(current_catalog)}.information_schema.{metadata_config.info_table} "
-            f"WHERE {where} {type_filter}"
+            f"WHERE {where} {type_filter} {name_filter}"
         )
 
         try:
@@ -264,7 +266,7 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             # information_schema is scanned by the BE through a thrift call back to the FE,
             # which times out (THRIFT_EAGAIN) once a database holds enough objects. SHOW is
             # answered by the FE directly, so it still works when this query does not.
-            fallback = self._show_metadata(table_type, current_catalog, database_name)
+            fallback = self._show_metadata(table_type, current_catalog, database_name, tables=tables)
             if fallback is None:
                 raise
             logger.warning(f"information_schema listing failed ({e}); fell back to SHOW for {table_type}")
@@ -290,7 +292,9 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             "table_type": table_type,
         }
 
-    def _show_metadata(self, table_type: str, catalog_name: str, database_name: str) -> Optional[List[Dict[str, str]]]:
+    def _show_metadata(
+        self, table_type: str, catalog_name: str, database_name: str, tables: Optional[List[str]] = None
+    ) -> Optional[List[Dict[str, str]]]:
         """Enumerate objects with SHOW as a fallback for a failing information_schema query.
 
         Returns None when SHOW cannot answer the request — a database-less listing, an
@@ -311,14 +315,19 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             if rows is None:
                 return None
             names = self._pick_name_column(rows)
-            return [self._metadata_row(catalog_name, database_name, name, "mv") for name in names]
+            return [
+                self._metadata_row(catalog_name, database_name, name, "mv")
+                for name in names
+                if not tables or name in tables
+            ]
 
         if table_type not in ("table", "view"):
             return None
 
         # Only SHOW FULL TABLES carries a Table_type column. Plain SHOW TABLES lumps views
         # in with tables, so there is no honest way to answer either request from it.
-        rows = self._try_show(targets, "SHOW FULL TABLES FROM", catalog_name)
+        name_filter = list_to_in_str(f"WHERE {self.quote_identifier('Tables_in_' + database_name)} IN", tables)
+        rows = self._try_show(targets, "SHOW FULL TABLES FROM", catalog_name, suffix=name_filter)
         if rows is None or len(rows.columns) < 2:
             return None
 
@@ -340,7 +349,7 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
         return [self._metadata_row(catalog_name, database_name, name, table_type) for name in names]
 
-    def _try_show(self, targets: List[str], statement: str, catalog_name: str = ""):
+    def _try_show(self, targets: List[str], statement: str, catalog_name: str = "", suffix: str = ""):
         """Run ``statement`` against each target until one succeeds; None if all fail.
 
         ``catalog_name`` is applied to the connection, so the unqualified spellings
@@ -348,7 +357,8 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         """
         for target in targets:
             try:
-                return self._execute_pandas(f"{statement} {target}", catalog_name=catalog_name)
+                sql = f"{statement} {target}" + (f" {suffix}" if suffix else "")
+                return self._execute_pandas(sql, catalog_name=catalog_name)
             except Exception as e:
                 logger.debug(f"'{statement} {target}' failed: {e}")
         return None
@@ -587,15 +597,12 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         """
         catalog_name = self._resolve_catalog(catalog_name)
 
-        if catalog_name:
-            if database_name:
-                return f"`{catalog_name}`.`{database_name}`.`{table_name}`"
-            else:
-                return f"`{table_name}`"
-        else:
-            if database_name:
-                return f"`{database_name}`.`{table_name}`"
-            return f"`{table_name}`"
+        parts = [table_name]
+        if database_name:
+            parts.insert(0, database_name)
+            if catalog_name:
+                parts.insert(0, catalog_name)
+        return ".".join(self.quote_identifier(part) for part in parts)
 
     @override
     def _sqlalchemy_schema(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> str:
