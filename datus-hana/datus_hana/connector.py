@@ -30,6 +30,16 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
         if catalog_name or (database_name and database_name != self.config.database):
             raise ValueError("HANA tenant is fixed at connection creation; only schema overrides are supported")
 
+    def get_sql_generation_context(self, database_name: str = "") -> dict[str, str]:
+        self._validate_context(database_name=database_name)
+        return {
+            "namespace_hint": (
+                "SQL object names use schema.table. The configured database selects the tenant at connection time; "
+                "do not prefix SQL object names with the tenant. Unquoted identifiers fold to uppercase; "
+                "quote mixed-case identifiers exactly as returned by metadata."
+            )
+        }
+
     def _connect_args(self, schema_name: str = "") -> dict[str, Any]:
         config = self.config
         args = {

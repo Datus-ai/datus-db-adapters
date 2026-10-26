@@ -27,6 +27,15 @@ def connector():
     return HanaConnector(HanaConfig(host="hana", username="USER", password="secret", schema="CaseSensitive"))
 
 
+def test_sql_generation_context_distinguishes_tenant_from_schema():
+    connector = HanaConnector(HanaConfig(host="hana", username="USER", password="secret", database="HXE", schema="APP"))
+    context = connector.get_sql_generation_context(database_name="HXE")
+    assert "schema.table" in context["namespace_hint"]
+    assert "tenant at connection time" in context["namespace_hint"]
+    assert connector._connect_args()["databaseName"] == "HXE"
+    assert connector.full_name(database_name="HXE", table_name="Orders") == '"APP"."Orders"'
+
+
 @pytest.mark.parametrize("fmt", ["list", "csv", "pandas", "arrow"])
 def test_sdk_roundtrip_formats_and_cleanup(connector, sdk, fmt):
     connect, connection, cursor = sdk

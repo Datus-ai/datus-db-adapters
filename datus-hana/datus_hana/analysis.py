@@ -5,17 +5,53 @@
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.dialects.postgres import Postgres
 from sqlglot.optimizer.scope import traverse_scope
+from sqlglot.tokens import TokenType
 
 from datus_db_core.constants import SQLType
 from datus_db_core.sql_analysis import SQLAnalysis
 
 from .handlers import quote_identifier
 
+# Verified native scalar functions whose object access is confined to their
+# arguments. Some remain anonymous calls on supported parser versions.
+# Qualified/quoted calls may resolve to user code and are not covered here.
+_NATIVE_SCALARS = {
+    "TO_VARCHAR",
+    "TO_DECIMAL",
+    "TO_BIGINT",
+    "ADD_DAYS",
+    "ADD_YEARS",
+    "DAYS_BETWEEN",
+    "SECONDS_BETWEEN",
+    "WEEKDAY",
+    "HOUR",
+    "MINUTE",
+}
+
+
+def _verified_scalar(node: exp.Anonymous) -> bool:
+    return isinstance(node.this, str) and node.name.upper() in _NATIVE_SCALARS and not isinstance(node.parent, exp.Dot)
+
+
+class _HanaAnalysisDialect(Postgres):
+    class Parser(Postgres.Parser):
+        def _parse_function_call(self, functions=None, anonymous=False, optional_parens=True, any_token=False):
+            # Preserve delimited function names as user calls. SQLGlot can
+            # otherwise normalize them into built-in nodes and lose quoting.
+            quoted = self._curr is not None and self._curr.token_type == TokenType.IDENTIFIER
+            return super()._parse_function_call(
+                functions=functions,
+                anonymous=anonymous or quoted,
+                optional_parens=optional_parens and not quoted,
+                any_token=any_token,
+            )
+
 
 def analyze_hana_sql(sql: str) -> SQLAnalysis:
     try:
-        statements = sqlglot.parse(sql, read="postgres", error_level=sqlglot.ErrorLevel.RAISE)
+        statements = sqlglot.parse(sql, read=_HanaAnalysisDialect, error_level=sqlglot.ErrorLevel.RAISE)
     except sqlglot.errors.SqlglotError:
         return SQLAnalysis("error", diagnostic="SQL is outside the verified HANA common-query subset")
     if len(statements) != 1 or statements[0] is None:
@@ -25,7 +61,10 @@ def analyze_hana_sql(sql: str) -> SQLAnalysis:
         return SQLAnalysis("unsupported", diagnostic="Local analysis supports common SELECT queries only")
     if any(isinstance(node, (exp.DML, exp.DDL, exp.Command, exp.Into, exp.Lock)) for node in tree.walk()):
         return SQLAnalysis("unsupported", diagnostic="Query contains a write, lock, or opaque statement")
-    if any(isinstance(node, (exp.Anonymous, exp.UDTF)) for node in tree.walk()):
+    if any(
+        isinstance(node, exp.UDTF) or isinstance(node, exp.Anonymous) and not _verified_scalar(node)
+        for node in tree.walk()
+    ):
         return SQLAnalysis("unsupported", diagnostic="Unverified scalar/table functions have unknown object access")
     # The compatible parser treats HANA sequence access as a qualified column.
     if any(column.table and column.name.upper() in {"NEXTVAL", "CURRVAL"} for column in tree.find_all(exp.Column)):
