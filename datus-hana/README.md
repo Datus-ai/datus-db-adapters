@@ -83,8 +83,11 @@ are supported. Exceeding the row/byte budget fails explicitly, with no silent
 truncation; duplicate result names require aliases. `close()` is idempotent.
 
 Common-query analysis recognizes unqualified native scalar calls to
-`TO_VARCHAR`, `ADD_DAYS`, `DAYS_BETWEEN`, and `SECONDS_BETWEEN`, including
-their nested arguments and underlying tables. Qualified or quoted function
+`TO_VARCHAR`, `TO_DECIMAL`, `TO_BIGINT`, `ADD_DAYS`, `ADD_YEARS`,
+`DAYS_BETWEEN`, `SECONDS_BETWEEN`, `WEEKDAY`, `HOUR`, and `MINUTE`, including
+their nested arguments, scalar subqueries, and underlying tables. These rules
+cover the native scalar calls emitted by Dosi's existing HANA corpus without
+rewriting the SQL sent to the SDK. Qualified or quoted function
 names, unknown functions, table functions, and sequence access remain outside
 the verified subset. The connector also supplies tenant/schema naming guidance
 through `get_sql_generation_context()` for Agent SQL prompts.
