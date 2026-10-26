@@ -1,4 +1,5 @@
 import pytest
+from botocore.exceptions import ClientError
 
 from .conftest import results, start, status
 
@@ -10,6 +11,7 @@ TABLE = dict(
     PartitionKeys=[{"Name": "day", "Type": "date", "Comment": "partition"}],
 )
 VIEW = dict(Name="orders_view", TableType="VIRTUAL_VIEW")
+MISSING_ENTITY = "Entity Not Found (Service: AmazonDataCatalog; Error Code: EntityNotFoundException; Request ID: test)"
 
 
 def object_page(stubber, objects, **kwargs):
@@ -137,6 +139,68 @@ def test_original_ddl_and_metadata_shape(make_connector, sdk, kind, name, sql):
 def test_out_of_scope_ddl_filter_has_no_metadata_calls(make_connector):
     with pytest.raises(ValueError, match="outside"):
         make_connector().get_tables_with_ddl(tables=["other.db.orders"])
+
+
+@pytest.mark.parametrize("code", ["MetadataException", "EntityNotFoundException"])
+@pytest.mark.parametrize("include_existing", [False, True])
+def test_targeted_ddl_omits_missing_tables(make_connector, sdk, code, include_existing):
+    _, stubber = sdk
+    stubber.add_client_error(
+        "get_table_metadata", code, MISSING_ENTITY, expected_params=dict(PARAMS, TableName="absent")
+    )
+    stubber.add_response("get_database", {"Database": {"Name": "analytics"}}, PARAMS)
+    if include_existing:
+        metadata(stubber)
+        start(stubber, "SHOW CREATE TABLE `orders`")
+        status(stubber, statement_type="UTILITY")
+        results(
+            stubber,
+            [["CREATE TABLE orders (id bigint)"]],
+            [{"Name": "createtab_stmt", "Type": "varchar"}],
+            header=False,
+        )
+    entries = make_connector().get_tables_with_ddl(tables=["absent", "orders"] if include_existing else ["absent"])
+    assert [entry["table_name"] for entry in entries] == (["orders"] if include_existing else [])
+    if include_existing:
+        assert entries[0]["definition"] == "CREATE TABLE orders (id bigint)"
+
+
+@pytest.mark.parametrize("scope_error", ["MetadataException", "AccessDeniedException"])
+def test_targeted_ddl_does_not_hide_missing_or_inaccessible_database(make_connector, sdk, scope_error):
+    _, stubber = sdk
+    stubber.add_client_error(
+        "get_table_metadata", "MetadataException", MISSING_ENTITY, expected_params=dict(PARAMS, TableName="absent")
+    )
+    stubber.add_client_error("get_database", scope_error, "scope unavailable", expected_params=PARAMS)
+    with pytest.raises(ClientError, match="scope unavailable"):
+        make_connector().get_tables_with_ddl(tables=["absent"])
+
+
+@pytest.mark.parametrize(
+    "code, message",
+    [
+        ("AccessDeniedException", "denied"),
+        ("MetadataException", "Error Code: AccessDeniedException;"),
+        ("MetadataException", "custom metadata failure"),
+        ("InternalServerException", "unavailable"),
+        ("InvalidRequestException", "invalid request"),
+    ],
+)
+def test_targeted_ddl_preserves_other_metadata_errors(make_connector, sdk, code, message):
+    _, stubber = sdk
+    stubber.add_client_error("get_table_metadata", code, message, expected_params=dict(PARAMS, TableName="orders"))
+    with pytest.raises(ClientError) as exc:
+        make_connector().get_tables_with_ddl(tables=["orders"])
+    assert exc.value.response["Error"] == {"Code": code, "Message": message}
+
+
+def test_schema_lookup_still_reports_missing_table(make_connector, sdk):
+    _, stubber = sdk
+    stubber.add_client_error(
+        "get_table_metadata", "MetadataException", MISSING_ENTITY, expected_params=dict(PARAMS, TableName="absent")
+    )
+    with pytest.raises(ClientError, match="EntityNotFoundException"):
+        make_connector().get_schema(table_name="absent")
 
 
 def test_ddl_error_is_not_silent(make_connector, sdk):

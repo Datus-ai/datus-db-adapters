@@ -16,6 +16,7 @@ from datus_db_core import (
     get_logger,
     list_to_in_str,
     parse_context_switch,
+    to_sql_literal,
 )
 from datus_mysql import MySQLConnector
 
@@ -326,16 +327,30 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
         # Only SHOW FULL TABLES carries a Table_type column. Plain SHOW TABLES lumps views
         # in with tables, so there is no honest way to answer either request from it.
-        name_filter = list_to_in_str(
-            f"WHERE {self.quote_identifier('Tables_in_' + database_name)} IN", tables, escape_backslash=True
-        )
-        rows = self._try_show(targets, "SHOW FULL TABLES FROM", catalog_name, suffix=name_filter)
-        if rows is None or len(rows.columns) < 2:
-            return None
-
+        # WHERE is rewritten to information_schema by StarRocks, defeating this
+        # fallback. LIKE stays on the FE SHOW path and bounds each returned list.
+        suffixes = [""]
+        if tables:
+            suffixes = []
+            for name in dict.fromkeys(tables):
+                pattern = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                suffixes.append("LIKE " + to_sql_literal(pattern.replace("\\", "\\\\"), True))
         wanted = "VIEW" if table_type == "view" else "BASE TABLE"
-        name_col, type_col = rows.columns[0], rows.columns[1]
-        names = [str(rows[name_col][i]) for i in range(len(rows)) if str(rows[type_col][i]).upper() == wanted]
+        names = set()
+        for suffix in suffixes:
+            rows = self._try_show(targets, "SHOW FULL TABLES FROM", catalog_name, suffix=suffix)
+            if rows is None:
+                return None
+            if rows.empty:
+                continue
+            if len(rows.columns) < 2:
+                return None
+            name_col, type_col = rows.columns[0], rows.columns[1]
+            names.update(
+                str(rows[name_col][i])
+                for i in range(len(rows))
+                if str(rows[type_col][i]).upper() == wanted and (not tables or str(rows[name_col][i]) in tables)
+            )
 
         if table_type == "view":
             # SHOW FULL TABLES reports materialized views as VIEW too (they are absent
@@ -347,9 +362,9 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
             if mv_rows is None:
                 return None
             mv_names = set(self._pick_name_column(mv_rows))
-            names = [name for name in names if name not in mv_names]
+            names.difference_update(mv_names)
 
-        return [self._metadata_row(catalog_name, database_name, name, table_type) for name in names]
+        return [self._metadata_row(catalog_name, database_name, name, table_type) for name in sorted(names)]
 
     def _try_show(self, targets: List[str], statement: str, catalog_name: str = "", suffix: str = ""):
         """Run ``statement`` against each target until one succeeds; None if all fail.

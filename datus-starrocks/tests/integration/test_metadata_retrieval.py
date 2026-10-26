@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import pytest
+from sqlalchemy import event
 
 from datus_starrocks import StarRocksConfig, StarRocksConnector
 
@@ -50,6 +51,36 @@ def test_get_tables_with_ddl(
     assert table["database_name"] == config.database
     assert table["schema_name"] == ""
     assert table["identifier"] == f"{config.catalog}.{config.database}.{METADATA_TABLE}"
+
+
+@pytest.mark.integration
+def test_targeted_ddl_show_fallback_preserves_missing_names_and_literal_patterns(
+    connector, config, metadata_objects_setup
+):
+    """Exercise the real SHOW LIKE path while the primary metadata transport fails."""
+    engine = connector._ensure_engine()
+    queries = []
+
+    def fail_information_schema(conn, cursor, statement, parameters, context, executemany):
+        queries.append(statement)
+        if "information_schema.tables" in statement.lower():
+            raise RuntimeError("injected information_schema transport failure")
+
+    event.listen(engine, "before_cursor_execute", fail_information_schema)
+    try:
+        entries = connector.get_tables_with_ddl(
+            catalog_name=config.catalog,
+            database_name=config.database,
+            tables=["datus_absent_table", METADATA_TABLE],
+        )
+        assert [entry["table_name"] for entry in entries] == [METADATA_TABLE]
+        assert "CREATE TABLE" in entries[0]["definition"]
+        show_queries = [sql for sql in queries if sql.startswith("SHOW FULL TABLES")]
+        assert len(show_queries) == 2
+        assert all(" LIKE " in sql and " WHERE " not in sql for sql in show_queries)
+        assert show_queries[1].endswith(r"LIKE 'datus\\_metadata\\_table'")
+    finally:
+        event.remove(engine, "before_cursor_execute", fail_information_schema)
 
 
 @pytest.mark.integration

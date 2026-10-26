@@ -976,7 +976,7 @@ def test_targeted_ddl_keeps_names_and_catalog_scoped_in_primary_and_fallback(fal
                 raise RuntimeError("THRIFT_EAGAIN")
             return pd.DataFrame({"TABLE_SCHEMA": ["dbx"], "TABLE_NAME": ["orders"]})
         if sql.startswith("SHOW FULL TABLES"):
-            assert sql == "SHOW FULL TABLES FROM `requested`.`dbx` WHERE `Tables_in_dbx` IN ('orders')"
+            assert sql == "SHOW FULL TABLES FROM `requested`.`dbx` LIKE 'orders'"
             assert kwargs["catalog_name"] == "requested"
             return pd.DataFrame({"Tables_in_dbx": ["orders"], "Table_type": ["BASE TABLE"]})
         assert sql == "SHOW CREATE TABLE `requested`.`dbx`.`orders`"

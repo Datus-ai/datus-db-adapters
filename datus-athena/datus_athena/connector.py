@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pyarrow as pa
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from datus_db_core import BaseSqlConnector, CatalogSupportMixin, MigrationTargetMixin, get_logger
 from datus_db_core.aws import AWSIdentity, AWSIdentityConfig
@@ -439,6 +440,24 @@ class AthenaConnector(BaseSqlConnector, CatalogSupportMixin, MigrationTargetMixi
             CatalogName=catalog, DatabaseName=database, TableName=table, WorkGroup=self.config.workgroup
         )["TableMetadata"]
 
+    def _selected_table_metadata(self, catalog: str, database: str, names: list[str]) -> Iterator[dict[str, Any]]:
+        for name in names:
+            try:
+                yield self._table_metadata(catalog, database, name)
+            except ClientError as exc:
+                error = exc.response.get("Error", {})
+                # Athena wraps Glue's not-found code in MetadataException. Other
+                # metadata errors (including permissions) must still propagate.
+                missing = error.get("Code") == "EntityNotFoundException" or (
+                    error.get("Code") == "MetadataException"
+                    and "Error Code: EntityNotFoundException;" in error.get("Message", "")
+                )
+                if not missing:
+                    raise
+                # The same response also represents a missing database/catalog.
+                # Only omit a missing table after verifying its containing scope.
+                self._client.get_database(CatalogName=catalog, DatabaseName=database, WorkGroup=self.config.workgroup)
+
     def get_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
     ) -> list[dict[str, Any]]:
@@ -486,7 +505,7 @@ class AthenaConnector(BaseSqlConnector, CatalogSupportMixin, MigrationTargetMixi
                 raise ValueError(f"Table {table!r} is outside requested catalog/database")
             requested.add(resolved[2])
         if requested:
-            objects = (self._table_metadata(catalog, database, name) for name in sorted(requested))
+            objects = self._selected_table_metadata(catalog, database, sorted(requested))
         else:
             _, _, objects = self._objects(catalog, database)
         entries = []
