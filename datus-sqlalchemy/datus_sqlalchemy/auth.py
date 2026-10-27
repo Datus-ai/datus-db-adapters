@@ -7,13 +7,13 @@
 import json
 import re
 import threading
-import time
 from typing import Any, Callable, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from datus_db_core import DatusDbException, ErrorCode
-from datus_db_core.aws import AWSCredentialError, AWSIdentity, AWSIdentityConfig, aws_error
+from datus_db_core.aws import AWSCredentialError, AWSIdentity, AWSIdentityConfig
+from datus_db_core.secrets import AWSSecretProvider
 
 
 class DatabaseAuthConfig(BaseModel):
@@ -49,42 +49,27 @@ class DatabaseCredentials:
         self.config = config.model_copy(deep=True)
         self.identity = AWSIdentity(config.aws)
         self._lock = threading.RLock()
-        self._expires_at = 0.0
         self._password: str | None = None
         self._version: str | None = None
+        self._secrets = (
+            AWSSecretProvider(self.identity, self.config.secret_ref, self.config.secret_cache_ttl_seconds, self._decode)
+            if self.config.secret_ref
+            else None
+        )
+
+    def _decode(self, raw: str) -> str:
+        value = json.loads(raw)
+        if not isinstance(value, dict) or not isinstance(value.get("password"), str):
+            raise ValueError("Secret must contain a JSON password string")
+        if "username" in value and value["username"] != self.config.username:
+            raise ValueError("Secret username does not match the configured database user")
+        return value["password"]
 
     def secret_version(self, force: bool = False) -> str:
         with self._lock:
-            if not force and self._password is not None and time.monotonic() < self._expires_at:
-                return self._version
-            try:
-                result = self.identity.client("secretsmanager").get_secret_value(
-                    SecretId=self.config.secret_ref, VersionStage="AWSCURRENT"
-                )
-                value = json.loads(result["SecretString"])
-                if not isinstance(value, dict) or not isinstance(value.get("password"), str):
-                    raise ValueError("Secret must contain a JSON password string")
-                if "username" in value and value["username"] != self.config.username:
-                    raise ValueError("Secret username does not match the configured database user")
-                version = result["VersionId"]
-                if not isinstance(version, str) or not version:
-                    raise ValueError("Secret version is missing")
-            except (ValueError, KeyError, TypeError):
-                raise DatusDbException(
-                    ErrorCode.DB_AUTHENTICATION_FAILED,
-                    message_args={
-                        "error_message": "Invalid database Secret: expected password, matching username and VersionId"
-                    },
-                ) from None
-            except Exception as exc:
-                safe_error = exc if isinstance(exc, AWSCredentialError) else aws_error("Database Secret retrieval", exc)
-                raise DatusDbException(
-                    ErrorCode.DB_AUTHENTICATION_FAILED, message_args={"error_message": str(safe_error)}
-                ) from None
-            self._password = value["password"]
-            self._version = version
-            self._expires_at = time.monotonic() + self.config.secret_cache_ttl_seconds
-            return version
+            snapshot = self._secrets.load(force)
+            self._password, self._version = snapshot.value, snapshot.version
+            return snapshot.version
 
     def connection_parameters(self) -> dict:
         if self.config.auth_mode == "iam":

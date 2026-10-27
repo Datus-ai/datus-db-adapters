@@ -4,5 +4,5 @@
 
 from .connector import SQLAlchemyConnector
 
-__version__ = "0.1.0"
+__version__ = "0.1.11"
 __all__ = ["SQLAlchemyConnector"]

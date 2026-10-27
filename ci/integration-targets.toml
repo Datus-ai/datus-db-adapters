@@ -4,6 +4,13 @@ kind = "cloud"
 # Local AWS acceptance passed; CI-specific credentials and workflow remain unconfigured.
 enabled = false
 
+[targets.snowflake]
+package = "datus-snowflake"
+kind = "cloud"
+# Local AWS/dual-key rotation acceptance is opt-in. CI has no scoped AWS Secret
+# or Snowflake provisioning credentials/workflow assigned.
+enabled = false
+
 [targets.postgresql]
 package = "datus-postgresql"
 kind = "compose"
@@ -109,6 +116,5 @@ packages_without_live_targets = [
     "datus-clickzetta",
     "datus-db-core",
     "datus-redshift",
-    "datus-snowflake",
     "datus-sqlalchemy",
 ]

@@ -27,6 +27,15 @@ def connector():
     return HanaConnector(HanaConfig(host="hana", username="USER", password="secret", schema="CaseSensitive"))
 
 
+def test_sql_generation_context_distinguishes_tenant_from_schema():
+    connector = HanaConnector(HanaConfig(host="hana", username="USER", password="secret", database="HXE", schema="APP"))
+    context = connector.get_sql_generation_context(database_name="HXE")
+    assert "schema.table" in context["namespace_hint"]
+    assert "tenant at connection time" in context["namespace_hint"]
+    assert connector._connect_args()["databaseName"] == "HXE"
+    assert connector.full_name(database_name="HXE", table_name="Orders") == '"APP"."Orders"'
+
+
 @pytest.mark.parametrize("fmt", ["list", "csv", "pandas", "arrow"])
 def test_sdk_roundtrip_formats_and_cleanup(connector, sdk, fmt):
     connect, connection, cursor = sdk
@@ -400,3 +409,38 @@ def test_schema_discovery_filters_reserved_component_namespace(connector, sdk, i
 
     assert connector.get_schemas(include_sys=include_sys) == (schemas if include_sys else ["APP"])
     cursor.execute.assert_called_once_with("SELECT SCHEMA_NAME FROM SYS.SCHEMAS ORDER BY SCHEMA_NAME")
+
+
+@pytest.mark.parametrize("requested", ["Mixed.Table", '"CaseSensitive"."Mixed.Table"'])
+def test_scoped_ddl_filters_at_sdk_boundary(connector, sdk, requested):
+    cursor = sdk[2]
+    calls = []
+
+    def execute(sql, parameters=None):
+        calls.append((sql, parameters))
+        if "FROM SYS.TABLES" in sql:
+            assert "TABLE_NAME IN (?)" in sql
+            assert parameters == ("CaseSensitive", "Mixed.Table")
+            columns, rows = ["SCHEMA_NAME", "OBJECT_NAME"], [("CaseSensitive", "Mixed.Table")]
+        else:
+            assert "FROM SYS.TABLE_COLUMNS" in sql
+            columns = [
+                "COLUMN_NAME",
+                "DATA_TYPE_NAME",
+                "LENGTH",
+                "SCALE",
+                "IS_NULLABLE",
+                "POSITION",
+                "COMMENTS",
+                "DEFAULT_VALUE",
+            ]
+            rows = [("id", "INTEGER", None, None, "FALSE", 1, None, None)]
+        cursor.description = [(name,) for name in columns]
+        cursor.fetchmany.side_effect = [rows, []]
+
+    cursor.execute.side_effect = execute
+    rows = connector.get_tables_with_ddl(tables=[requested])
+    assert [(row["table_name"], row["definition"]) for row in rows] == [
+        ("Mixed.Table", 'CREATE TABLE "CaseSensitive"."Mixed.Table" ("id" INTEGER NOT NULL)')
+    ]
+    assert len(calls) == 2

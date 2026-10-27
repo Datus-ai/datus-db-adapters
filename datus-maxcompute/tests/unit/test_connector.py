@@ -373,6 +373,7 @@ def test_get_tables_with_ddl_matches_the_complete_requested_scope(config):
     customers.type = SimpleNamespace(value="MANAGED_TABLE")
     customers.get_ddl.return_value = "CREATE TABLE customers (id BIGINT)"
     odps.list_tables.return_value = [orders, customers]
+    odps.get_table.return_value = orders
 
     result = connector.get_tables_with_ddl(
         database_name="project_a",
@@ -381,6 +382,8 @@ def test_get_tables_with_ddl_matches_the_complete_requested_scope(config):
     )
 
     assert [entry["table_name"] for entry in result] == ["orders"]
+    odps.list_tables.assert_not_called()
+    odps.get_table.assert_called_once_with("orders", project="project_a", schema="analytics")
     orders.get_ddl.assert_called_once_with()
     customers.get_ddl.assert_not_called()
 
@@ -838,3 +841,33 @@ def test_sample_partition_predicate_skips_table_with_unreadable_schema(config):
     table = SimpleNamespace(name="orders")
 
     assert connector._sample_partition_predicate(table) is None
+
+
+@pytest.mark.parametrize(
+    "kind,expected", [("MANAGED_TABLE", ["orders"]), ("VIRTUAL_VIEW", []), ("MATERIALIZED_VIEW", [])]
+)
+def test_scoped_ddl_uses_target_lookup_and_preserves_object_types(config, kind, expected):
+    connector, odps = make_connector(config)
+    table = make_listed_table("orders", kind)
+    odps.get_table.return_value = table
+    rows = connector.get_tables_with_ddl(tables=["orders"], schema_name="default")
+    assert [row["table_name"] for row in rows] == expected
+    odps.list_tables.assert_not_called()
+    odps.get_table.assert_called_once_with("orders", project="project_a", schema="default")
+    table.reload.assert_called_once_with()
+
+
+def test_scoped_ddl_missing_table_does_not_enumerate(config):
+    from odps.errors import NoSuchObject
+
+    connector, odps = make_connector(config)
+    odps.get_table.side_effect = NoSuchObject("table not found")
+    assert connector.get_tables_with_ddl(tables=["missing"], schema_name="default") == []
+    odps.list_tables.assert_not_called()
+
+
+def test_scoped_ddl_skips_ignored_names_before_sdk_lookup(config):
+    connector, odps = make_connector(config.model_copy(update={"ignore_table_patterns": ["ignored_*"]}))
+    assert connector.get_tables_with_ddl(tables=["ignored_orders"], schema_name="default") == []
+    odps.get_table.assert_not_called()
+    odps.list_tables.assert_not_called()

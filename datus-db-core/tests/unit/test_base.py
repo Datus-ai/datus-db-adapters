@@ -603,3 +603,11 @@ class TestToSqlLiteral:
 
     def test_none_with_quotes(self):
         assert to_sql_literal(None, around_with_quotes=True) == "NULL"
+
+
+@pytest.mark.parametrize("escape_backslash", [False, True])
+def test_in_filter_escapes_names_for_backend_string_rules(escape_backslash):
+    name = "a\\'b"
+    rendered = list_to_in_str("AND name IN", [name], escape_backslash=escape_backslash)
+    expected_name = "a\\\\''b" if escape_backslash else "a\\''b"
+    assert rendered == "AND name IN ('" + expected_name + "')"

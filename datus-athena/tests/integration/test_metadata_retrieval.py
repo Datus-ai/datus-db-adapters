@@ -1,7 +1,9 @@
 import csv
 import io
+from uuid import uuid4
 
 import pytest
+from botocore.exceptions import ClientError
 
 from datus_db_core.testing.tpch import TPCH_TABLES
 
@@ -28,3 +30,16 @@ def test_sampling(connector):
     assert len(samples) == 1 and samples[0]["table_name"] == "tpch_region"
     rows = list(csv.DictReader(io.StringIO(samples[0]["sample_rows"])))
     assert {row["r_name"] for row in rows} == {"AFRICA", "AMERICA", "ASIA", "EUROPE", "MIDDLE EAST"}
+
+
+def test_targeted_ddl_omits_absent_tables_without_losing_existing_definitions(connector):
+    missing = "absent_" + uuid4().hex
+    assert connector.get_tables_with_ddl(tables=[missing]) == []
+    entries = connector.get_tables_with_ddl(tables=[missing, "tpch_orders"])
+    assert [entry["table_name"] for entry in entries] == ["tpch_orders"]
+    assert "o_orderkey" in entries[0]["definition"]
+
+
+def test_targeted_ddl_does_not_hide_absent_database(connector):
+    with pytest.raises(ClientError):
+        connector.get_tables_with_ddl(database_name="absent_" + uuid4().hex, tables=["orders"])

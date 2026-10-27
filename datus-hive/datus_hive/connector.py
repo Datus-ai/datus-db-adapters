@@ -239,7 +239,18 @@ class HiveConnector(SQLAlchemyConnector):
         database_name = database_name or self.database_name
         filter_tables = self._reset_filter_tables(tables, catalog_name, database_name, schema_name)
         result: List[Dict[str, str]] = []
-        for table_name in self.get_tables(database_name=database_name):
+        if tables:
+            from datus_db_core.sql_utils import hive_name_pattern_literal
+
+            pattern = hive_name_pattern_literal(tables)
+            scope = f" IN {self.quote_identifier(database_name)}" if database_name else ""
+            rows = self._execute_pandas(f"SHOW TABLES{scope} {pattern}")
+            views = self._execute_pandas(f"SHOW VIEWS{scope} LIKE {pattern}")
+            view_names = {name.casefold() for name in self._extract_table_names(views)}
+            names = [name for name in self._extract_table_names(rows) if name.casefold() not in view_names]
+        else:
+            names = self.get_tables(database_name=database_name)
+        for table_name in names:
             full_name = self.full_name(database_name=database_name, table_name=table_name)
             if filter_tables and full_name not in filter_tables:
                 continue

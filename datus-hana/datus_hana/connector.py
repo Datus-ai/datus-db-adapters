@@ -30,6 +30,16 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
         if catalog_name or (database_name and database_name != self.config.database):
             raise ValueError("HANA tenant is fixed at connection creation; only schema overrides are supported")
 
+    def get_sql_generation_context(self, database_name: str = "") -> dict[str, str]:
+        self._validate_context(database_name=database_name)
+        return {
+            "namespace_hint": (
+                "SQL object names use schema.table. The configured database selects the tenant at connection time; "
+                "do not prefix SQL object names with the tenant. Unquoted identifiers fold to uppercase; "
+                "quote mixed-case identifiers exactly as returned by metadata."
+            )
+        }
+
     def _connect_args(self, schema_name: str = "") -> dict[str, Any]:
         config = self.config
         args = {
@@ -325,15 +335,28 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
             or (row["SCHEMA_NAME"] not in self._sys_schemas() and not row["SCHEMA_NAME"].startswith("_SYS_"))
         ]
 
-    def _objects(self, kind, catalog_name="", database_name="", schema_name=""):
+    def _objects(self, kind, catalog_name="", database_name="", schema_name="", tables=None):
         self._validate_context(catalog_name, database_name)
         if kind not in {"table", "view"}:
             raise ValueError("HANA supports table and view metadata, not materialized views")
         view, name = ("TABLES", "TABLE_NAME") if kind == "table" else ("VIEWS", "VIEW_NAME")
         schema = self._effective_schema(schema_name)
+        parameters = [schema]
+        name_filter = ""
+        if tables:
+            prefix = quote_identifier(schema) + "."
+            names = [
+                value[len(prefix) + 1 : -1].replace('""', '"')
+                if value.startswith(prefix + '"') and value.endswith('"')
+                else value
+                for value in tables
+            ]
+            name_filter = f" AND {name} IN ({', '.join('?' for _ in names)})"
+            parameters.extend(names)
         rows = self._metadata_rows(
-            f"SELECT SCHEMA_NAME, {name} AS OBJECT_NAME FROM SYS.{view} WHERE SCHEMA_NAME = ? ORDER BY {name}",
-            (schema,),
+            f"SELECT SCHEMA_NAME, {name} AS OBJECT_NAME FROM SYS.{view} "
+            f"WHERE SCHEMA_NAME = ?{name_filter} ORDER BY {name}",
+            tuple(parameters),
         )
         return [
             {
@@ -389,7 +412,7 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
 
     def get_tables_with_ddl(self, catalog_name="", database_name="", schema_name="", tables=None):
         result = []
-        for meta in self._objects("table", catalog_name, database_name, schema_name):
+        for meta in self._objects("table", catalog_name, database_name, schema_name, tables=tables):
             if tables and meta["table_name"] not in tables and meta["identifier"] not in tables:
                 continue
             columns = self.get_schema(schema_name=meta["schema_name"], table_name=meta["table_name"])

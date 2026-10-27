@@ -130,14 +130,15 @@ class HologresConnector(PostgreSQLConnector):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
-        metadata = super()._get_metadata(table_type, catalog_name, database_name, schema_name)
+        metadata = super()._get_metadata(table_type, catalog_name, database_name, schema_name, tables=tables)
         if table_type != "table":
             return metadata
 
         database_name = database_name or self.database_name
         schema_name = schema_name or self.schema_name
-        foreign_tables = self._get_foreign_tables(database_name, schema_name)
+        foreign_tables = self._get_foreign_tables(database_name, schema_name, tables=tables)
 
         existing = {(item["schema_name"], item["table_name"]) for item in metadata}
         for schema, table in foreign_tables:
@@ -163,7 +164,10 @@ class HologresConnector(PostgreSQLConnector):
         self,
         database_name: str,
         schema_name: str,
+        tables: Optional[List[str]] = None,
     ) -> tuple[tuple[str, str], ...]:
+        from datus_db_core import list_to_in_str
+
         safe_database = _escape_literal(database_name)
         safe_schema = _escape_literal(schema_name)
         query = f"""
@@ -171,9 +175,10 @@ class HologresConnector(PostgreSQLConnector):
             FROM information_schema.foreign_tables
             WHERE foreign_table_catalog = '{safe_database}'
               AND foreign_table_schema = '{safe_schema}'
+              {list_to_in_str("AND foreign_table_name IN", tables)}
         """
         foreign_tables = self._execute_pandas(query, database_name=database_name)
-        if foreign_tables.empty:
+        if foreign_tables.empty and (not tables or not self._metadata_schema_exists(database_name, schema_name)):
             foreign_tables = self._execute_pandas(
                 query.replace(
                     f"foreign_table_schema = '{safe_schema}'",
@@ -194,11 +199,12 @@ class HologresConnector(PostgreSQLConnector):
         self,
         database_name: str,
         schema_name: str,
+        tables: Optional[List[str]] = None,
     ) -> tuple[tuple[str, str], ...]:
         cached = self._foreign_tables_var.get()
         if cached is not None and cached[:2] == (database_name, schema_name):
             return cached[2]
-        return self._query_foreign_tables(database_name, schema_name)
+        return self._query_foreign_tables(database_name, schema_name, tables=tables)
 
     @override
     def _get_objects_with_ddl(
@@ -220,7 +226,7 @@ class HologresConnector(PostgreSQLConnector):
 
         database_name = database_name or self.database_name
         schema_name = schema_name or self.schema_name
-        foreign_tables = self._query_foreign_tables(database_name, schema_name)
+        foreign_tables = self._query_foreign_tables(database_name, schema_name, tables=tables)
         token = self._foreign_tables_var.set((database_name, schema_name, foreign_tables))
         try:
             return super()._get_objects_with_ddl(
