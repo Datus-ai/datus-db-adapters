@@ -213,7 +213,9 @@ class GaussDBConnector(PostgreSQLConnector):
             return ddl
         distribution = self._get_distribution_clause(schema_name, table_name, database_name)
         if distribution and "DISTRIBUTE BY" not in ddl.upper():
-            ddl = f"{ddl.rstrip().rstrip(';')}\n{distribution};"
+            create_part, alter_lines = self._partition_table_ddl(ddl)
+            create_part = f"{create_part.rstrip().rstrip(';')}\n{distribution};"
+            ddl = "\n".join([create_part] + alter_lines) if alter_lines else create_part
         return ddl
 
     def _get_distribution_clause(self, schema_name: str, table_name: str, database_name: str = "") -> str:

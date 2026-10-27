@@ -159,11 +159,13 @@ class GreenplumConnector(PostgreSQLConnector, MigrationTargetMixin):
         if object_type == "TABLE" and ddl.startswith("CREATE TABLE"):
             dist_policy = self._get_distribution_policy(schema_name, table_name)
             if dist_policy is not None:
-                # Insert distribution policy before the trailing semicolon
-                if ddl.endswith(";"):
-                    ddl = ddl[:-1] + f"\n{dist_policy};"
+                create_part, alter_lines = self._partition_table_ddl(ddl)
+                # Insert distribution policy before the trailing semicolon of CREATE TABLE
+                if create_part.endswith(";"):
+                    create_part = create_part[:-1] + f"\n{dist_policy};"
                 else:
-                    ddl += f"\n{dist_policy}"
+                    create_part += f"\n{dist_policy}"
+                ddl = "\n".join([create_part] + alter_lines) if alter_lines else create_part
 
         return ddl
 

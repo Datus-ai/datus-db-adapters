@@ -85,7 +85,11 @@ def test_ddl_round_trip_self_referencing_foreign_key_with_standalone_unique_inde
         # CREATE UNIQUE INDEX must precede ALTER TABLE ADD CONSTRAINT
         assert definition.find("CREATE UNIQUE INDEX") < definition.find(f'ADD CONSTRAINT "{fk_name}"')
 
-        # Live round-trip: Replay reconstructed DDL under replay table name
+        # Live round-trip: Replay reconstructed DDL under replay table name.
+        # Drop the source table first to guarantee replay does not depend on the existing table.
+        dropped = connector.execute_ddl(f"DROP TABLE IF EXISTS {table_ref} CASCADE")
+        assert dropped.success, dropped.error
+
         replay_ddl = definition.replace(table_name, replay_table_name)
 
         for stmt in [s.strip() for s in replay_ddl.split(";") if s.strip()]:

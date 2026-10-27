@@ -4,7 +4,7 @@
 
 from collections import OrderedDict
 from contextlib import nullcontext
-from typing import Any, Dict, List, Optional, Set, Union, override
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, override
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
@@ -372,21 +372,8 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             table_constraints = []
             deferred_alter_statements = []
             for row in constraints:
-                name = row[0]
-                is_validated = True
-                depends_on_standalone_index = False
-                if len(row) >= 4:
-                    is_validated = bool(row[1])
-                    definition = row[2]
-                    depends_on_standalone_index = bool(row[3])
-                elif len(row) == 3:
-                    is_validated = bool(row[1])
-                    definition = row[2]
-                else:
-                    definition = row[1]
-                    is_validated = "NOT VALID" not in definition
-
-                is_unvalidated = not is_validated or "NOT VALID" in definition
+                name, is_validated, definition, depends_on_standalone_index = row
+                is_unvalidated = not is_validated
                 if is_unvalidated and "NOT VALID" not in definition:
                     definition = f"{definition} NOT VALID"
 
@@ -409,6 +396,19 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             if deferred_alter_statements:
                 ddl += "\n" + "\n".join(deferred_alter_statements)
             return ddl
+
+    @staticmethod
+    def _partition_table_ddl(ddl: str) -> Tuple[str, List[str]]:
+        """Split reconstructed table DDL into the CREATE TABLE statement and trailing ALTER statements."""
+        lines = ddl.split("\n")
+        table_lines = []
+        alter_lines = []
+        for line in lines:
+            if line.startswith("ALTER TABLE ") or alter_lines:
+                alter_lines.append(line)
+            else:
+                table_lines.append(line)
+        return "\n".join(table_lines), alter_lines
 
     def _get_unique_index_definitions(self, schema_name: str, table_name: str, database_name: str = "") -> List[str]:
         """Read standalone usable unique indexes, retaining predicates and expressions."""
@@ -501,17 +501,8 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                         else:
                             new_indexes = [idx for idx in indexes if idx.rstrip(";") not in ddl]
                             if new_indexes:
-                                lines = ddl.split("\n")
-                                table_lines = []
-                                alter_lines = []
-                                for line in lines:
-                                    if line.startswith("ALTER TABLE ") or alter_lines:
-                                        alter_lines.append(line)
-                                    else:
-                                        table_lines.append(line)
-
-                                ddl_parts = ["\n".join(table_lines)]
-                                ddl_parts.extend(new_indexes)
+                                create_part, alter_lines = self._partition_table_ddl(ddl)
+                                ddl_parts = [create_part] + new_indexes
                                 if alter_lines:
                                     ddl_parts.append("\n".join(alter_lines))
                                 ddl = "\n".join(ddl_parts)

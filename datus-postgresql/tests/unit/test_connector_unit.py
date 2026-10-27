@@ -664,15 +664,23 @@ def test_get_ddl_uses_requested_database_for_table_schema():
     [
         ([], ""),
         (
-            [("orders_pk", "PRIMARY KEY (tenant_id, id)"), ('Unique "Email', "UNIQUE (email, tenant_id)")],
+            [
+                ("orders_pk", True, "PRIMARY KEY (tenant_id, id)", False),
+                ('Unique "Email', True, "UNIQUE (email, tenant_id)", False),
+            ],
             ',\n    CONSTRAINT "orders_pk" PRIMARY KEY (tenant_id, id)'
             ',\n    CONSTRAINT "Unique ""Email" UNIQUE (email, tenant_id)',
         ),
         (
             [
-                ("orders_pk", "PRIMARY KEY (tenant_id, id)"),
-                ('Unique "Email', "UNIQUE (email, tenant_id)"),
-                ("orders_customer_fk", "FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE"),
+                ("orders_pk", True, "PRIMARY KEY (tenant_id, id)", False),
+                ('Unique "Email', True, "UNIQUE (email, tenant_id)", False),
+                (
+                    "orders_customer_fk",
+                    True,
+                    "FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE",
+                    False,
+                ),
             ],
             ',\n    CONSTRAINT "orders_pk" PRIMARY KEY (tenant_id, id)'
             ',\n    CONSTRAINT "Unique ""Email" UNIQUE (email, tenant_id)'
@@ -724,8 +732,8 @@ def test_table_ddl_emits_unvalidated_foreign_keys_as_alter_table():
     ]
     constraint_result = MagicMock()
     constraint_result.fetchall.return_value = [
-        ("orders_pk", True, "PRIMARY KEY (id)"),
-        ("orders_customer_fk", False, "FOREIGN KEY (customer_id) REFERENCES customers(id) NOT VALID"),
+        ("orders_pk", True, "PRIMARY KEY (id)", False),
+        ("orders_customer_fk", False, "FOREIGN KEY (customer_id) REFERENCES customers(id) NOT VALID", False),
     ]
     connection.exec_driver_sql.return_value = schema_result
     connection.execute.return_value = constraint_result
