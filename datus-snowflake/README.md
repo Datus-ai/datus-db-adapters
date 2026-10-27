@@ -18,7 +18,7 @@ pip install datus-snowflake
 ```
 
 This will automatically install the required dependencies:
-- `datus-db-core>=0.1.9`
+- `datus-db-core>=0.1.10`
 - `snowflake-connector-python>=3.6.0,<5.0.0`
 
 ## Usage
@@ -98,7 +98,16 @@ must be provided; passing both (or neither) raises a `ValueError`.
 
 ### AWS Secrets Manager credentials
 
-Install the optional AWS dependency with `pip install 'datus-snowflake[aws]>=0.1.10'`.
+Version 0.1.11 is not yet published. Until it is released, install the core and
+Snowflake packages from a source checkout containing this feature:
+
+```bash
+pip install '/path/to/datus-db-adapters/datus-db-core[aws]' \
+  /path/to/datus-db-adapters/datus-snowflake
+```
+
+After release, install the optional AWS dependency with
+`pip install 'datus-snowflake[aws]>=0.1.11'`.
 Authentication remains Snowflake key-pair or password authentication; Secrets Manager
 supplies the credential at physical login time.
 
