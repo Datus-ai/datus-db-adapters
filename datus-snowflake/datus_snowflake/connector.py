@@ -2,11 +2,13 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import threading
+from contextlib import contextmanager
+from functools import cached_property, wraps
 from typing import Any, Dict, List, Literal, Optional, Sequence, Set, Union, override
 
 import pyarrow as pa
 import pyarrow.compute as pc
-from cryptography.hazmat.primitives import serialization
 from pandas import DataFrame
 from snowflake.connector import Connect, SnowflakeConnection
 from snowflake.connector.errors import (
@@ -39,6 +41,8 @@ from datus_db_core import (
     to_sql_literal,
 )
 
+from .auth import SnowflakeCredentials
+from .auth import private_key_to_der as _private_key_to_der
 from .config import SnowflakeConfig
 
 logger = get_logger(__name__)
@@ -70,28 +74,10 @@ def _log_sql_exception(event: str, sql: str, exc: Exception) -> None:
     )
 
 
-def _private_key_to_der(private_key: str, private_key_file_pwd: Optional[str] = None) -> bytes:
-    """Convert a PEM private key string into DER bytes accepted by Snowflake."""
-    normalized_pem = private_key.strip()
-    if "\\n" in normalized_pem and "\n" not in normalized_pem:
-        normalized_pem = normalized_pem.replace("\\n", "\n")
-
-    passphrase = private_key_file_pwd.encode() if private_key_file_pwd else None
-    try:
-        private_key = serialization.load_pem_private_key(normalized_pem.encode(), password=passphrase)
-    except TypeError:
-        if passphrase is None:
-            raise
-        private_key = serialization.load_pem_private_key(normalized_pem.encode(), password=None)
-    return private_key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-
 def _handle_snowflake_exception(e: Exception, sql: str = "") -> DatusDbException:
     """Handle Snowflake exceptions and map to appropriate Datus ErrorCode."""
+    if isinstance(e, DatusDbException):
+        return e
     error_message = getattr(e, "raw_msg", None) or getattr(e, "msg", None) or str(e)
     _log_sql_exception("Snowflake SQL execution failed", sql, e)
 
@@ -138,6 +124,17 @@ def _handle_snowflake_exception(e: Exception, sql: str = "") -> DatusDbException
         return DatusDbException(ErrorCode.DB_FAILED, message_args={"error_message": error_message})
 
 
+def _connection_operation(method):
+    """Keep context selection, cursor use and result fetching on one native session."""
+
+    @wraps(method)
+    def operation(self, *args, **kwargs):
+        with self._connection_lock:
+            return method(self, *args, **kwargs)
+
+    return operation
+
+
 class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedViewSupportMixin, MigrationTargetMixin):
     """
     Connector for Snowflake databases using native Snowflake SDK.
@@ -164,24 +161,54 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         elif not isinstance(config, SnowflakeConfig):
             raise TypeError(f"config must be SnowflakeConfig or dict, got {type(config)}")
 
-        self.snowflake_config = config
+        self.snowflake_config = config.model_copy(deep=True)
+        self._credentials = SnowflakeCredentials(self.snowflake_config) if config.secret_ref else None
+        self.connection: SnowflakeConnection | None = None
 
         conn_config = ConnectionConfig(timeout_seconds=config.timeout_seconds)
         super().__init__(config=conn_config, dialect="snowflake")
+        self._default_database = config.database or ""
+        self._default_schema = config.schema_name or ""
+        self.database_name = self._default_database
+        self.schema_name = self._default_schema
+        try:
+            self.connect()
+        except Exception:
+            if self._credentials is not None:
+                self._credentials.identity.close()
+            raise
+
+    @cached_property
+    def _connection_lock(self):
+        return threading.RLock()
+
+    @_connection_operation
+    def connect(self):
+        """Reuse open sessions; acquire current credentials only for a physical login.
+
+        Secret cache expiry does not expire a database session. A closed connection
+        can be reopened without restarting the Agent. Application SQL is never replayed.
+        """
+        if self.connection is not None and self.connection.is_closed() is not True:
+            return
+        config = self.snowflake_config
 
         connect_kwargs: Dict[str, Any] = {
             "account": config.account,
             "user": config.username,
             "warehouse": config.warehouse,
-            "database": config.database if config.database else None,
-            "schema": config.schema_name if config.schema_name else None,
+            "database": self.database_name or None,
+            "schema": self.schema_name or None,
             "login_timeout": config.timeout_seconds,
             "network_timeout": config.timeout_seconds,
             "socket_timeout": config.timeout_seconds,
         }
         if config.role:
             connect_kwargs["role"] = config.role
-        if config.private_key and config.private_key.get_secret_value():
+        if self._credentials is not None:
+            snapshot = self._credentials.provider.load()
+            connect_kwargs.update(snapshot.value.connection_parameters())
+        elif config.private_key and config.private_key.get_secret_value():
             connect_kwargs["authenticator"] = "SNOWFLAKE_JWT"
             private_key_file_pwd = (
                 config.private_key_file_pwd.get_secret_value() if config.private_key_file_pwd else None
@@ -198,13 +225,46 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         else:
             connect_kwargs["password"] = config.password.get_secret_value()
 
-        self.connection: SnowflakeConnection = Connect(**connect_kwargs)
-        self.database_name = config.database or ""
-        self.schema_name = config.schema_name or ""
+        try:
+            self.connection = Connect(**connect_kwargs)
+        except Exception as exc:
+            # Authentication errors may embed an SDK response or credential. Keep
+            # a diagnostic code, not the original message or exception chain.
+            code = "".join(c for c in str(getattr(exc, "errno", "")) if c.isdigit())[:12]
+            raise DatusDbException(
+                ErrorCode.DB_CONNECTION_FAILED,
+                message_args={
+                    "error_message": f"Snowflake login failed ({type(exc).__name__}, code={code or 'unknown'})"
+                },
+            ) from None
+
+    @contextmanager
+    def _cursor(self):
+        with self._connection_lock:
+            if self.connection is None:
+                self.connect()
+            elif self.connection.is_closed() is True:
+                # A lost session may have contained a transaction or temporary
+                # state. Let the owner choose a fresh session before more SQL.
+                raise DatusDbException(
+                    ErrorCode.DB_CONNECTION_FAILED,
+                    message_args={
+                        "error_message": "Snowflake session is closed; call connect() explicitly to start a new session"
+                    },
+                )
+            with self.connection.cursor() as cursor:
+                yield cursor
+
+    @_connection_operation
+    def refresh_credentials(self) -> str | None:
+        """Refresh the Secret for the next physical login without interrupting a session."""
+        if self._credentials is None:
+            return None
+        return self._credentials.provider.load(force=True).version
 
     def test_connection(self) -> Dict[str, Any]:
         """Test the database connection."""
-        with self.connection.cursor() as cursor:
+        with self._cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchall()
             return {
@@ -213,9 +273,16 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
                 "databases": "",
             }
 
+    @_connection_operation
     def close(self):
         """Close the database connection."""
-        self.connection.close()
+        connection, self.connection = self.connection, None
+        try:
+            if connection is not None:
+                connection.close()
+        finally:
+            if self._credentials is not None:
+                self._credentials.identity.close()
 
     def get_type(self) -> str:
         """Return the database type."""
@@ -233,11 +300,18 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         if catalog_name:
             raise ValueError("Snowflake does not support a catalog namespace; use database_name instead.")
 
+    @_connection_operation
+    def switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        """Keep the live switch and managed context update atomic with reconnect."""
+        super().switch_context(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name)
+
+    @_connection_operation
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         """Switch database or schema context."""
         self._reject_catalog(catalog_name)
+        sql = ""
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 if not schema_name:
                     if not database_name:
                         return
@@ -262,7 +336,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
     ) -> tuple[pa.Table, int]:
         """Execute SQL query and return results in Apache Arrow format."""
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT='ARROW'")
                 cursor.execute(sql_query, params)
                 try:
@@ -291,7 +365,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
     ) -> DataFrame:
         """Execute query and return pandas DataFrame."""
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(sql, params)
                 return cursor.fetch_pandas_all()
         except Exception as e:
@@ -300,7 +374,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
     def execute_query_to_dict(self, sql: str) -> List[Dict[str, Any]]:
         """Execute query and return list of dictionaries."""
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(sql)
                 query_result = cursor.fetchall()
                 if not query_result or isinstance(query_result[0], dict):
@@ -325,6 +399,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         )
 
     @override
+    @_connection_operation
     def execute_insert(
         self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> ExecuteSQLResult:
@@ -332,7 +407,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         if catalog_name or database_name or schema_name:
             self.do_switch_context(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name)
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(sql)
                 rowcount = cursor.rowcount
                 last_rowid = cursor.sfqid
@@ -370,6 +445,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             sql, catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
         )
 
+    @_connection_operation
     def _execute_update_or_delete(
         self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> ExecuteSQLResult:
@@ -377,7 +453,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         if catalog_name or database_name or schema_name:
             self.do_switch_context(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name)
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(sql)
                 rowcount = cursor.rowcount
 
@@ -397,6 +473,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             )
 
     @override
+    @_connection_operation
     def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
         """Execute context switch statement (USE DATABASE/SCHEMA)."""
         try:
@@ -404,7 +481,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             if switch_context:
                 if catalog_name := switch_context.get("catalog_name"):
                     self._reject_catalog(catalog_name)
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(sql_query)
             if switch_context:
                 if database_name := switch_context.get("database_name"):
@@ -422,6 +499,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             return ExecuteSQLResult(success=False, sql_query=sql_query, error=str(ex))
 
     @override
+    @_connection_operation
     def execute_query(
         self,
         sql: str,
@@ -455,7 +533,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         """Execute SHOW command with special handling."""
         sql = sql.strip()
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(sql)
                 result = cursor.fetchall()
                 col_names = [col[0] for col in cursor.description][:7]
@@ -533,15 +611,18 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             result.sql_return = result.sql_return.to_csv(index=False)
         return result
 
+    @_connection_operation
     def execute_queries(self, queries: List[str]) -> List[ExecuteSQLResult]:
         """Execute multiple queries."""
         return [self.execute_query(sql) for sql in queries]
 
+    @_connection_operation
     def execute_queries_arrow(self, queries: List[str]) -> List[ExecuteSQLResult]:
         """Execute multiple queries and return Arrow results."""
         return [self.execute_arrow(sql) for sql in queries]
 
     @override
+    @_connection_operation
     def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
         """Get list of databases."""
         self._reject_catalog(catalog_name)
@@ -558,6 +639,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         return databases
 
     @override
+    @_connection_operation
     def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
         """Get list of schemas using SHOW SCHEMAS command."""
         self._reject_catalog(catalog_name)
@@ -569,7 +651,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             sql = "SHOW SCHEMAS"
 
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(sql)
                 results = cursor.fetchall()
 
@@ -620,6 +702,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         parts.append(meta["table_name"])
         return ".".join(parts)
 
+    @_connection_operation
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of table names."""
         self._reject_catalog(catalog_name)
@@ -631,6 +714,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         )
         return [self._qualify_name(item, database_name, schema_name) for item in tables]
 
+    @_connection_operation
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get list of view names."""
         self._reject_catalog(catalog_name)
@@ -642,6 +726,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         )
         return [self._qualify_name(view, database_name, schema_name) for view in views]
 
+    @_connection_operation
     def get_materialized_views(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> List[str]:
@@ -815,6 +900,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
             )
         return result
 
+    @_connection_operation
     def get_schema(
         self,
         catalog_name: str = "",
@@ -851,7 +937,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         describe_sql = f"DESCRIBE {describe_target} {full_name}"
 
         try:
-            with self.connection.cursor() as cursor:
+            with self._cursor() as cursor:
                 cursor.execute(describe_sql)
                 describe_results = cursor.fetchall()
                 column_names = [col[0].lower() for col in cursor.description]
@@ -907,7 +993,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
 
     def _fetch_object_ddl(self, object_type: str, full_name: str) -> str:
         """Retrieve DDL for a database object."""
-        with self.connection.cursor() as cursor:
+        with self._cursor() as cursor:
             sql = f"SELECT GET_DDL('{object_type}', '{full_name}', true)"
             try:
                 cursor.execute(sql)
@@ -919,6 +1005,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         return ddl
 
     @override
+    @_connection_operation
     def get_tables_with_ddl(
         self,
         catalog_name: str = "",
@@ -949,6 +1036,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
 
         return table_entries
 
+    @_connection_operation
     def get_views_with_ddl(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> List[Dict[str, str]]:
@@ -974,6 +1062,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
 
         return view_entries
 
+    @_connection_operation
     def get_materialized_views_with_ddl(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> List[Dict[str, str]]:
@@ -1000,6 +1089,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         return mv_entries
 
     @override
+    @_connection_operation
     def get_sample_rows(
         self,
         tables: Optional[List[str]] = None,
@@ -1016,7 +1106,7 @@ class SnowflakeConnector(BaseSqlConnector, SchemaNamespaceMixin, MaterializedVie
         database_name = database_name or self.database_name
         schema_name = schema_name or self.schema_name
 
-        with self.connection.cursor() as cursor:
+        with self._cursor() as cursor:
             if tables:
                 for table in tables:
                     full_name = self.full_name(
