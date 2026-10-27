@@ -320,7 +320,19 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             with self._conn(database_name=database_name) as conn:
                 constraints = conn.execute(
                     text("""
-                        SELECT c.conname, c.convalidated, pg_catalog.pg_get_constraintdef(c.oid) AS definition
+                        SELECT c.conname,
+                               c.convalidated,
+                               pg_catalog.pg_get_constraintdef(c.oid) AS definition,
+                               (c.contype = 'f' AND EXISTS (
+                                   SELECT 1
+                                   FROM pg_catalog.pg_index i
+                                   WHERE i.indexrelid = c.conindid
+                                     AND NOT EXISTS (
+                                         SELECT 1
+                                         FROM pg_catalog.pg_constraint uq
+                                         WHERE uq.conindid = i.indexrelid AND uq.contype IN ('p', 'u', 'x')
+                                     )
+                               )) AS depends_on_standalone_index
                         FROM pg_catalog.pg_constraint c
                         JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
                         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
@@ -337,18 +349,32 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 ).fetchall()
 
             table_constraints = []
-            unvalidated_alter_statements = []
+            deferred_alter_statements = []
             for row in constraints:
-                if len(row) >= 3:
-                    name, is_validated, definition = row[0], row[1], row[2]
+                name = row[0]
+                is_validated = True
+                depends_on_standalone_index = False
+                if len(row) >= 4:
+                    is_validated = bool(row[1])
+                    definition = row[2]
+                    depends_on_standalone_index = bool(row[3])
+                elif len(row) == 3:
+                    is_validated = bool(row[1])
+                    definition = row[2]
                 else:
-                    name, definition = row[0], row[1]
+                    definition = row[1]
                     is_validated = "NOT VALID" not in definition
 
+                is_unvalidated = not is_validated or "NOT VALID" in definition
+                if is_unvalidated and "NOT VALID" not in definition:
+                    definition = f"{definition} NOT VALID"
+
                 # PostgreSQL forbids NOT VALID inside CREATE TABLE definitions.
-                # Emit unvalidated foreign keys as standalone ALTER TABLE statements.
-                if (not is_validated or "NOT VALID" in definition) and "NOT VALID" in definition:
-                    unvalidated_alter_statements.append(
+                # In addition, foreign keys that depend on a standalone unique index
+                # cannot be created inside CREATE TABLE because the index does not yet exist.
+                # Emit both as standalone ALTER TABLE statements.
+                if is_unvalidated or depends_on_standalone_index:
+                    deferred_alter_statements.append(
                         f"ALTER TABLE {full_name} ADD CONSTRAINT {self.quote_identifier(name)} {definition};"
                     )
                 else:
@@ -359,8 +385,8 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             ddl = f"CREATE TABLE {full_name} (\n"
             ddl += ",\n".join(col_defs)
             ddl += "\n);"
-            if unvalidated_alter_statements:
-                ddl += "\n" + "\n".join(unvalidated_alter_statements)
+            if deferred_alter_statements:
+                ddl += "\n" + "\n".join(deferred_alter_statements)
             return ddl
 
     def _get_unique_index_definitions(self, schema_name: str, table_name: str, database_name: str = "") -> List[str]:
@@ -440,7 +466,9 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                         meta["table_name"],
                         object_type,
                     )
-                    # Append indexes after subclass table clauses (e.g. distribution).
+                    # Append indexes after subclass table clauses (e.g. distribution)
+                    # and before any deferred ALTER TABLE statements so indexes exist
+                    # before foreign keys referencing standalone unique indexes are added.
                     if object_type == "TABLE" and not ddl.startswith("-- DDL not available"):
                         try:
                             indexes = self._get_unique_index_definitions(meta["schema_name"], meta["table_name"])
@@ -450,9 +478,22 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                             )
                             ddl += "\n-- Additional unique index metadata is unavailable."
                         else:
-                            for index_ddl in indexes:
-                                if index_ddl.rstrip(";") not in ddl:
-                                    ddl += f"\n{index_ddl}"
+                            new_indexes = [idx for idx in indexes if idx.rstrip(";") not in ddl]
+                            if new_indexes:
+                                lines = ddl.split("\n")
+                                table_lines = []
+                                alter_lines = []
+                                for line in lines:
+                                    if line.startswith("ALTER TABLE ") or alter_lines:
+                                        alter_lines.append(line)
+                                    else:
+                                        table_lines.append(line)
+
+                                ddl_parts = ["\n".join(table_lines)]
+                                ddl_parts.extend(new_indexes)
+                                if alter_lines:
+                                    ddl_parts.append("\n".join(alter_lines))
+                                ddl = "\n".join(ddl_parts)
                 finally:
                     self._database_var.reset(token)
             except Exception as e:
