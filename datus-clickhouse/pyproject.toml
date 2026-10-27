@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.9",
+    "datus-db-core>=0.1.10",
     "datus-sqlalchemy>=0.1.11",
     "clickhouse-sqlalchemy>=0.3.2",
 ]

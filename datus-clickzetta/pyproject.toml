@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.9",
+    "datus-db-core>=0.1.10",
     "clickzetta-connector>=1.0.31",
     "clickzetta-zettapark-python>=0.1.16",
     "pandas>=2.0.0",
