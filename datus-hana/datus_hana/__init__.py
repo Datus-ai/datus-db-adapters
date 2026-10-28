@@ -3,6 +3,7 @@
 
 from .config import HanaConfig
 from .connector import HanaConnector
+from .skills import get_hana_sql_generation_notes
 
 __version__ = "0.1.0"
 __all__ = ["HanaConfig", "HanaConnector", "register"]
@@ -30,5 +31,5 @@ def register():
         identifier_parser=parse_hana_identifier,
         dialect_operations=HanaDialectOperations(),
         sql_analyzer=analyze_hana_sql,
-        sql_generation_notes="Use verified common SELECT SQL with double-quoted schema.table identifiers. HANA folds unquoted names to uppercase. Execute original SQL; local SQL analysis does not support SQLScript, Calculation View parameters, or arbitrary HANA grammar. Use LIMIT; literal queries use FROM DUMMY. Tenant is a connection target, not an SQL namespace.",
+        sql_generation_notes=get_hana_sql_generation_notes,
     )
