@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
     "datus-db-core>=0.1.10",
-    "datus-sqlalchemy>=0.1.11",
+    "datus-sqlalchemy>=0.1.12",
     "datus-postgresql>=0.1.11",
     "gaussdb>=1.0.4,<2",
     "pg8000>=1.31.5,<1.32",
