@@ -371,10 +371,12 @@ class HanaConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin
         ]
 
     def get_tables(self, catalog_name="", database_name="", schema_name=""):
-        return [row["table_name"] for row in self._objects("table", catalog_name, database_name, schema_name)]
+        """Return quoted schema.table identifiers that preserve metadata spelling."""
+        return [row["identifier"] for row in self._objects("table", catalog_name, database_name, schema_name)]
 
     def get_views(self, catalog_name="", database_name="", schema_name=""):
-        return [row["table_name"] for row in self._objects("view", catalog_name, database_name, schema_name)]
+        """Return view identifiers with the same quoting contract as tables."""
+        return [row["identifier"] for row in self._objects("view", catalog_name, database_name, schema_name)]
 
     @staticmethod
     def _column_type(row: dict) -> str:

@@ -3,6 +3,7 @@
 import argparse
 
 from datus_hana import HanaConnector
+from datus_hana.handlers import parse_hana_identifier
 from datus_hana.testing import config_from_env
 from datus_hana.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
@@ -24,7 +25,10 @@ def main():
     if not config.schema_name:
         raise ValueError("An explicit dedicated --schema / HANA_SCHEMA is required")
     with HanaConnector(config) as connector:
-        existing = set(connector.get_tables(schema_name=config.schema_name))
+        existing = {
+            parse_hana_identifier(identifier)["table_name"]
+            for identifier in connector.get_tables(schema_name=config.schema_name)
+        }
         for table in reversed(TPCH_TABLES):
             if table in existing:
                 if not args.drop:

@@ -97,6 +97,14 @@ returned for discovery describes columns only; constraints, defaults, physical
 layout, and lossless migration are not claimed. Migration target capabilities
 are explicitly unsupported.
 
+`get_tables()` and `get_views()` return quoted `"schema"."table"` identifiers,
+including when a schema filter is supplied. Pass these identifiers unchanged to
+Agent metadata tools or SQL so lowercase, mixed-case, dotted and escaped names
+retain their identity. Structured metadata still exposes the raw `schema_name`
+and `table_name`; direct connector methods such as `get_schema()` take those
+separate fields. Use `parse_hana_identifier()` from `datus_hana.handlers` when
+converting a listed identifier back into connector metadata arguments.
+
 Local analysis is a separate, limited feature for ordinary SELECT, JOIN, CTE,
 aggregation, window, set operations, and LIMIT. It uses an explicitly selected
 compatible parser, never regenerates execution SQL, and preserves quoted names.

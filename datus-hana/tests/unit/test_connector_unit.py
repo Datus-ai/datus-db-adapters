@@ -7,6 +7,7 @@ import pytest
 
 from datus_db_core import DatusDbException
 from datus_hana import HanaConfig, HanaConnector
+from datus_hana.handlers import parse_hana_identifier
 
 
 @pytest.fixture
@@ -323,6 +324,27 @@ def test_lob_read_and_duplicate_columns(connector, sdk):
     assert not result.success and "Duplicate result" in result.error
 
 
+@pytest.mark.parametrize("method", ["get_tables", "get_views"])
+@pytest.mark.parametrize(
+    "name", ["TPCH_ORDERS", "tpch_orders", "MixedCase", "Mixed.Table", 'quoted"name', "order details", "select"]
+)
+def test_listed_identifiers_preserve_metadata_names(connector, sdk, method, name):
+    cursor = sdk[2]
+    cursor.description = [("SCHEMA_NAME",), ("OBJECT_NAME",)]
+    cursor.fetchmany.side_effect = [[("CaseSensitive", name)], []]
+
+    identifiers = getattr(connector, method)(schema_name="CaseSensitive")
+
+    assert len(identifiers) == 1
+    assert parse_hana_identifier(identifiers[0]) == {
+        "catalog_name": "",
+        "database_name": "",
+        "schema_name": "CaseSensitive",
+        "table_name": name,
+    }
+    assert cursor.execute.call_args.args[1] == ("CaseSensitive",)
+
+
 def test_metadata_objects_and_samples_use_actual_quoted_names(connector, sdk):
     cursor = sdk[2]
     executed = []
@@ -355,8 +377,8 @@ def test_metadata_objects_and_samples_use_actual_quoted_names(connector, sdk):
         cursor.fetchmany.side_effect = [rows, []]
 
     cursor.execute.side_effect = execute
-    assert connector.get_tables() == ["Mixed.Table"]
-    assert connector.get_views() == ["Mixed.Table"]
+    assert connector.get_tables() == ['"CaseSensitive"."Mixed.Table"']
+    assert connector.get_views() == ['"CaseSensitive"."Mixed.Table"']
     assert connector.get_schemas() == ["CaseSensitive"]
     assert connector.get_databases() == []
     metadata = {
