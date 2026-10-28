@@ -644,6 +644,45 @@ def test_get_schema_empty_table_name_short_circuit():
     connector._execute_pandas.assert_not_called()
 
 
+@pytest.mark.parametrize("use_fallback", [False, True])
+def test_get_schema_requests_declared_types_at_connection_boundary(use_fallback):
+    """Both lookup paths use server type modifiers while retaining column visibility."""
+    connector = PostgreSQLConnector(PostgreSQLConfig(username="u", database="testdb"))
+    row = namedtuple("Column", _SCHEMA_COLS)(
+        "Types'24", "Orders'24", "amount", "numeric(6,2)", "NO", "0", False, "Invoice amount"
+    )
+    try:
+        with patch.object(connector, "_conn") as connection:
+            conn = connection.return_value.__enter__.return_value
+            conn.exec_driver_sql.return_value.fetchall.side_effect = [[], [row]] if use_fallback else [[row]]
+            columns = connector.get_schema(database_name="other_db", schema_name="Types'24", table_name="Orders'24")
+
+        assert columns == [
+            {
+                "cid": 0,
+                "name": "amount",
+                "type": "numeric(6,2)",
+                "nullable": False,
+                "default_value": "0",
+                "pk": False,
+                "comment": "Invoice amount",
+            }
+        ]
+        assert conn.exec_driver_sql.call_count == (2 if use_fallback else 1)
+        for call in conn.exec_driver_sql.call_args_list:
+            sql = call.args[0]
+            assert "pg_catalog.format_type(a.atttypid, a.atttypmod) as type" in sql
+            assert "FROM information_schema.columns c" in sql
+            assert "a.attrelid = t.oid AND a.attnum = c.ordinal_position" in sql
+            assert "c.table_catalog = 'other_db'" in sql
+            assert "Types''24" in sql and "Orders''24" in sql
+        assert all(call.kwargs["database_name"] == "other_db" for call in connection.call_args_list)
+        if use_fallback:
+            assert "lower(c.table_name)" in conn.exec_driver_sql.call_args.args[0]
+    finally:
+        connector.close()
+
+
 def test_get_ddl_uses_requested_database_for_table_schema():
     connector = _make_pg_connector_for_metadata(database_name="default_db")
     connector.get_schema = MagicMock(return_value=[])
