@@ -89,6 +89,31 @@ def test_manual_tpch_loader_accepts_credentials_only_on_cli(monkeypatch):
     ]
 
 
+def test_manual_tpch_loader_preserves_existing_quoted_tables(monkeypatch):
+    for name, value in {"HANA_HOST": "h", "HANA_USER": "U", "HANA_PASSWORD": "test-only", "HANA_SCHEMA": "APP"}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(sys, "argv", ["init_tpch_data.py"])
+    with patch("datus_hana.connector.dbapi.connect") as connect:
+        cursor = connect.return_value.cursor.return_value
+
+        def execute(sql, parameters=None):
+            if sql == "SELECT 1 FROM DUMMY":
+                cursor.description = [("VALUE",)]
+                cursor.fetchmany.side_effect = [[(1,)], []]
+            else:
+                cursor.description = [("SCHEMA_NAME",), ("OBJECT_NAME",)]
+                cursor.fetchmany.side_effect = [[("APP", "tpch_orders")], []]
+
+        cursor.execute.side_effect = execute
+        with pytest.raises(ValueError, match="TPC-H tables already exist"):
+            runpy.run_path(str(PACKAGE_ROOT / "scripts/init_tpch_data.py"), run_name="__main__")
+
+    assert [call.args[0] for call in cursor.execute.call_args_list] == [
+        "SELECT 1 FROM DUMMY",
+        "SELECT SCHEMA_NAME, TABLE_NAME AS OBJECT_NAME FROM SYS.TABLES WHERE SCHEMA_NAME = ? ORDER BY TABLE_NAME",
+    ]
+
+
 @pytest.mark.parametrize("required", [False, True])
 @pytest.mark.parametrize("missing", ["HANA_SCHEMA", "HANA_HOST", "HANA_USER", "HANA_PASSWORD"])
 def test_incomplete_password_environment_stops_before_sdk(monkeypatch, required, missing):

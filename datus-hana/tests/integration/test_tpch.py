@@ -1,5 +1,6 @@
 import pytest
 
+from datus_hana.handlers import parse_hana_identifier
 from datus_hana.tpch_data import ROW_COUNTS, TPCH_TABLES
 
 pytestmark = pytest.mark.integration
@@ -7,8 +8,9 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.parametrize("table,count", list(zip(TPCH_TABLES, ROW_COUNTS, strict=True)))
 def test_tpch_counts(connector, tpch_setup, table, count):
-    assert table in connector.get_tables()
-    result = connector.execute_query(f'SELECT COUNT(*) AS "n" FROM "{table}"', "list")
+    identifiers = {parse_hana_identifier(name)["table_name"]: name for name in connector.get_tables()}
+    assert table in identifiers
+    result = connector.execute_query(f'SELECT COUNT(*) AS "n" FROM {identifiers[table]}', "list")
     assert result.success and result.sql_return == [{"n": count}]
 
 

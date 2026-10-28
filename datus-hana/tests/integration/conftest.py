@@ -20,6 +20,7 @@ import uuid
 import pytest
 
 from datus_hana import HanaConnector, register
+from datus_hana.handlers import parse_hana_identifier
 from datus_hana.testing import config_from_env
 from datus_hana.tpch_data import TPCH_DATA, TPCH_DDL, TPCH_TABLES
 
@@ -65,7 +66,10 @@ def checked(result):
 def tpch_setup(config):
     connector = HanaConnector(config)
     created = []
-    existing = set(connector.get_tables(schema_name=config.schema_name))
+    existing = {
+        parse_hana_identifier(identifier)["table_name"]
+        for identifier in connector.get_tables(schema_name=config.schema_name)
+    }
     if set(TPCH_TABLES) & existing:
         raise RuntimeError("TPC-H tables already exist; use an isolated schema or clean them explicitly")
     try:
