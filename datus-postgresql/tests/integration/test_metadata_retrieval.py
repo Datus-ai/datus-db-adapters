@@ -53,6 +53,8 @@ def test_schema_preserves_declared_column_types(connector, type_metadata_schema,
         table_name = "Typed View"
         result = connector.execute_ddl(f'CREATE VIEW {schema_ref}."{table_name}" AS SELECT * FROM {table_ref}')
         assert result.success, result.error
+        result = connector.execute_ddl(f'COMMENT ON COLUMN {schema_ref}."{table_name}"."Amount" IS \'View amount\'')
+        assert result.success, result.error
 
     expected = {
         "Amount": "numeric(6,2)",
@@ -69,6 +71,7 @@ def test_schema_preserves_declared_column_types(connector, type_metadata_schema,
     }
     columns = connector.get_schema(schema_name=schema_name, table_name=table_name)
     assert [(col["name"], col["type"]) for col in columns] == list(expected.items())
+    assert columns[0]["comment"] == ("View amount" if relation_kind == "view" else "Invoice amount")
     fallback_columns = connector.get_schema(schema_name=schema_name.upper(), table_name=table_name.upper())
     assert fallback_columns == columns
 
