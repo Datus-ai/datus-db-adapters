@@ -7,6 +7,7 @@ import re
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
 from .config import AthenaConfig
+from .skills import get_athena_sql_generation_notes as get_athena_sql_generation_notes
 
 
 def _uri_config(config, **overrides) -> AthenaConfig:
@@ -94,13 +95,3 @@ def parse_athena_identifier(value: str) -> dict[str, str]:
     if len(parts) == 3:
         result["catalog_name"] = parts[0]
     return result
-
-
-def get_athena_sql_generation_notes() -> str:
-    return (
-        "Athena uses catalog.database.table with no additional schema level. "
-        "Use double quotes for SELECT identifiers and backticks for Hive DDL identifiers. "
-        "Queries use the configured Workgroup. LIMIT bounds returned rows, not scanned bytes; "
-        "enforce scan budgets in the Workgroup. UPDATE/DELETE/MERGE require supported Iceberg tables. "
-        "Transactions, session SET/USE and generic dataframe migration are not supported by this adapter."
-    )
