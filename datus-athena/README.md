@@ -63,6 +63,17 @@ Hive table DDL uses backticks. The registered SQLGlot dialect is `athena`.
 | `max_result_bytes` | 16777216 | Maximum retained UTF-8 cell bytes before type conversion |
 | `page_size` | 1000 | Result API rows per response, including any header |
 
+## Agent SQL skill
+
+The adapter packages [`db-athena-sql`](datus_athena/skills/db-athena-sql/SKILL.md)
+through the `datus.skills` entry point. Datus Agent 0.4.4 loads it for a bound
+Athena connector. It explains Athena's Trino/Hive syntax split, names and types,
+numeric and time semantics, nested data, partition pruning and Workgroup limits.
+[Table design and writes](datus_athena/skills/db-athena-sql/references/table-design-and-writes.md)
+is a task-specific reference for S3 DDL, CTAS, INSERT and Iceberg operations.
+The SQL-generation notes hook reads the same skill body so the two paths share
+one set of maintained rules.
+
 ## AWS identity and permissions
 
 Credentials use the SDK default provider chain (environment, shared profiles,
