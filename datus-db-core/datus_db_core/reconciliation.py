@@ -27,11 +27,13 @@ _DATE_TYPE_PATTERN = re.compile(
 
 
 def _is_numeric_type(col_type: str) -> bool:
-    return bool(_NUMERIC_TYPE_PATTERN.match(col_type.strip()))
+    col_type = col_type.strip()
+    return not col_type.endswith("]") and bool(_NUMERIC_TYPE_PATTERN.match(col_type))
 
 
 def _is_date_type(col_type: str) -> bool:
-    return bool(_DATE_TYPE_PATTERN.match(col_type.strip()))
+    col_type = col_type.strip()
+    return not col_type.endswith("]") and bool(_DATE_TYPE_PATTERN.match(col_type))
 
 
 def _is_minmax_type(col_type: str) -> bool:

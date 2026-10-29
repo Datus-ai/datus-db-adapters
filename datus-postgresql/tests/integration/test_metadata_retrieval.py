@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from datus_db_core import build_reconciliation_checks
 from datus_postgresql import PostgreSQLConnector
 
 pytestmark = pytest.mark.integration
@@ -117,6 +118,157 @@ def test_reconstructed_ddl_preserves_amount_and_currency_rules(connector, type_m
                     text(f"INSERT INTO {table} VALUES (:amount, :currency)"), {"amount": amount, "currency": currency}
                 )
             assert error.value.orig.pgcode == sqlstate
+
+
+@pytest.mark.parametrize("validated", [None, True, False], ids=["no-fk", "validated-fk", "not-valid-fk"])
+def test_ddl_replay_preserves_multiline_defaults_and_unique_indexes(connector, type_metadata_schema, validated):
+    """A line of a string literal must never become the boundary for inserting indexes."""
+    schema_name, schema_ref = type_metadata_schema
+    table_ref = f'{schema_ref}."literal_defaults"'
+    default_value = "head's;\nALTER TABLE literal text;\ntail"
+    literal = default_value.replace("'", "''")
+    statements = [
+        f"CREATE TABLE {table_ref} (id integer DEFAULT 0 PRIMARY KEY, code integer DEFAULT 0, "
+        f"parent_code integer DEFAULT 0, note text DEFAULT '{literal}')",
+        f'CREATE UNIQUE INDEX "literal_code_idx" ON {table_ref} (code)',
+    ]
+    if validated is not None:
+        suffix = "" if validated else " NOT VALID"
+        statements.append(
+            f'ALTER TABLE {table_ref} ADD CONSTRAINT "parent_fk" '
+            f"FOREIGN KEY (parent_code) REFERENCES {table_ref} (code){suffix}"
+        )
+    for statement in statements:
+        result = connector.execute_ddl(statement)
+        assert result.success, result.error
+
+    definition = connector.get_tables_with_ddl(schema_name=schema_name, tables=["literal_defaults"])[0]["definition"]
+    dropped = connector.execute_ddl(f"DROP TABLE {table_ref}")
+    assert dropped.success, dropped.error
+    replayed = connector.execute_ddl(definition, schema_name=schema_name)
+    assert replayed.success, replayed.error
+
+    with connector._conn() as conn:
+        note = conn.execute(
+            text(f"INSERT INTO {table_ref} (id, code, parent_code) VALUES (1, 1, 1) RETURNING note")
+        ).scalar_one()
+        assert note == default_value
+        conn.commit()
+    with pytest.raises(DBAPIError) as error, connector._conn() as conn:
+        conn.execute(text(f"INSERT INTO {table_ref} (id, code, parent_code) VALUES (2, 1, 1)"))
+    assert error.value.orig.pgcode == "23505"
+
+
+@pytest.mark.parametrize("validated", [True, False])
+def test_ddl_replay_preserves_cross_schema_foreign_key_target(connector, type_metadata_schema, validated):
+    """An FK to a visible parent must retain its schema when replayed beside a namesake."""
+    schema_name, schema_ref = type_metadata_schema
+    parent_name = f"fk_parent_{uuid.uuid4().hex[:8]}"
+    parent_ref = f"{connector.quote_identifier(connector.schema_name)}.{connector.quote_identifier(parent_name)}"
+    shadow_ref = f"{schema_ref}.{connector.quote_identifier(parent_name)}"
+    child_ref = f'{schema_ref}."child"'
+    suffix = "" if validated else " NOT VALID"
+    try:
+        for statement in [
+            f"CREATE TABLE {parent_ref} (id integer PRIMARY KEY)",
+            f"CREATE TABLE {shadow_ref} (id integer PRIMARY KEY)",
+            f"CREATE TABLE {child_ref} (id integer, parent_id integer)",
+            f"ALTER TABLE {child_ref} ADD CONSTRAINT parent_fk FOREIGN KEY (parent_id) REFERENCES {parent_ref}(id){suffix}",
+        ]:
+            result = connector.execute_ddl(statement)
+            assert result.success, result.error
+        definition = connector.get_tables_with_ddl(schema_name=schema_name, tables=["child"])[0]["definition"]
+        dropped = connector.execute_ddl(f"DROP TABLE {child_ref}")
+        assert dropped.success, dropped.error
+        replayed = connector.execute_ddl(definition, schema_name=schema_name)
+        assert replayed.success, replayed.error
+
+        with connector._conn() as conn:
+            target = conn.execute(
+                text("""SELECT n.nspname, p.relname, c.convalidated
+                    FROM pg_catalog.pg_constraint c
+                    JOIN pg_catalog.pg_class p ON p.oid = c.confrelid
+                    JOIN pg_catalog.pg_namespace n ON n.oid = p.relnamespace
+                    WHERE c.conrelid = CAST(:child AS regclass) AND c.contype = 'f'"""),
+                {"child": child_ref},
+            ).one()
+        assert tuple(target) == (connector.schema_name, parent_name, validated)
+    finally:
+        dropped = connector.execute_ddl(f"DROP TABLE IF EXISTS {parent_ref} CASCADE")
+        assert dropped.success, dropped.error
+
+
+@pytest.mark.parametrize("type_kind", ["enum", "domain"])
+@pytest.mark.parametrize("array", [False, True], ids=["scalar", "array"])
+def test_ddl_replay_preserves_visible_user_defined_type_identity(connector, type_metadata_schema, type_kind, array):
+    """Visible enum/domain references must not bind to another schema's same-named type."""
+    schema_name, schema_ref = type_metadata_schema
+    type_name = f"Review Value_{uuid.uuid4().hex[:8]}"
+    type_ref = f"{connector.quote_identifier(connector.schema_name)}.{connector.quote_identifier(type_name)}"
+    shadow_ref = f"{schema_ref}.{connector.quote_identifier(type_name)}"
+    source_ref = f'{schema_ref}."typed_source"'
+    copy_ref = f'{schema_ref}."typed_copy"'
+    if type_kind == "enum":
+        statements = [
+            f"CREATE TYPE {type_ref} AS ENUM ('pending', 'paid')",
+            f"CREATE TYPE {shadow_ref} AS ENUM ('wrong')",
+        ]
+    else:
+        statements = [
+            f"CREATE DOMAIN {type_ref} AS numeric(8,2) CHECK (VALUE >= 0)",
+            f"CREATE DOMAIN {shadow_ref} AS numeric(8,2)",
+        ]
+    statements.append(f"CREATE TABLE {source_ref} (value {type_ref}{'[]' if array else ''})")
+    try:
+        for statement in statements:
+            result = connector.execute_ddl(statement)
+            assert result.success, result.error
+        definition = connector.get_tables_with_ddl(schema_name=schema_name, tables=["typed_source"])[0]["definition"]
+        replayed = connector.execute_ddl(
+            definition.replace('"typed_source"', '"typed_copy"', 1), schema_name=schema_name
+        )
+        assert replayed.success, replayed.error
+        with connector._conn() as conn:
+            type_oids = [
+                conn.execute(
+                    text("""SELECT a.atttypid FROM pg_catalog.pg_attribute a
+                        WHERE a.attrelid = CAST(:relation AS regclass) AND a.attname = 'value'"""),
+                    {"relation": relation},
+                ).scalar_one()
+                for relation in (source_ref, copy_ref)
+            ]
+            assert type_oids[0] == type_oids[1]
+            # A metadata read must not change the context used by later operations.
+            visible_oid = conn.execute(
+                text("SELECT CAST(:type AS regtype)::oid"), {"type": connector.quote_identifier(type_name)}
+            ).scalar_one()
+            expected_oid = conn.execute(text("SELECT CAST(:type AS regtype)::oid"), {"type": type_ref}).scalar_one()
+            assert visible_oid == expected_oid
+    finally:
+        drop_kind = "TYPE" if type_kind == "enum" else "DOMAIN"
+        dropped = connector.execute_ddl(f"DROP {drop_kind} IF EXISTS {type_ref} CASCADE")
+        assert dropped.success, dropped.error
+
+
+def test_declared_array_types_produce_executable_reconciliation_checks(connector, type_metadata_schema):
+    """Array types retain their SQL identity without entering scalar SUM/AVG checks."""
+    schema_name, schema_ref = type_metadata_schema
+    table_ref = f'{schema_ref}."array_checks"'
+    created = connector.execute_ddl(
+        f"CREATE TABLE {table_ref} (id integer, amount numeric(6,2), amounts numeric(8,3)[], days date[])"
+    )
+    assert created.success, created.error
+    inserted = connector.execute_insert(
+        f"INSERT INTO {table_ref} VALUES (1, 1.24, ARRAY[1.123, 4.567], ARRAY[DATE '2024-01-01'])"
+    )
+    assert inserted.success, inserted.error
+    columns = connector.get_schema(schema_name=schema_name, table_name="array_checks")
+    assert [column["type"] for column in columns] == ["integer", "numeric(6,2)", "numeric(8,3)[]", "date[]"]
+    checks = build_reconciliation_checks(table_ref, table_ref, columns, key_columns=["id"])
+    with connector._conn() as conn:
+        results = {check["name"]: conn.execute(text(check["source_query"])).fetchall() for check in checks}
+    assert results["numeric_aggregate"] == [(1, Decimal("1"), Decimal("1.24"), Decimal("1.24"))]
+    assert results["duplicate_key"] == []
 
 
 def test_ddl_preserves_composite_keys_and_standalone_unique_indexes(config):
