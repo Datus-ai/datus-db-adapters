@@ -10,6 +10,8 @@ from urllib.parse import quote_plus
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import URL, Engine
+from sqlglot.dialects.postgres import Postgres
+from sqlglot.tokens import TokenType
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -338,7 +340,8 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
 
             # Column-level pk flags cannot recover the declared composite-key order.
             # Let PostgreSQL render constraints, including their names, options, and foreign keys.
-            with self._conn(database_name=database_name) as conn:
+            # Deparse references independently of the configured schema's search_path.
+            with self._conn(database_name=database_name, schema_name="pg_catalog") as conn:
                 constraints = conn.execute(
                     text("""
                         SELECT c.conname,
@@ -400,15 +403,17 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
     @staticmethod
     def _partition_table_ddl(ddl: str) -> Tuple[str, List[str]]:
         """Split reconstructed table DDL into the CREATE TABLE statement and trailing ALTER statements."""
-        lines = ddl.split("\n")
-        table_lines = []
-        alter_lines = []
-        for line in lines:
-            if line.startswith("ALTER TABLE ") or alter_lines:
-                alter_lines.append(line)
-            else:
-                table_lines.append(line)
-        return "\n".join(table_lines), alter_lines
+        # Token positions retain the original SQL, including quoted text and comments.
+        tokens = Postgres().tokenize(ddl)
+        for i in range(1, len(tokens) - 1):
+            if (
+                tokens[i - 1].token_type == TokenType.SEMICOLON
+                and tokens[i].token_type == TokenType.ALTER
+                and tokens[i + 1].token_type == TokenType.TABLE
+            ):
+                boundary = tokens[i - 1].end + 1
+                return ddl[:boundary], ddl[boundary:].strip().split("\n")
+        return ddl, []
 
     def _get_unique_index_definitions(self, schema_name: str, table_name: str, database_name: str = "") -> List[str]:
         """Read standalone usable unique indexes, retaining predicates and expressions."""
@@ -653,9 +658,10 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 ORDER BY c.table_schema, c.table_name, c.ordinal_position
             """
 
-        query_result = self._execute_pandas(_build_sql(False), database_name=database_name)
+        # Keep user-defined type (and default expression) references schema-qualified.
+        query_result = self._execute_pandas(_build_sql(False), database_name=database_name, schema_name="pg_catalog")
         if len(query_result) == 0:
-            query_result = self._execute_pandas(_build_sql(True), database_name=database_name)
+            query_result = self._execute_pandas(_build_sql(True), database_name=database_name, schema_name="pg_catalog")
             self._raise_if_ambiguous_table(query_result, schema_name, table_name)
 
         result = []

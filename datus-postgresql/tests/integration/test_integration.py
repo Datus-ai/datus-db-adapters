@@ -114,7 +114,7 @@ def test_get_tables_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLC
         definition = table["definition"]
         assert definition.startswith(f'CREATE TABLE "{config.database}"."{config.schema_name}"."{table_name}" (')
         assert '"id" integer NOT NULL' in definition
-        assert f"nextval('{table_name}_id_seq'::regclass)" in definition
+        assert f"nextval('{config.schema_name}.{table_name}_id_seq'::regclass)" in definition
         assert '"name" character varying(50)' in definition
         assert f'CONSTRAINT "{table_name}_pkey" PRIMARY KEY (id)' in definition
     finally:

@@ -4,13 +4,21 @@
 from unittest.mock import patch
 
 import pytest
-from odps import options
+from odps.config import option_context
 from odps.errors import ODPSError
 from odps.models import TableSchema
 from odps.rest import RestClient
 from requests import Response
 
 from datus_maxcompute import MaxComputeConfig, MaxComputeConnector
+
+
+@pytest.fixture
+def two_level_sql_options():
+    """Restore dynamic PyODPS settings through the SDK context after each case."""
+    with option_context() as local_options:
+        local_options.sql.settings = {"odps.namespace.schema": "false"}
+        yield
 
 
 @pytest.mark.parametrize(
@@ -23,14 +31,13 @@ from datus_maxcompute import MaxComputeConfig, MaxComputeConnector
         ([(None, None)] * 100, "100"),
     ],
 )
-def test_partition_sampling_uses_only_listing_metadata(monkeypatch, partition_stats, expected_partition):
+def test_partition_sampling_uses_only_listing_metadata(two_level_sql_options, partition_stats, expected_partition):
     """Real PyODPS partitions must select samples without lazy metadata requests.
 
     Both ``physical_size`` and missing ``size``/``record_num`` attributes can load
     remote metadata. Keep the real SDK iterator and XML parser active so plain
     object stand-ins cannot hide those requests.
     """
-    monkeypatch.setattr(options.sql, "settings", {"odps.namespace.schema": "false"})
     entries = []
     for index, (size, record_num) in enumerate(partition_stats):
         values = f'<Column Name="pt" Value="{len(partition_stats) - index:03}"/>'

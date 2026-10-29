@@ -677,6 +677,7 @@ def test_get_schema_requests_declared_types_at_connection_boundary(use_fallback)
             assert "c.table_catalog = 'other_db'" in sql
             assert "Types''24" in sql and "Orders''24" in sql
         assert all(call.kwargs["database_name"] == "other_db" for call in connection.call_args_list)
+        assert all(call.kwargs["schema_name"] == "pg_catalog" for call in connection.call_args_list)
         if use_fallback:
             assert "lower(c.table_name)" in conn.exec_driver_sql.call_args.args[0]
     finally:
@@ -753,6 +754,7 @@ def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expe
         f"{expected_constraints}\n);"
     )
     assert [call.kwargs["database_name"] for call in connector._conn.call_args_list] == ["other_db", "other_db"]
+    assert connector._conn.call_args.kwargs["schema_name"] == "pg_catalog"
     assert connection.execute.call_args.args[1] == {"schema_name": "public", "table_name": "orders"}
     assert "c.contype IN ('p', 'u', 'f')" in str(connection.execute.call_args.args[0])
 
@@ -862,6 +864,27 @@ def test_get_objects_with_ddl_places_unique_indexes_before_deferred_alter_table(
         'ALTER TABLE "other_db"."public"."t" ADD CONSTRAINT "t_parent_fk" FOREIGN KEY (parent_code) REFERENCES t(code);'
     )
     assert result[0]["definition"] == expected_ddl
+
+
+@pytest.mark.parametrize(
+    "column_definition",
+    [
+        "note text DEFAULT 'head\nALTER TABLE literal text;\ntail'",
+        "note text DEFAULT E'head\\'s;\nALTER TABLE literal text\ntail'",
+        "note text DEFAULT $$head;\nALTER TABLE literal text\ntail$$",
+        "note text DEFAULT $body$head;\nALTER TABLE literal text\ntail$body$",
+        '"head\nALTER TABLE column name" integer',
+        "id integer /* head;\nALTER TABLE comment text\ntail */",
+    ],
+)
+@pytest.mark.parametrize("has_deferred_constraint", [False, True])
+def test_partition_table_ddl_preserves_literals_identifiers_and_comments(column_definition, has_deferred_constraint):
+    """Preserve SQL text while separating only actual deferred constraint statements."""
+    create = f"CREATE TABLE t (\n    {column_definition}\n);"
+    alter = 'ALTER TABLE t ADD CONSTRAINT "fk" FOREIGN KEY (id) REFERENCES parent(id);'
+    ddl = create + ("\n" + alter if has_deferred_constraint else "")
+
+    assert PostgreSQLConnector._partition_table_ddl(ddl) == (create, [alter] if has_deferred_constraint else [])
 
 
 def test_unique_index_definitions_preserve_predicates_and_bind_identifiers():

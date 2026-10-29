@@ -248,6 +248,25 @@ class TestCheckSkipping:
         assert "min_max" not in check_names
 
 
+@pytest.mark.parametrize(
+    "column_type",
+    ["integer[]", "numeric(8,3)[]", "numeric[][]", "double precision[]", "date[]", "timestamp(3) with time zone[]"],
+)
+def test_scalar_aggregates_exclude_array_columns(column_type):
+    """Keep arrays in distinct counts while limiting aggregate checks to scalar columns."""
+    columns = [
+        {"name": "id", "type": "integer", "nullable": False},
+        {"name": "values", "type": column_type, "nullable": True},
+    ]
+    checks = {check["name"]: check for check in build_reconciliation_checks("src.t", "tgt.t", columns)}
+
+    assert (
+        checks["numeric_aggregate"]["source_query"] == 'SELECT SUM("id") AS "id_sum", AVG("id") AS "id_avg" FROM src.t'
+    )
+    assert checks["min_max"]["source_query"] == 'SELECT MIN("id") AS "id_min", MAX("id") AS "id_max" FROM src.t'
+    assert 'COUNT(DISTINCT "values")' in checks["distinct_count"]["source_query"]
+
+
 class TestIdentifierQuoting:
     """Test that column identifiers are quoted in generated SQL."""
 
