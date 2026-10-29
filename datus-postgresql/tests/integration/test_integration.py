@@ -110,13 +110,12 @@ def test_get_tables_with_ddl(connector: PostgreSQLConnector, config: PostgreSQLC
         assert table["schema_name"] == config.schema_name
         assert table["identifier"] == f"{config.database}.{config.schema_name}.{table_name}"
 
-        # The DDL is reconstructed from get_schema(), not dumped by the server, so types
-        # come back without their length modifier ("character varying", not "varchar(50)").
+        # The server renders canonical type names and retains their declared modifiers.
         definition = table["definition"]
         assert definition.startswith(f'CREATE TABLE "{config.database}"."{config.schema_name}"."{table_name}" (')
         assert '"id" integer NOT NULL' in definition
         assert f"nextval('{table_name}_id_seq'::regclass)" in definition
-        assert '"name" character varying' in definition
+        assert '"name" character varying(50)' in definition
         assert f'CONSTRAINT "{table_name}_pkey" PRIMARY KEY (id)' in definition
     finally:
         connector.execute_ddl(f'DROP TABLE IF EXISTS "{config.schema_name}"."{table_name}"')

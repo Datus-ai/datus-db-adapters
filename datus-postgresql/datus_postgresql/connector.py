@@ -585,7 +585,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
         table_name: str = "",
     ) -> List[Dict[str, Any]]:
         """
-        Get table schema using INFORMATION_SCHEMA.
+        Get visible columns from INFORMATION_SCHEMA with their declared PostgreSQL types.
 
         Args:
             catalog_name: Catalog name (unused)
@@ -622,12 +622,16 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                     c.table_schema as table_schema,
                     c.table_name as table_name,
                     c.column_name as field,
-                    c.data_type as type,
+                    pg_catalog.format_type(a.atttypid, a.atttypmod) as type,
                     c.is_nullable as nullable,
                     c.column_default as default_value,
                     CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_pk,
                     pgd.description as comment
                 FROM information_schema.columns c
+                JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
+                JOIN pg_catalog.pg_class t ON t.relnamespace = n.oid AND t.relname = c.table_name
+                JOIN pg_catalog.pg_attribute a
+                    ON a.attrelid = t.oid AND a.attnum = c.ordinal_position
                 LEFT JOIN (
                     SELECT kcu.table_schema, kcu.table_name, kcu.column_name
                     FROM information_schema.table_constraints tc
@@ -640,10 +644,9 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 ) pk ON pk.table_schema = c.table_schema
                     AND pk.table_name = c.table_name
                     AND pk.column_name = c.column_name
-                LEFT JOIN pg_catalog.pg_statio_all_tables st
-                    ON st.schemaname = c.table_schema AND st.relname = c.table_name
                 LEFT JOIN pg_catalog.pg_description pgd
-                    ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position
+                    ON pgd.objoid = t.oid AND pgd.objsubid = a.attnum
+                    AND pgd.classoid = 'pg_catalog.pg_class'::regclass
                 WHERE c.table_catalog = '{safe_db}'
                   AND {schema_cmp}
                   AND {table_cmp}
