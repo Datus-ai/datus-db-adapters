@@ -15,7 +15,7 @@ from datus_maxcompute import MaxComputeConfig, MaxComputeConnector
 
 @pytest.fixture
 def two_level_sql_options():
-    # PyODPS settings are dynamic attributes; restore them through the SDK context.
+    """Restore dynamic PyODPS settings through the SDK context after each case."""
     with option_context() as local_options:
         local_options.sql.settings = {"odps.namespace.schema": "false"}
         yield

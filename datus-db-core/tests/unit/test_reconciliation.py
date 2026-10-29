@@ -253,6 +253,7 @@ class TestCheckSkipping:
     ["integer[]", "numeric(8,3)[]", "numeric[][]", "double precision[]", "date[]", "timestamp(3) with time zone[]"],
 )
 def test_scalar_aggregates_exclude_array_columns(column_type):
+    """Keep arrays in distinct counts while limiting aggregate checks to scalar columns."""
     columns = [
         {"name": "id", "type": "integer", "nullable": False},
         {"name": "values", "type": column_type, "nullable": True},

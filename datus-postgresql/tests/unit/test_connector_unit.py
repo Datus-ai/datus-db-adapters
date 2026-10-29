@@ -879,6 +879,7 @@ def test_get_objects_with_ddl_places_unique_indexes_before_deferred_alter_table(
 )
 @pytest.mark.parametrize("has_deferred_constraint", [False, True])
 def test_partition_table_ddl_preserves_literals_identifiers_and_comments(column_definition, has_deferred_constraint):
+    """Preserve SQL text while separating only actual deferred constraint statements."""
     create = f"CREATE TABLE t (\n    {column_definition}\n);"
     alter = 'ALTER TABLE t ADD CONSTRAINT "fk" FOREIGN KEY (id) REFERENCES parent(id);'
     ddl = create + ("\n" + alter if has_deferred_constraint else "")
