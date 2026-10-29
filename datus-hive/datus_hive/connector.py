@@ -49,6 +49,10 @@ class HiveConnector(SQLAlchemyConnector):
         self._default_database = database
         self._connect_args = self._build_connect_args(config)
 
+    def get_sql_generation_context(self, database_name: str = "") -> Dict[str, str]:
+        """Expose the configured HS2 product without opening a connection."""
+        return {"server_type": self.config.server_type}
+
     @staticmethod
     def _build_connect_args(config: HiveConfig) -> Dict[str, Any]:
         """Build connect_args for PyHive."""

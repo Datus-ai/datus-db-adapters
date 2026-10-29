@@ -311,3 +311,9 @@ and strict manual query/metadata tests. It includes a local Kerberos KDC; LDAP a
 CUSTOM tests accept a separately configured endpoint. The official TDH CE image
 and a valid vendor evaluation/license are prerequisites. This target is not
 registered in CI.
+
+## SQL guidance
+
+The package contributes `db-hive-sql` via the `datus.skills` entry point. With an Agent that renders `get_sql_generation_context()`, each request identifies `server type: hive` or `server type: inceptor`. The model reads the packaged `references/inceptor.md` before generating Inceptor SQL. The shared adapter type remains `hive`; this context method reads configuration without connecting.
+
+In SaaS, select the Hive / Inceptor source and choose the server type. Backend maps `extra.serverType` to `server_type` and `extra.kerberosServiceName` to `kerberos_service_name`. Kerberos tickets must already be provisioned and renewed by the deployment runtime. The adapter does not acquire tickets.

@@ -113,6 +113,23 @@ def test_system_varchar2_and_aggregate_queries(connector):
     assert result.sql_return == [{"min_name": min(names), "max_name": max(names)}]
 
 
+def test_varchar2_empty_literal_uses_null_semantics(connector):
+    """Oracle-compatible VARCHAR2 requires IS NOT NULL for populated values."""
+    result = connector.execute_query(
+        """
+        SELECT SUM(CASE WHEN settlement_date IS NOT NULL THEN 1 ELSE 0 END) AS populated_count,
+               SUM(CASE WHEN settlement_date <> '' THEN 1 ELSE 0 END) AS inequality_count
+        FROM (
+            SELECT CAST('2026-10-29' AS VARCHAR2(10)) AS settlement_date
+            UNION ALL SELECT CAST(NULL AS VARCHAR2(10))
+        ) t
+        """,
+        result_format="list",
+    )
+    contract.assert_success(result, "VARCHAR2 empty-literal semantics")
+    assert result.sql_return == [{"populated_count": 1, "inequality_count": 0}]
+
+
 @pytest.mark.parametrize("result_format", ["list", "csv", "pandas", "arrow"])
 def test_varchar2_result_formats(connector, result_format):
     result = connector.execute_query("SELECT CAST('中文' AS VARCHAR2(20)) AS value", result_format=result_format)
