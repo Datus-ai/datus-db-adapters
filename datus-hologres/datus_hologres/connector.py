@@ -384,8 +384,10 @@ class HologresConnector(PostgreSQLConnector):
             value = _escape_literal(properties[key])
             clauses.append(f"    {key} = '{value}'")
 
-        base = ddl[:-1] if ddl.endswith(";") else ddl
-        return f"{base}\nWITH (\n{',\n'.join(clauses)}\n);"
+        create_part, alter_lines = self._partition_table_ddl(ddl)
+        base = create_part[:-1] if create_part.endswith(";") else create_part
+        create_part = f"{base}\nWITH (\n{',\n'.join(clauses)}\n);"
+        return "\n".join([create_part] + alter_lines) if alter_lines else create_part
 
     @override
     def execute_queries(

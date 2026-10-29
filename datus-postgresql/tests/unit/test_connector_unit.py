@@ -645,6 +645,7 @@ def test_get_schema_empty_table_name_short_circuit():
 
 
 def test_get_ddl_uses_requested_database_for_table_schema():
+    """Test that _get_ddl retrieves table schema from the specified database_name."""
     connector = _make_pg_connector_for_metadata(database_name="default_db")
     connector.get_schema = MagicMock(return_value=[])
 
@@ -663,13 +664,32 @@ def test_get_ddl_uses_requested_database_for_table_schema():
     [
         ([], ""),
         (
-            [("orders_pk", "PRIMARY KEY (tenant_id, id)"), ('Unique "Email', "UNIQUE (email, tenant_id)")],
+            [
+                ("orders_pk", True, "PRIMARY KEY (tenant_id, id)", False),
+                ('Unique "Email', True, "UNIQUE (email, tenant_id)", False),
+            ],
             ',\n    CONSTRAINT "orders_pk" PRIMARY KEY (tenant_id, id)'
             ',\n    CONSTRAINT "Unique ""Email" UNIQUE (email, tenant_id)',
+        ),
+        (
+            [
+                ("orders_pk", True, "PRIMARY KEY (tenant_id, id)", False),
+                ('Unique "Email', True, "UNIQUE (email, tenant_id)", False),
+                (
+                    "orders_customer_fk",
+                    True,
+                    "FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE",
+                    False,
+                ),
+            ],
+            ',\n    CONSTRAINT "orders_pk" PRIMARY KEY (tenant_id, id)'
+            ',\n    CONSTRAINT "Unique ""Email" UNIQUE (email, tenant_id)'
+            ',\n    CONSTRAINT "orders_customer_fk" FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE',
         ),
     ],
 )
 def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expected_constraints):
+    """Test that reconstructed table DDL preserves server constraint order, types, and names."""
     connector = _make_pg_connector_for_metadata(database_name="default_db")
     connector.dialect = "postgresql"
     connector._conn = MagicMock()
@@ -695,6 +715,114 @@ def test_table_ddl_preserves_server_constraint_order_and_names(constraints, expe
     )
     assert [call.kwargs["database_name"] for call in connector._conn.call_args_list] == ["other_db", "other_db"]
     assert connection.execute.call_args.args[1] == {"schema_name": "public", "table_name": "orders"}
+    assert "c.contype IN ('p', 'u', 'f')" in str(connection.execute.call_args.args[0])
+
+
+def test_table_ddl_emits_unvalidated_foreign_keys_as_alter_table():
+    """Test that unvalidated constraints (NOT VALID) are emitted as separate ALTER TABLE statements."""
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector.dialect = "postgresql"
+    connector._conn = MagicMock()
+    connection = connector._conn.return_value.__enter__.return_value
+    row = namedtuple("SchemaRow", _SCHEMA_COLS)
+    schema_result = MagicMock()
+    schema_result.fetchall.return_value = [
+        row("public", "orders", "id", "integer", "NO", None, True, None),
+        row("public", "orders", "customer_id", "integer", "NO", None, False, None),
+    ]
+    constraint_result = MagicMock()
+    constraint_result.fetchall.return_value = [
+        ("orders_pk", True, "PRIMARY KEY (id)", False),
+        ("orders_customer_fk", False, "FOREIGN KEY (customer_id) REFERENCES customers(id) NOT VALID", False),
+    ]
+    connection.exec_driver_sql.return_value = schema_result
+    connection.execute.return_value = constraint_result
+
+    ddl = connector._get_ddl("public", "orders", database_name="other_db")
+
+    expected_ddl = (
+        'CREATE TABLE "other_db"."public"."orders" (\n'
+        '    "id" integer NOT NULL,\n'
+        '    "customer_id" integer NOT NULL,\n'
+        '    CONSTRAINT "orders_pk" PRIMARY KEY (id)\n'
+        ");\n"
+        'ALTER TABLE "other_db"."public"."orders" ADD CONSTRAINT "orders_customer_fk" FOREIGN KEY (customer_id) REFERENCES customers(id) NOT VALID;'
+    )
+    assert ddl == expected_ddl
+
+
+def test_table_ddl_defers_foreign_keys_referencing_standalone_indexes():
+    """Test that foreign keys referencing standalone unique indexes are deferred to ALTER TABLE."""
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    connector.dialect = "postgresql"
+    connector._conn = MagicMock()
+    connection = connector._conn.return_value.__enter__.return_value
+    row = namedtuple("SchemaRow", _SCHEMA_COLS)
+    schema_result = MagicMock()
+    schema_result.fetchall.return_value = [
+        row("public", "t", "id", "integer", "NO", None, True, None),
+        row("public", "t", "code", "integer", "YES", None, False, None),
+        row("public", "t", "parent_code", "integer", "YES", None, False, None),
+    ]
+    constraint_result = MagicMock()
+    # (name, is_validated, definition, depends_on_standalone_index)
+    constraint_result.fetchall.return_value = [
+        ("t_pkey", True, "PRIMARY KEY (id)", False),
+        ("t_parent_fk", True, "FOREIGN KEY (parent_code) REFERENCES t(code)", True),
+    ]
+    connection.exec_driver_sql.return_value = schema_result
+    connection.execute.return_value = constraint_result
+
+    ddl = connector._get_ddl("public", "t", database_name="other_db")
+
+    expected_ddl = (
+        'CREATE TABLE "other_db"."public"."t" (\n'
+        '    "id" integer NOT NULL,\n'
+        '    "code" integer,\n'
+        '    "parent_code" integer,\n'
+        '    CONSTRAINT "t_pkey" PRIMARY KEY (id)\n'
+        ");\n"
+        'ALTER TABLE "other_db"."public"."t" ADD CONSTRAINT "t_parent_fk" FOREIGN KEY (parent_code) REFERENCES t(code);'
+    )
+    assert ddl == expected_ddl
+
+
+def test_get_objects_with_ddl_places_unique_indexes_before_deferred_alter_table():
+    """Test that unique indexes are placed before deferred ALTER TABLE statements."""
+    connector = _make_pg_connector_for_metadata(database_name="default_db")
+    metadata = [
+        {
+            "identifier": "other_db.public.t",
+            "catalog_name": "",
+            "database_name": "other_db",
+            "schema_name": "public",
+            "table_name": "t",
+            "table_type": "table",
+        }
+    ]
+    connector._get_metadata = MagicMock(return_value=metadata)
+    connector._get_ddl = MagicMock(
+        return_value=(
+            'CREATE TABLE "other_db"."public"."t" (\n'
+            '    "id" integer PRIMARY KEY\n'
+            ");\n"
+            'ALTER TABLE "other_db"."public"."t" ADD CONSTRAINT "t_parent_fk" FOREIGN KEY (parent_code) REFERENCES t(code);'
+        )
+    )
+    connector._get_unique_index_definitions = MagicMock(
+        return_value=["CREATE UNIQUE INDEX t_code_idx ON other_db.public.t USING btree (code);"]
+    )
+
+    result = connector._get_objects_with_ddl("table", database_name="other_db", schema_name="public")
+
+    expected_ddl = (
+        'CREATE TABLE "other_db"."public"."t" (\n'
+        '    "id" integer PRIMARY KEY\n'
+        ");\n"
+        "CREATE UNIQUE INDEX t_code_idx ON other_db.public.t USING btree (code);\n"
+        'ALTER TABLE "other_db"."public"."t" ADD CONSTRAINT "t_parent_fk" FOREIGN KEY (parent_code) REFERENCES t(code);'
+    )
+    assert result[0]["definition"] == expected_ddl
 
 
 def test_unique_index_definitions_preserve_predicates_and_bind_identifiers():
