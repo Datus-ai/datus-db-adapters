@@ -10,7 +10,7 @@ from urllib.parse import quote_plus
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import URL, Engine
-from sqlglot import tokenize
+from sqlglot.dialects.postgres import Postgres
 from sqlglot.tokens import TokenType
 
 from datus_db_core import (
@@ -404,7 +404,7 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
     def _partition_table_ddl(ddl: str) -> Tuple[str, List[str]]:
         """Split reconstructed table DDL into the CREATE TABLE statement and trailing ALTER statements."""
         # Token positions retain the original SQL, including quoted text and comments.
-        tokens = tokenize(ddl, read="postgres")
+        tokens = Postgres().tokenize(ddl)
         for i in range(1, len(tokens) - 1):
             if (
                 tokens[i - 1].token_type == TokenType.SEMICOLON
