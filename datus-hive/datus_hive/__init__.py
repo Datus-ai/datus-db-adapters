@@ -4,6 +4,7 @@
 
 from .config import HiveConfig
 from .connector import HiveConnector
+from .skills import get_hive_sql_generation_notes
 
 __version__ = "0.1.0"
 __all__ = ["HiveConnector", "HiveConfig", "register"]
@@ -13,4 +14,10 @@ def register():
     """Register Hive connector with Datus registry."""
     from datus_db_core import connector_registry
 
-    connector_registry.register("hive", HiveConnector, config_class=HiveConfig, capabilities={"database"})
+    connector_registry.register(
+        "hive",
+        HiveConnector,
+        config_class=HiveConfig,
+        capabilities={"database"},
+        sql_generation_notes=get_hive_sql_generation_notes,
+    )
