@@ -42,7 +42,7 @@ evaluate to UNKNOWN even for populated rows. For an optional VARCHAR2 settlement
 date, use:
 
 ```sql
-SELECT SUM(CASE WHEN settlement_date IS NOT NULL THEN 1 ELSE 0 END) AS settled
+SELECT COUNT(settlement_date) AS settled
 FROM example_db.example_loans;
 ```
 
