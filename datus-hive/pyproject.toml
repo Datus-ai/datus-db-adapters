@@ -1,6 +1,6 @@
 [project]
 name = "datus-hive"
-version = "0.1.4"
+version = "0.1.5"
 description = "Hive database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
