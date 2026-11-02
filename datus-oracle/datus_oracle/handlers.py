@@ -5,7 +5,6 @@
 """URI builder and context resolver for Oracle."""
 
 from typing import Optional, Tuple, Union
-from urllib.parse import quote_plus
 
 from sqlalchemy.engine.url import URL
 
@@ -27,9 +26,15 @@ def build_oracle_uri(db_config) -> str:
     dsn = _clean_str(getattr(db_config, "dsn", None))
 
     if dsn:
-        encoded_username = quote_plus(username) if username else ""
-        encoded_password = quote_plus(password) if password else ""
-        return f"oracle+oracledb://{encoded_username}:{encoded_password}@{quote_plus(dsn)}"
+        # SQLAlchemy does not percent-decode the URL host. Pass the opaque
+        # Easy Connect string, TNS alias or descriptor through the query so
+        # create_connect_args hands the original DSN to python-oracledb.
+        return URL.create(
+            drivername="oracle+oracledb",
+            username=username or None,
+            password=password or None,
+            query={"dsn": dsn},
+        ).render_as_string(hide_password=False)
 
     sid = _clean_str(getattr(db_config, "sid", None))
     service_name = _clean_str(getattr(db_config, "service_name", None))
