@@ -13,6 +13,7 @@ import ctypes.util
 import platform
 import sys
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -177,7 +178,7 @@ def test_patched_find_library_restores_original(monkeypatch):
 @pytest.mark.acceptance
 def test_import_gaussdb_returns_already_imported_module(monkeypatch):
     """A previously imported driver is reused; libpq is not resolved again."""
-    sentinel = object()
+    sentinel = SimpleNamespace(pq=SimpleNamespace(version=lambda: 90204))
     monkeypatch.setitem(sys.modules, "gaussdb", sentinel)
     monkeypatch.setattr(
         _libpq,
@@ -191,7 +192,7 @@ def test_import_gaussdb_returns_already_imported_module(monkeypatch):
 @pytest.mark.acceptance
 def test_import_gaussdb_uses_system_discovery_without_preloading(monkeypatch):
     """System discovery imports the driver without patching or preloading."""
-    sentinel = object()
+    sentinel = SimpleNamespace(pq=SimpleNamespace(version=lambda: 90204))
     original_import = builtins.__import__
     monkeypatch.delitem(sys.modules, "gaussdb", raising=False)
     monkeypatch.setattr(_libpq, "resolve_libpq_path", lambda: None)
@@ -222,7 +223,7 @@ def test_import_gaussdb_uses_system_discovery_without_preloading(monkeypatch):
 @pytest.mark.acceptance
 def test_import_gaussdb_preloads_openssl_and_patches_libpq_lookup(monkeypatch, tmp_path):
     """A selected libpq loads its OpenSSL pair before the wrapped driver import."""
-    sentinel = object()
+    sentinel = SimpleNamespace(pq=SimpleNamespace(version=lambda: 90204))
     original_import = builtins.__import__
     events = []
     for library in ("libpq.so.5", "libcrypto.so.1.1", "libssl.so.1.1"):
@@ -301,7 +302,7 @@ def test_import_gaussdb_rejects_vanilla_postgres_libpq(monkeypatch):
 @pytest.mark.acceptance
 def test_import_gaussdb_accepts_gaussdb_family_libpq(monkeypatch):
     """A GaussDB/openGauss libpq (PostgreSQL 9.2 fork) passes the probe."""
-    sentinel = object()
+    sentinel = SimpleNamespace(pq=SimpleNamespace(version=lambda: 90204))
     original_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -318,7 +319,7 @@ def test_import_gaussdb_accepts_gaussdb_family_libpq(monkeypatch):
 @pytest.mark.acceptance
 def test_import_gaussdb_probe_tolerates_unloadable_library(monkeypatch):
     """An unloadable probe target falls through to the driver's own error."""
-    sentinel = object()
+    sentinel = SimpleNamespace(pq=SimpleNamespace(version=lambda: 90204))
     original_import = builtins.__import__
 
     def raising_cdll(_path):
@@ -333,3 +334,27 @@ def test_import_gaussdb_probe_tolerates_unloadable_library(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     assert _libpq.import_gaussdb() is sentinel
+
+
+@pytest.mark.acceptance
+def test_preimported_driver_with_postgresql_abi_is_rejected_before_connect(monkeypatch):
+    module = SimpleNamespace(pq=SimpleNamespace(version=lambda: 160004))
+    monkeypatch.setitem(sys.modules, "gaussdb", module)
+    with pytest.raises(ImportError, match="loaded gaussdb driver is bound to PostgreSQL"):
+        _libpq.import_gaussdb()
+
+
+@pytest.mark.acceptance
+def test_driver_bound_library_is_checked_even_if_system_discovery_finds_nothing(monkeypatch):
+    module = SimpleNamespace(pq=SimpleNamespace(version=lambda: 160004))
+    original_import = builtins.__import__
+    monkeypatch.delitem(sys.modules, "gaussdb", raising=False)
+    monkeypatch.setattr(_libpq, "resolve_libpq_path", lambda: None)
+    monkeypatch.setattr(ctypes.util, "find_library", lambda name: None)
+
+    def fake_import(name, *args, **kwargs):
+        return module if name == "gaussdb" else original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(ImportError, match="loaded gaussdb driver is bound to PostgreSQL"):
+        _libpq.import_gaussdb()
