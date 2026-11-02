@@ -833,6 +833,11 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", tables: Optional[List[str]] = None
     ) -> List[Dict[str, str]]:
         """Get tables with DDL definitions."""
+        # A bare table filter resolves in the current schema, just like
+        # get_schema and SELECT. Passing an empty schema to full_name otherwise
+        # builds database.table and cannot match database.main.table metadata.
+        if tables:
+            schema_name = schema_name or self.schema_name or "main"
         filter_tables = self._reset_filter_tables(
             tables, catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
         )

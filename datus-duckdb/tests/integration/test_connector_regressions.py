@@ -610,3 +610,20 @@ def test_iceberg_rejects_invalid_catalog_alias(monkeypatch):
     )
     with pytest.raises(Exception, match="Failed to establish connection"):
         connector.connect()
+
+
+@pytest.mark.parametrize("in_memory", [False, True])
+def test_ddl_filter_resolves_the_default_schema(tmp_path, in_memory):
+    db = DuckdbConnector({"uri": ":memory:" if in_memory else str(tmp_path / "metadata.duckdb")})
+    try:
+        assert db.execute_ddl("CREATE TABLE orders (order_id BIGINT)").success
+        assert db.execute_ddl("CREATE SCHEMA archive").success
+        assert db.execute_ddl("CREATE TABLE archive.orders (old_id BIGINT)").success
+        default = db.get_tables_with_ddl(tables=["orders"])
+        assert [(item["schema_name"], item["table_name"]) for item in default] == [("main", "orders")]
+        assert "order_id" in default[0]["definition"]
+        archive = db.get_tables_with_ddl(schema_name="archive", tables=["orders"])
+        assert [(item["schema_name"], item["table_name"]) for item in archive] == [("archive", "orders")]
+        assert "old_id" in archive[0]["definition"]
+    finally:
+        db.close()
