@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PACKAGE_SPECS=(
+  "datus-sqlite:datus-sqlite/tests/unit"
   "datus-duckdb:datus-duckdb/tests/unit"
   "datus-athena:datus-athena/tests/unit"
   "datus-db-core:datus-db-core/tests/unit"
