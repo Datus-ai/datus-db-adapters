@@ -15,6 +15,7 @@ on:
           - datus-postgresql
           - datus-starrocks
           - datus-doris
+          - datus-duckdb
           - datus-tidb
           - datus-snowflake
           - datus-bigquery

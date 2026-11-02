@@ -36,6 +36,30 @@ class AdapterMetadata:
         self.dialect_operations = dialect_operations
         self.sql_analyzer = sql_analyzer
 
+    def _config_model(self) -> Type:
+        from pydantic import BaseModel
+
+        if not isinstance(self.config_class, type) or not issubclass(self.config_class, BaseModel):
+            raise ValueError(f"Connector '{self.db_type}' has no Pydantic Config class")
+        return self.config_class
+
+    def get_config_schema(self) -> Dict[str, Any]:
+        """Export declared fields; custom validators execute through validate_config.
+
+        The generated JSON Schema is not a translation of arbitrary Python
+        validators, credential lookup, or server-side authentication checks.
+        """
+        schema = self._config_model().model_json_schema(by_alias=True, mode="validation")
+        schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+        return schema
+
+    def validate_config(self, values: Any) -> Any:
+        """Return the real Config model, applying its defaults and validators.
+
+        This does not construct a connector or verify database connectivity.
+        """
+        return self._config_model().model_validate(values)
+
     def get_config_fields(self) -> Dict[str, Dict[str, Any]]:
         if not self.config_class:
             return {}
@@ -249,6 +273,26 @@ class ConnectorRegistry:
                 metadata.dialect_operations = dialect_operations
             if sql_analyzer is not None:
                 metadata.sql_analyzer = sql_analyzer
+
+    @classmethod
+    def _config_metadata(cls, db_type: str) -> AdapterMetadata:
+        key = cls._resolve_key(db_type)
+        if key not in cls._metadata:
+            cls._try_load_adapter(key)
+        metadata = cls.get_metadata(key)
+        if metadata is None:
+            raise ValueError(f"Connector '{db_type}' is not registered")
+        return metadata
+
+    @classmethod
+    def get_config_schema(cls, db_type: str) -> Dict[str, Any]:
+        """Export the registered Config model's field schema, resolving aliases."""
+        return cls._config_metadata(db_type).get_config_schema()
+
+    @classmethod
+    def validate_config(cls, db_type: str, values: Any) -> Any:
+        """Validate through the same Config class used by the adapter."""
+        return cls._config_metadata(db_type).validate_config(values)
 
     @classmethod
     def has_capabilities(cls, db_type: str) -> bool:
