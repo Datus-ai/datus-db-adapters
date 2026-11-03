@@ -118,21 +118,6 @@ def _reject_vanilla_postgres_libpq() -> None:
         )
 
 
-def _checked_driver(module):
-    # The driver's own discovery can differ from find_library("pq"), or another
-    # package may have imported it first. Probe the library actually bound to
-    # the module before any struct-valued libpq call can crash the interpreter.
-    version = int(module.pq.version())
-    if version >= 100000:
-        raise ImportError(
-            f"The loaded gaussdb driver is bound to PostgreSQL libpq {version}; "
-            "it requires the GaussDB/openGauss client library. Configure "
-            f"{_ENV_VAR} before importing the driver and restart the process, "
-            "or select driver='pg8000' on platforms without that library."
-        )
-    return module
-
-
 def import_gaussdb():
     """Import (and return) the ``gaussdb`` module against the right libpq.
 
@@ -140,14 +125,14 @@ def import_gaussdb():
     binds libpq at import time.
     """
     if "gaussdb" in sys.modules:
-        return _checked_driver(sys.modules["gaussdb"])
+        return sys.modules["gaussdb"]
 
     libpq_path = resolve_libpq_path()
     if libpq_path is None:
         _reject_vanilla_postgres_libpq()
         import gaussdb
 
-        return _checked_driver(gaussdb)
+        return gaussdb
 
     lib_dir = Path(libpq_path).parent
     for dep in _PRELOAD_NAMES:
@@ -159,4 +144,4 @@ def import_gaussdb():
     with _patched_find_library(libpq_path):
         import gaussdb
 
-    return _checked_driver(gaussdb)
+    return gaussdb
