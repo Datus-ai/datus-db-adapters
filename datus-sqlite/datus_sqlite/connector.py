@@ -67,7 +67,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         if isinstance(config, dict):
             config = SQLiteConfig.model_validate(config)
         super().__init__(config, dialect="sqlite")
-        self.db_path = config.db_path.replace("sqlite:///", "")
+        self.db_path = config.db_path
         self.read_only = config.read_only
         self.check_same_thread = config.check_same_thread
         self.connection: Optional[sqlite3.Connection] = None
@@ -193,7 +193,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
 
     @override
     @_serialized_connection
-    def execute_insert(self, sql: str) -> ExecuteSQLResult:
+    def execute_insert(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute an INSERT SQL statement."""
         try:
             self.connect()
@@ -207,6 +209,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 row_count=cursor.rowcount,
             )
         except Exception as e:
+            self._safe_rollback()
             ex = self._handle_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
@@ -216,7 +219,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
 
     @override
     @_serialized_connection
-    def execute_update(self, sql: str) -> ExecuteSQLResult:
+    def execute_update(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute an UPDATE SQL statement."""
         try:
             self.connect()
@@ -230,6 +235,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 row_count=cursor.rowcount,
             )
         except Exception as e:
+            self._safe_rollback()
             ex = self._handle_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
@@ -239,7 +245,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
 
     @override
     @_serialized_connection
-    def execute_delete(self, sql: str) -> ExecuteSQLResult:
+    def execute_delete(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute a DELETE SQL statement."""
         try:
             self.connect()
@@ -253,6 +261,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 row_count=cursor.rowcount,
             )
         except Exception as e:
+            self._safe_rollback()
             ex = self._handle_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
@@ -276,6 +285,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 row_count=0,
             )
         except Exception as e:
+            self._safe_rollback()
             ex = self._handle_exception(e, sql)
             return ExecuteSQLResult(
                 success=False,
@@ -375,7 +385,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         """Get all table names."""
         self.connect()
         cursor = self.connection.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'")
         return [row[0] for row in cursor.fetchall()]
 
     @override
@@ -391,7 +401,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     def full_name(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
     ) -> str:
-        return f'"{table_name}"'
+        return self.quote_identifier(table_name)
 
     @override
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
@@ -404,7 +414,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         """Get schema with DDL for tables or views."""
         self.connect()
         cursor = self.connection.cursor()
-        cursor.execute(f"SELECT name, sql FROM sqlite_master WHERE type='{table_type}'")
+        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type=?", (table_type,))
 
         schema_list = []
         for row in cursor.fetchall():
@@ -467,8 +477,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
 
         self.connect()
         cursor = self.connection.cursor()
+        sql = f"PRAGMA table_info({self.quote_identifier(table_name)})"
         try:
-            cursor.execute(f'PRAGMA table_info("{table_name}")')
+            cursor.execute(sql)
             columns = cursor.fetchall()
             return [
                 {
@@ -482,7 +493,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 for col in columns
             ]
         except Exception as e:
-            raise self._handle_exception(e, f'PRAGMA table_info("{table_name}")')
+            raise self._handle_exception(e, sql)
 
     @override
     @_serialized_connection
@@ -496,6 +507,8 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         table_type: TABLE_TYPE = "table",
     ) -> List[Dict[str, Any]]:
         """Get sample rows from tables."""
+        if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 0:
+            raise ValueError("top_n must be a non-negative integer")
         self.connect()
         samples = []
 
@@ -503,7 +516,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             for table_name in tables:
                 try:
                     cursor = self.connection.cursor()
-                    cursor.execute(f'SELECT * FROM "{table_name}" LIMIT {top_n}')
+                    cursor.execute(f"SELECT * FROM {self.quote_identifier(table_name)} LIMIT ?", (top_n,))
                     rows = cursor.fetchall()
                     if rows:
                         columns = [desc[0] for desc in cursor.description]
@@ -530,7 +543,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             for table_name in all_tables:
                 try:
                     cursor = self.connection.cursor()
-                    cursor.execute(f'SELECT * FROM "{table_name}" LIMIT {top_n}')
+                    cursor.execute(f"SELECT * FROM {self.quote_identifier(table_name)} LIMIT ?", (top_n,))
                     rows = cursor.fetchall()
                     if rows:
                         columns = [desc[0] for desc in cursor.description]

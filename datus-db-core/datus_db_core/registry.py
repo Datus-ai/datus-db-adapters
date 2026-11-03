@@ -49,7 +49,11 @@ class AdapterMetadata:
         The generated JSON Schema is not a translation of arbitrary Python
         validators, credential lookup, or server-side authentication checks.
         """
-        schema = self._config_model().model_json_schema(by_alias=True, mode="validation")
+        from datus_db_core.config_schema import ConnectionSchemaGenerator
+
+        schema = self._config_model().model_json_schema(
+            by_alias=True, mode="validation", schema_generator=ConnectionSchemaGenerator
+        )
         schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
         return schema
 

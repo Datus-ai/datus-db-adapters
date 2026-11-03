@@ -33,3 +33,30 @@ def test_invalid_config(values, error):
     with pytest.raises(ValidationError) as caught:
         DuckDBConfig.model_validate(values)
     assert caught.value.errors()[0]["type"] == error
+
+
+@pytest.mark.parametrize(
+    "values, valid",
+    [
+        ({"uri": ":memory:"}, True),
+        ({"db_path": "data.db"}, True),
+        ({"uri": "x", "db_path": "x"}, False),
+        ({}, False),
+        ({"db_path": None}, False),
+        ({"uri": "x", "unknown": 1}, False),
+    ],
+)
+def test_exported_input_aliases_match_real_config(values, valid):
+    from jsonschema import Draft202012Validator
+
+    from datus_db_core.registry import AdapterMetadata
+
+    meta = AdapterMetadata("duckdb", object, config_class=DuckDBConfig)
+    schema = meta.get_config_schema()
+    Draft202012Validator.check_schema(schema)
+    assert Draft202012Validator(schema).is_valid(values) is valid
+    if valid:
+        assert meta.validate_config(values).uri == values.get("uri", values.get("db_path"))
+    else:
+        with pytest.raises(ValidationError):
+            meta.validate_config(values)

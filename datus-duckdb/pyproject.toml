@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "pytest-cov>=4", "duckdb-engine>=0.17.0", "sqlalchemy>=2.0.23"]
+test = ["jsonschema>=4.18", "pytest>=7", "pytest-cov>=4", "duckdb-engine>=0.17.0", "sqlalchemy>=2.0.23"]
 
 [project.entry-points."datus.adapters"]
 duckdb = "datus_duckdb:register"
@@ -36,3 +36,15 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["datus_duckdb"]
 omit = ["tests/*", "**/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

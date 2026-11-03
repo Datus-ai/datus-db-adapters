@@ -1,5 +1,7 @@
 from importlib.metadata import entry_points
 
+from jsonschema import Draft202012Validator
+
 from datus_db_core import connector_registry
 from datus_duckdb import DuckDBConfig, DuckdbConnector, register
 
@@ -14,7 +16,11 @@ def test_registered_model_is_the_constructor_model():
         assert metadata.config_class is DuckDBConfig
         assert connector_registry.get_capabilities("duckdb") == {"database", "schema"}
         schema = connector_registry.get_config_schema("duckdb")
-        assert schema["required"] == ["uri"]
+        validator = Draft202012Validator(schema)
+        assert validator.is_valid({"uri": ":memory:"})
+        assert validator.is_valid({"db_path": ":memory:"})
+        assert not validator.is_valid({})
+        assert not validator.is_valid({"uri": "a", "db_path": "b"})
         assert schema["additionalProperties"] is False
         config = connector_registry.validate_config("duckdb", {"uri": ":memory:"})
         connector = connector_registry.create_connector("duckdb", config)

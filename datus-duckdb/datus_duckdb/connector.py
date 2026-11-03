@@ -165,6 +165,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 self._setup_iceberg()
 
         except Exception as e:
+            # A failed SET/extension/catalog setup must never leave a usable
+            # partially configured connection behind. close() preserves e.
+            self.close()
             raise DatusDbException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={"error_message": str(e)},
@@ -229,7 +232,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         if not endpoint:
             return True
         endpoint_text = str(endpoint).strip().lower()
-        return endpoint_text.startswith("https://")
+        return not endpoint_text.startswith("http://")
 
     def _load_extension(self, name: str) -> None:
         try:
@@ -748,12 +751,15 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         """Get qualified table names (``[db.][schema.]table`` for levels not given by the caller)."""
         self.connect()
         sql = "SELECT database_name, schema_name, table_name FROM duckdb_tables() WHERE database_name != 'system'"
+        params = []
         if database_name:
-            sql += f" AND database_name = '{database_name}'"
+            sql += " AND database_name = ?"
+            params.append(database_name)
         if schema_name:
-            sql += f" AND schema_name = '{schema_name}'"
+            sql += " AND schema_name = ?"
+            params.append(schema_name)
 
-        result = self.connection.execute(sql)
+        result = self.connection.execute(sql, params)
         return [self._qualify_name(row[2], row[0], row[1], database_name, schema_name) for row in result.fetchall()]
 
     @override
@@ -766,12 +772,15 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         eff_db = database_name or self.database_name
         eff_schema = schema_name or self.schema_name
         sql = "SELECT database_name, schema_name, view_name FROM duckdb_views() WHERE database_name != 'system'"
+        params = []
         if eff_db:
-            sql += f" AND database_name = '{eff_db}'"
+            sql += " AND database_name = ?"
+            params.append(eff_db)
         if eff_schema:
-            sql += f" AND schema_name = '{eff_schema}'"
+            sql += " AND schema_name = ?"
+            params.append(eff_schema)
 
-        result = self.connection.execute(sql)
+        result = self.connection.execute(sql, params)
         return [self._qualify_name(row[2], row[0], row[1], database_name, schema_name) for row in result.fetchall()]
 
     @override
@@ -802,9 +811,11 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         self.connect()
         sql = "SELECT schema_name FROM duckdb_schemas()"
         has_where = False
+        params = []
         database_name = database_name or self.database_name
         if database_name:
-            sql += f" WHERE database_name='{database_name}'"
+            sql += " WHERE database_name = ?"
+            params.append(database_name)
             has_where = True
 
         if not include_sys:
@@ -814,7 +825,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             else:
                 sql += list_to_in_str(" AND schema_name NOT IN", sys_schemas)
 
-        result = self.connection.execute(sql)
+        result = self.connection.execute(sql, params)
         return [row[0] for row in result.fetchall()]
 
     @override
@@ -866,12 +877,15 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         )
         database_name = database_name or self.database_name
         schema_name = schema_name or self.schema_name
+        params = []
         if database_name:
-            query_sql += f" AND database_name = '{database_name}'"
+            query_sql += " AND database_name = ?"
+            params.append(database_name)
         if schema_name:
-            query_sql += f" AND schema_name = '{schema_name}'"
+            query_sql += " AND schema_name = ?"
+            params.append(schema_name)
 
-        result_set = self.connection.execute(query_sql)
+        result_set = self.connection.execute(query_sql, params)
         rows = result_set.fetchall()
         columns = [desc[0] for desc in result_set.description]
 

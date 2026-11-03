@@ -52,3 +52,71 @@ def test_registry_resolves_real_config_without_constructing_connector():
     Registry.register("postgresql", Connector, config_class=Config)
     assert Registry.validate_config("postgres", {}).port == 9030
     assert Registry.get_config_schema("postgres") == Registry.get_config_schema("postgresql")
+
+
+@pytest.mark.parametrize(
+    "values, valid",
+    [
+        ({"uri": "data.db"}, True),
+        ({"db_path": "data.db"}, True),
+        ({"uri": "x", "db_path": "x"}, False),
+        ({}, False),
+        ({"db_path": None}, False),
+        ({"db_path": "x", "schema": "public"}, True),
+        ({"uri": "x", "schema_name": "public"}, True),
+        ({"uri": "x", "schema": "a", "schema_name": "b"}, False),
+        ({"uri": "x", "unknown": True}, False),
+    ],
+)
+def test_alias_schema_matches_config_for_nested_models(values, valid):
+    from jsonschema import Draft202012Validator
+    from pydantic import AliasChoices, ConfigDict
+
+    class Paths(BaseModel):
+        model_config = ConfigDict(extra="forbid", populate_by_name=True)
+        uri: str = Field(validation_alias=AliasChoices("uri", "db_path"))
+        schema_name: str | None = Field(default=None, alias="schema")
+
+    class Envelope(BaseModel):
+        connection: Paths
+
+    meta = AdapterMetadata("nested", object, config_class=Envelope)
+    schema = meta.get_config_schema()
+    Draft202012Validator.check_schema(schema)
+    payload = {"connection": values}
+    assert Draft202012Validator(schema).is_valid(payload) is valid
+    if valid:
+        assert meta.validate_config(payload).connection.uri == values.get("uri", values.get("db_path"))
+    else:
+        with pytest.raises(ValidationError):
+            meta.validate_config(payload)
+
+
+@pytest.mark.parametrize("extra", ["ignore", "allow"])
+@pytest.mark.parametrize(
+    "values, valid",
+    [
+        ({}, True),
+        ({"old": "v"}, True),
+        ({"new": "v", "old": 42}, True),
+        ({"new": 42, "old": "v"}, False),
+        ({"old": 42}, False),
+    ],
+)
+def test_schema_preserves_alias_precedence_for_allowed_extras(extra, values, valid):
+    from jsonschema import Draft202012Validator
+    from pydantic import AliasChoices, ConfigDict
+
+    class Choices(BaseModel):
+        model_config = ConfigDict(extra=extra)
+        new: str = Field(default="default", validation_alias=AliasChoices("new", "old"))
+
+    meta = AdapterMetadata("choices", object, config_class=Choices)
+    schema = meta.get_config_schema()
+    Draft202012Validator.check_schema(schema)
+    assert Draft202012Validator(schema).is_valid(values) is valid
+    if valid:
+        assert meta.validate_config(values).new == values.get("new", values.get("old", "default"))
+    else:
+        with pytest.raises(ValidationError):
+            meta.validate_config(values)
