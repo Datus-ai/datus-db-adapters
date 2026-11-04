@@ -12,13 +12,14 @@ requires-python = ">=3.12"
 license = {file = "LICENSE"}
 
 [tool.uv.workspace]
-members = ["datus-athena", "datus-db-core", "datus-mysql", "datus-postgresql", "datus-sqlalchemy", "datus-starrocks", "datus-doris", "datus-snowflake", "datus-clickzetta", "datus-clickhouse", "datus-hive", "datus-redshift", "datus-spark", "datus-trino", "datus-greenplum", "datus-maxcompute", "datus-hologres", "datus-oracle", "datus-gaussdb", "datus-tidb", "datus-bigquery", "datus-dws", "datus-hana"]
+members = ["datus-sqlite", "datus-duckdb", "datus-athena", "datus-db-core", "datus-mysql", "datus-postgresql", "datus-sqlalchemy", "datus-starrocks", "datus-doris", "datus-snowflake", "datus-clickzetta", "datus-clickhouse", "datus-hive", "datus-redshift", "datus-spark", "datus-trino", "datus-greenplum", "datus-maxcompute", "datus-hologres", "datus-oracle", "datus-gaussdb", "datus-tidb", "datus-bigquery", "datus-dws", "datus-hana"]
 
 [dependency-groups]
 
 dev = [
     "boto3>=1.34.0", # AWS SDK Stubber tests; optional at adapter runtime
     "pytest>=7.0.0",
+    "jsonschema>=4.18", # Compare exported connection specs with real Config validation
     "PyYAML>=6.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
@@ -64,7 +65,7 @@ ignore = [
 max-complexity = 10
 
 [tool.ruff.lint.isort]
-known-first-party = ["datus_athena", "datus_db_core", "datus_sqlalchemy", "datus_mysql", "datus_postgresql", "datus_redshift", "datus_snowflake", "datus_clickhouse", "datus_clickzetta", "datus_starrocks", "datus_doris", "datus_trino", "datus_spark", "datus_hive", "datus_greenplum", "datus_maxcompute", "datus_hologres", "datus_oracle", "datus_gaussdb", "datus_tidb", "datus_bigquery", "datus_dws", "datus_hana"]
+known-first-party = ["datus_sqlite", "datus_duckdb", "datus_athena", "datus_db_core", "datus_sqlalchemy", "datus_mysql", "datus_postgresql", "datus_redshift", "datus_snowflake", "datus_clickhouse", "datus_clickzetta", "datus_starrocks", "datus_doris", "datus_trino", "datus_spark", "datus_hive", "datus_greenplum", "datus_maxcompute", "datus_hologres", "datus_oracle", "datus_gaussdb", "datus_tidb", "datus_bigquery", "datus_dws", "datus_hana"]
 
 [tool.pytest.ini_options]
 markers = [

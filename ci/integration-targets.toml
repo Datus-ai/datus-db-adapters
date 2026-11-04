@@ -113,6 +113,8 @@ enabled = false
 
 [selection]
 packages_without_live_targets = [
+    "datus-sqlite", # Embedded: no server needed.
+    "datus-duckdb", # Embedded integration lives in datus-db-testkit; no compose/cloud target.
     "datus-clickzetta",
     "datus-db-core",
     "datus-redshift",
