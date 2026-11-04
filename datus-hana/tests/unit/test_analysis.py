@@ -39,6 +39,9 @@ _SCALARS = [
     ("ADD_YEARS", "happened_at, 1"),
     ("HOUR", "happened_at"),
     ("MINUTE", "happened_at"),
+    ("OCCURRENCES_REGEXPR", "'.' FLAG 's' IN score"),
+    ("OCCURRENCES_REGEXPR", "'[a-z]' IN score"),
+    ("SUBSTRING_REGEXPR", "'.{4}\\z' FLAG 's' IN score"),
 ]
 
 
@@ -72,6 +75,19 @@ def test_verified_scalar_names_do_not_hide_unverified_object_access(name, argume
 def test_scalar_subquery_keeps_its_physical_table_visible():
     result = analyze_hana_sql("SELECT TO_DECIMAL((SELECT MAX(score) FROM private.events)) FROM DUMMY")
     assert result.require_complete().tables == ('"PRIVATE"."EVENTS"', '"DUMMY"')
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "OCCURRENCES_REGEXPR('.' phone)",
+        "OCCURRENCES_REGEXPR('.' IN)",
+        "SUBSTRING_REGEXPR('.' FLAG IN phone)",
+        "SUBSTRING_REGEXPR('.' IN phone FROM 1)",
+    ],
+)
+def test_regex_analysis_refuses_unmodeled_native_syntax(call):
+    assert analyze_hana_sql(f"SELECT {call} FROM events").status == "error"
 
 
 def test_nested_aggregate_conversion_and_calendar_calls_keep_the_source_table():

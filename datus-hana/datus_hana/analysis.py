@@ -17,6 +17,7 @@ from .handlers import quote_identifier
 # Verified native scalar functions whose object access is confined to their
 # arguments. Some remain anonymous calls on supported parser versions.
 # Qualified/quoted calls may resolve to user code and are not covered here.
+_NATIVE_REGEX = {"OCCURRENCES_REGEXPR", "SUBSTRING_REGEXPR"}
 _NATIVE_SCALARS = {
     "TO_VARCHAR",
     "TO_DECIMAL",
@@ -28,7 +29,7 @@ _NATIVE_SCALARS = {
     "WEEKDAY",
     "HOUR",
     "MINUTE",
-}
+} | _NATIVE_REGEX
 
 
 def _verified_scalar(node: exp.Anonymous) -> bool:
@@ -41,6 +42,30 @@ class _HanaAnalysisDialect(Postgres):
             # Preserve delimited function names as user calls. SQLGlot can
             # otherwise normalize them into built-in nodes and lose quoting.
             quoted = self._curr is not None and self._curr.token_type == TokenType.IDENTIFIER
+            if (
+                self._curr is not None
+                and self._curr.text.upper() in _NATIVE_REGEX
+                and self._next is not None
+                and self._next.token_type == TokenType.L_PAREN
+                and not quoted
+                and not anonymous
+                and (self._prev is None or self._prev.token_type != TokenType.DOT)
+            ):
+                name = self._curr.text.upper()
+                self._advance(2)
+                pattern = self._parse_bitwise()
+                has_flags = self._match_text_seq("FLAG")
+                flags = self._parse_bitwise() if has_flags else None
+                if has_flags and flags is None:
+                    self.raise_error("Expected a regex FLAG expression")
+                if pattern is None or not self._match(TokenType.IN):
+                    self.raise_error("Expected a regex pattern, optional FLAG, and IN")
+                subject = self._parse_bitwise()
+                if subject is None:
+                    self.raise_error("Expected a regex input expression")
+                node = exp.Anonymous(this=name, expressions=[pattern, subject, *([flags] if flags is not None else [])])
+                self._match_r_paren(node)
+                return node
             return super()._parse_function_call(
                 functions=functions,
                 anonymous=anonymous or quoted,
