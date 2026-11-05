@@ -15,6 +15,10 @@ contexts keep independent settings; a new context uses the initial server mode.
 `get_relation_info()` asks the server to resolve one named relation through
 `DESCRIBE TABLE EXTENDED`; unqualified requests preserve temporary-view shadowing.
 Opaque or incomplete relation metadata is not classified as a physical table.
+Policy hosts execute the rewriter's canonical, qualified SQL. Calling relation
+metadata and then executing the original SQL through the raw connector does not
+apply a policy. An older streaming read cannot overwrite a newer SET when its
+lease is returned to the pool.
 
 ## Timeouts
 

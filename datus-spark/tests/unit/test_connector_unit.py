@@ -71,6 +71,9 @@ class ResolverSession:
             ]
         else:
             result.fetchall.return_value = [SimpleNamespace(_asdict=lambda: {"id": 1})]
+            result.returns_rows = True
+            result.keys.return_value = ["id"]
+            result.fetchmany.side_effect = [[(1,)], []]
         return result
 
 
@@ -124,6 +127,19 @@ def test_server_default_is_preserved_when_the_caller_changes_its_mode():
         assert connector.get_default_identifier_case_sensitive() is True
         assert Context().run(connector.get_identifier_case_sensitive) is True
     finally:
+        connector.close()
+
+
+def test_finishing_an_older_csv_iterator_cannot_overwrite_a_newer_set():
+    connector = pooled_connector(ResolverSession(False), ResolverSession(False))
+    iterator = connector.execute_csv_iterator("SELECT 1 AS id", with_header=False)
+    try:
+        assert next(iterator) == (1,)
+        assert connector.execute_content_set("SET spark.sql.caseSensitive=true").success
+        assert list(iterator) == []
+        assert connector.get_identifier_case_sensitive() is True
+    finally:
+        iterator.close()
         connector.close()
 
 

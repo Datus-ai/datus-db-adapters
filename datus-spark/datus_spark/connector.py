@@ -43,6 +43,7 @@ class SparkConnector(SQLAlchemyConnector):
 
         self._query_timeout = config.query_timeout_seconds or config.timeout_seconds
         self._identifier_mode = ContextVar(f"spark_identifier_mode_{id(self)}", default=None)
+        self._identifier_mode_version = ContextVar(f"spark_identifier_mode_version_{id(self)}", default=0)
         self._default_identifier_mode = None
         self._identifier_mode_lock = RLock()
 
@@ -116,10 +117,15 @@ class SparkConnector(SQLAlchemyConnector):
             # Confirm the setting on this exact lease before any query runs.
             if self._read_identifier_mode(conn) != mode:
                 raise ValueError("Spark session did not apply its identifier case mode")
+            version = self._identifier_mode_version.get()
             yield conn
             # Preserve intentional SET changes made through this lease, including
             # execute_content_set(), for later operations in the same context.
-            self._identifier_mode.set(self._read_identifier_mode(conn))
+            # A paused iterator may finish after a newer SET on another lease.
+            # Its old session must not overwrite that newer execution context.
+            if self._identifier_mode_version.get() == version:
+                self._identifier_mode.set(self._read_identifier_mode(conn))
+                self._identifier_mode_version.set(version + 1)
 
     # ==================== Context Manager Support ====================
 
@@ -182,6 +188,8 @@ class SparkConnector(SQLAlchemyConnector):
 
         Missing detailed metadata is treated as opaque, never as a physical table.
         Names are returned as stored by Spark; the caller owns identifier policy.
+        This describes the lookup's lease. Policy hosts execute the rewriter's
+        canonical SQL; a later raw query does not inherit a protection decision.
         """
         reference = (
             self.quote_identifier(table_name)

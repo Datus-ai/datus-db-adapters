@@ -27,3 +27,15 @@ def test_query_replays_the_bound_resolver_mode_on_a_different_pooled_session(con
     assert connector.get_identifier_case_sensitive() is True
     assert Context().run(connector.get_identifier_case_sensitive) is connector.get_default_identifier_case_sensitive()
     assert connector.get_identifier_case_sensitive() is True
+
+
+def test_finishing_a_stream_does_not_undo_a_later_resolver_mode_change(connector):
+    assert connector.execute_content_set("SET spark.sql.caseSensitive=false").success
+    iterator = connector.execute_csv_iterator("SELECT 1 AS id", with_header=False)
+    try:
+        assert next(iterator) == (1,)
+        assert connector.execute_content_set("SET spark.sql.caseSensitive=true").success
+        assert list(iterator) == []
+        assert connector.get_identifier_case_sensitive() is True
+    finally:
+        iterator.close()
