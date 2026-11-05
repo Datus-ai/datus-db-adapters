@@ -8,6 +8,39 @@ import pytest
 
 from datus_spark import SparkConfig, SparkConnector
 
+
+@pytest.mark.parametrize(
+    "rows,expected",
+    [
+        ([{"key": "spark.sql.caseSensitive", "value": "true"}], True),
+        ([{"key": "spark.sql.caseSensitive", "value": "false"}], False),
+        ([], None),
+        ([{"value": "true"}, {"value": "false"}], None),
+        ([{"value": "unknown"}], None),
+        ([{"key": "spark.sql.caseSensitive"}], None),
+    ],
+)
+def test_identifier_case_mode_is_read_from_the_live_connection(rows, expected):
+    """Policy metadata captures the server resolver setting and rejects ambiguity."""
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
+        connector = SparkConnector(SparkConfig(username="spark"))
+    engine = MagicMock()
+    connector.engine = engine
+    connector._owns_engine = True
+    conn = engine.connect.return_value
+    conn.exec_driver_sql.return_value.mappings.return_value.all.return_value = rows
+    try:
+        if expected is None:
+            with pytest.raises(ValueError, match="case mode is unavailable"):
+                connector.get_identifier_case_sensitive()
+        else:
+            assert connector.get_identifier_case_sensitive() is expected
+        conn.exec_driver_sql.assert_any_call("SET spark.sql.caseSensitive", execution_options={"no_parameters": True})
+        conn.close.assert_called_once()
+    finally:
+        connector.close()
+
+
 # ==================== Initialization Tests ====================
 
 

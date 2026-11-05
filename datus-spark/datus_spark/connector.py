@@ -117,6 +117,21 @@ class SparkConnector(SQLAlchemyConnector):
         """Spark doesn't have separate schemas, return empty list."""
         return []
 
+    def get_identifier_case_sensitive(self) -> bool:
+        """Read Spark's actual resolver mode without admitting SET as read SQL."""
+        with self._conn() as conn:
+            result = (
+                conn.exec_driver_sql("SET spark.sql.caseSensitive", execution_options={"no_parameters": True})
+                .mappings()
+                .all()
+            )
+        if len(result) != 1 or "value" not in result[0]:
+            raise ValueError("actual Spark identifier case mode is unavailable")
+        value = str(result[0]["value"]).lower()
+        if value not in {"true", "false"}:
+            raise ValueError("actual Spark identifier case mode is unavailable")
+        return value == "true"
+
     @override
     @staticmethod
     def _qualify(name, real_db, real_schema, arg_db, arg_schema):
