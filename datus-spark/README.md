@@ -2,6 +2,20 @@
 
 Spark SQL database adapter for Datus, connecting via HiveServer2/Thrift protocol.
 
+## Resolver context
+
+The adapter preserves `spark.sql.caseSensitive` per execution context and replays
+and verifies it on every pooled connection before executing SQL. Changes through
+`execute_content_set("SET spark.sql.caseSensitive=true")` follow that context,
+including when later operations check out a different Thrift session. Concurrent
+contexts keep independent settings; a new context uses the initial server mode.
+
+`get_identifier_case_sensitive()` reports the current mode and
+`get_default_identifier_case_sensitive()` reports the initial server mode.
+`get_relation_info()` asks the server to resolve one named relation through
+`DESCRIBE TABLE EXTENDED`; unqualified requests preserve temporary-view shadowing.
+Opaque or incomplete relation metadata is not classified as a physical table.
+
 ## Timeouts
 
 `timeout_seconds` must be positive and now bounds driver I/O as well as pool

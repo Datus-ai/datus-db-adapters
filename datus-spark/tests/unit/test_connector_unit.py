@@ -2,6 +2,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from contextvars import Context
+from itertools import cycle
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -37,6 +40,121 @@ def test_identifier_case_mode_is_read_from_the_live_connection(rows, expected):
             assert connector.get_identifier_case_sensitive() is expected
         conn.exec_driver_sql.assert_any_call("SET spark.sql.caseSensitive", execution_options={"no_parameters": True})
         conn.close.assert_called_once()
+    finally:
+        connector.close()
+
+
+class ResolverSession:
+    """Two independent server sessions below the real adapter pool boundary."""
+
+    def __init__(self, mode=False, *, ignore_set=False, details=()):
+        self.mode, self.ignore_set, self.details = mode, ignore_set, details
+        self.executed = []
+        self.close = MagicMock()
+        self.rollback = MagicMock()
+        self.commit = MagicMock()
+
+    def execute(self, sql, **kwargs):
+        return self.exec_driver_sql(str(sql), **kwargs)
+
+    def exec_driver_sql(self, sql, **kwargs):
+        self.executed.append((sql, self.mode))
+        result = MagicMock()
+        if sql == "SET spark.sql.caseSensitive":
+            result.mappings.return_value.all.return_value = [{"value": str(self.mode).lower()}]
+        elif sql.startswith("SET spark.sql.caseSensitive=") and not self.ignore_set:
+            self.mode = sql.endswith("true")
+        elif sql.startswith("DESCRIBE"):
+            result.fetchall.return_value = [
+                SimpleNamespace(_asdict=lambda row=row: {"col_name": row[0], "data_type": row[1]})
+                for row in self.details
+            ]
+        else:
+            result.fetchall.return_value = [SimpleNamespace(_asdict=lambda: {"id": 1})]
+        return result
+
+
+def pooled_connector(*sessions):
+    with patch("datus_sqlalchemy.SQLAlchemyConnector.__init__", return_value=None):
+        connector = SparkConnector(SparkConfig(username="spark"))
+    connector.engine = MagicMock()
+    connector._owns_engine = True
+    connector.engine.connect.side_effect = cycle(sessions)
+    return connector
+
+
+def test_resolver_mode_follows_execution_context_across_different_pooled_sessions():
+    first, second = ResolverSession(False), ResolverSession(True)
+    connector = pooled_connector(first, second)
+    try:
+        assert connector.get_identifier_case_sensitive() is False
+        result = connector.execute_query("SELECT 1 AS id", result_format="list")
+        assert result.success, result.error
+        assert ("SELECT 1 AS id", False) in second.executed
+        assert connector.execute_content_set("SET spark.sql.caseSensitive=true").success
+        assert connector.get_identifier_case_sensitive() is True
+        assert connector.get_default_identifier_case_sensitive() is False
+        assert Context().run(connector.get_identifier_case_sensitive) is False
+        assert connector.get_identifier_case_sensitive() is True
+    finally:
+        connector.close()
+
+
+def test_failed_mode_replay_stops_before_the_query_and_releases_the_session():
+    session = ResolverSession(False, ignore_set=True)
+    connector = pooled_connector(session)
+    connector._identifier_mode.set(True)
+    try:
+        result = connector.execute_query("SELECT 1 AS id", result_format="list")
+        assert result.success is False
+        assert "did not apply" in result.error
+        assert not any(sql.startswith("SELECT") for sql, _ in session.executed)
+        session.rollback.assert_called_once()
+        session.close.assert_called_once()
+    finally:
+        connector.close()
+
+
+def test_server_default_is_preserved_when_the_caller_changes_its_mode():
+    connector = pooled_connector(ResolverSession(True), ResolverSession(False))
+    try:
+        assert connector.get_default_identifier_case_sensitive() is True
+        assert connector.execute_content_set("SET spark.sql.caseSensitive=false").success
+        assert connector.get_identifier_case_sensitive() is False
+        assert connector.get_default_identifier_case_sensitive() is True
+        assert Context().run(connector.get_identifier_case_sensitive) is True
+    finally:
+        connector.close()
+
+
+@pytest.mark.parametrize(
+    "details,expected",
+    [
+        (
+            [("id", "INT"), ("# Detailed Table Information", ""), ("Table", "orders"), ("Type", "MANAGED")],
+            {"name": "orders", "type": "MANAGED"},
+        ),
+        (
+            [("id", "INT"), ("# Detailed Table Information", ""), ("Table", "orders"), ("Type", "VIEW")],
+            {"name": "orders", "type": "VIEW"},
+        ),
+        ([("id", "INT")], {"name": "ORDERS", "type": "UNKNOWN"}),
+        ([("# Detailed Table Information", ""), ("Type", "MANAGED")], None),
+    ],
+)
+@pytest.mark.parametrize("unqualified", [False, True])
+def test_relation_metadata_resolves_only_the_requested_qualified_or_unqualified_object(details, expected, unqualified):
+    session = ResolverSession(details=details)
+    connector = pooled_connector(session)
+    try:
+        if expected is None:
+            with pytest.raises(ValueError, match="relation name is unavailable"):
+                connector.get_relation_info("ORDERS", "sales", unqualified=unqualified)
+        else:
+            assert connector.get_relation_info("ORDERS", "sales", unqualified=unqualified) == expected
+        reference = "`ORDERS`" if unqualified else "`sales`.`ORDERS`"
+        assert ("DESCRIBE TABLE EXTENDED " + reference, False) in session.executed
+        assert not any(sql.startswith("SHOW TABLES") or sql.startswith("SHOW VIEWS") for sql, _ in session.executed)
     finally:
         connector.close()
 

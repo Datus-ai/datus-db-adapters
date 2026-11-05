@@ -17,6 +17,10 @@ def test_targeted_ddl_uses_filtered_catalog(missing):
     queries = []
 
     def execute(sql, **kwargs):
+        if sql.startswith("SET spark.sql.caseSensitive"):
+            result = MagicMock()
+            result.mappings.return_value.all.return_value = [{"value": "false"}]
+            return result
         queries.append(sql)
         if sql.startswith("SHOW CREATE"):
             rows = [{"ddl": "CREATE TABLE orders (id INT)"}]

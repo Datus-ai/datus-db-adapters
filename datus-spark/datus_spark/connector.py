@@ -2,6 +2,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+from threading import RLock
 from typing import Any, Dict, List, Optional, Set, Union, override
 from urllib.parse import quote_plus
 
@@ -39,6 +42,9 @@ class SparkConnector(SQLAlchemyConnector):
             raise TypeError(f"config must be SparkConfig or dict, got {type(config)}")
 
         self._query_timeout = config.query_timeout_seconds or config.timeout_seconds
+        self._identifier_mode = ContextVar(f"spark_identifier_mode_{id(self)}", default=None)
+        self._default_identifier_mode = None
+        self._identifier_mode_lock = RLock()
 
         self.spark_config = config
         self.host = config.host
@@ -73,6 +79,47 @@ class SparkConnector(SQLAlchemyConnector):
         engine = super()._create_engine(connection_string, **options)
         configure_thrift_timeouts(engine, self.timeout_seconds, self._query_timeout)
         return engine
+
+    @staticmethod
+    def _read_identifier_mode(conn) -> bool:
+        result = (
+            conn.exec_driver_sql("SET spark.sql.caseSensitive", execution_options={"no_parameters": True})
+            .mappings()
+            .all()
+        )
+        if len(result) != 1 or "value" not in result[0]:
+            raise ValueError("actual Spark identifier case mode is unavailable")
+        value = str(result[0]["value"]).lower()
+        if value not in {"true", "false"}:
+            raise ValueError("actual Spark identifier case mode is unavailable")
+        return value == "true"
+
+    @contextmanager
+    def _conn(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        """Replay this execution context's resolver mode on every pooled lease.
+
+        A SET issued on one session must not leave the next protected read with
+        different rules. ContextVar keeps concurrent callers' settings separate.
+        """
+        with super()._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
+            with self._identifier_mode_lock:
+                if self._default_identifier_mode is None:
+                    self._default_identifier_mode = self._read_identifier_mode(conn)
+            mode = self._identifier_mode.get()
+            if mode is None:
+                mode = self._default_identifier_mode
+                self._identifier_mode.set(mode)
+            conn.exec_driver_sql(
+                f"SET spark.sql.caseSensitive={'true' if mode else 'false'}",
+                execution_options={"no_parameters": True},
+            ).close()
+            # Confirm the setting on this exact lease before any query runs.
+            if self._read_identifier_mode(conn) != mode:
+                raise ValueError("Spark session did not apply its identifier case mode")
+            yield conn
+            # Preserve intentional SET changes made through this lease, including
+            # execute_content_set(), for later operations in the same context.
+            self._identifier_mode.set(self._read_identifier_mode(conn))
 
     # ==================== Context Manager Support ====================
 
@@ -120,17 +167,38 @@ class SparkConnector(SQLAlchemyConnector):
     def get_identifier_case_sensitive(self) -> bool:
         """Read Spark's actual resolver mode without admitting SET as read SQL."""
         with self._conn() as conn:
-            result = (
-                conn.exec_driver_sql("SET spark.sql.caseSensitive", execution_options={"no_parameters": True})
-                .mappings()
-                .all()
-            )
-        if len(result) != 1 or "value" not in result[0]:
-            raise ValueError("actual Spark identifier case mode is unavailable")
-        value = str(result[0]["value"]).lower()
-        if value not in {"true", "false"}:
-            raise ValueError("actual Spark identifier case mode is unavailable")
-        return value == "true"
+            return self._read_identifier_mode(conn)
+
+    def get_default_identifier_case_sensitive(self) -> bool:
+        """Resolver mode of a fresh server session, before caller SET commands."""
+        if self._default_identifier_mode is None:
+            self.get_identifier_case_sensitive()
+        return self._default_identifier_mode
+
+    def get_relation_info(
+        self, table_name: str, database_name: str = "", *, unqualified: bool = False
+    ) -> Dict[str, str]:
+        """Ask Spark to resolve one relation, including temporary-view shadowing.
+
+        Missing detailed metadata is treated as opaque, never as a physical table.
+        Names are returned as stored by Spark; the caller owns identifier policy.
+        """
+        reference = (
+            self.quote_identifier(table_name)
+            if unqualified
+            else self.full_name(database_name=database_name, table_name=table_name)
+        )
+        result = self._execute_pandas(f"DESCRIBE TABLE EXTENDED {reference}", database_name=database_name)
+        details, detailed = {}, False
+        for row in result.itertuples(index=False, name=None):
+            key = str(row[0]).strip()
+            if key == "# Detailed Table Information":
+                detailed = True
+            elif detailed and len(row) > 1:
+                details[key] = str(row[1])
+        if details.get("Type") in {"MANAGED", "EXTERNAL"} and not details.get("Table"):
+            raise ValueError("canonical Spark relation name is unavailable")
+        return {"name": details.get("Table", table_name), "type": details.get("Type", "UNKNOWN")}
 
     @override
     @staticmethod
