@@ -43,7 +43,7 @@ class SparkConnector(SQLAlchemyConnector):
 
         self._query_timeout = config.query_timeout_seconds or config.timeout_seconds
         self._identifier_mode = ContextVar(f"spark_identifier_mode_{id(self)}", default=None)
-        self._identifier_mode_version = ContextVar(f"spark_identifier_mode_version_{id(self)}", default=0)
+        self._identifier_mode_version = ContextVar(f"spark_identifier_mode_version_{id(self)}", default=None)
         self._default_identifier_mode = None
         self._identifier_mode_lock = RLock()
 
@@ -118,14 +118,17 @@ class SparkConnector(SQLAlchemyConnector):
             if self._read_identifier_mode(conn) != mode:
                 raise ValueError("Spark session did not apply its identifier case mode")
             version = self._identifier_mode_version.get()
+            if version is None:
+                version = object()
+                self._identifier_mode_version.set(version)
             yield conn
             # Preserve intentional SET changes made through this lease, including
             # execute_content_set(), for later operations in the same context.
             # A paused iterator may finish after a newer SET on another lease.
             # Its old session must not overwrite that newer execution context.
-            if self._identifier_mode_version.get() == version:
+            if self._identifier_mode_version.get() is version:
                 self._identifier_mode.set(self._read_identifier_mode(conn))
-                self._identifier_mode_version.set(version + 1)
+                self._identifier_mode_version.set(object())
 
     # ==================== Context Manager Support ====================
 

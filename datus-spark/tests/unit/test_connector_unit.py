@@ -143,6 +143,22 @@ def test_finishing_an_older_csv_iterator_cannot_overwrite_a_newer_set():
         connector.close()
 
 
+def test_consuming_another_contexts_stream_cannot_overwrite_the_consumers_mode():
+    connector = pooled_connector(ResolverSession(False), ResolverSession(False))
+    producer, consumer = Context(), Context()
+    iterator = connector.execute_csv_iterator("SELECT 1 AS id", with_header=False)
+    try:
+        assert producer.run(connector.execute_content_set, "SET spark.sql.caseSensitive=false").success
+        assert consumer.run(connector.execute_content_set, "SET spark.sql.caseSensitive=true").success
+        assert producer.run(next, iterator) == (1,)
+        assert consumer.run(list, iterator) == []
+        assert consumer.run(connector.get_identifier_case_sensitive) is True
+        assert producer.run(connector.get_identifier_case_sensitive) is False
+    finally:
+        iterator.close()
+        connector.close()
+
+
 @pytest.mark.parametrize(
     "details,expected",
     [
