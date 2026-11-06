@@ -26,7 +26,7 @@ def test_uri_with_sid():
 def test_uri_with_dsn():
     config = OracleConfig(username="u", password="pw", dsn="prod_alias")
     uri = build_oracle_uri(config)
-    assert uri == "oracle+oracledb://u:pw@prod_alias"
+    assert uri == "oracle+oracledb://u:pw@?dsn=prod_alias"
 
 
 @pytest.mark.acceptance
@@ -64,3 +64,23 @@ def test_resolve_context_defaults_to_upper_username():
     config = OracleConfig(username="datus_test", service_name="FREEPDB1")
     _, _, _, schema = resolve_oracle_context(config, "")
     assert schema == "DATUS_TEST"
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "prod_alias",
+        "db.example.com:1521/FREEPDB1",
+        "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=db.example.com)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=FREEPDB1)))",
+    ],
+)
+def test_dsn_reaches_driver_without_url_host_encoding(dsn):
+    import oracledb
+    from sqlalchemy.dialects.oracle.oracledb import OracleDialect_oracledb
+    from sqlalchemy.engine.url import make_url
+
+    config = OracleConfig(username="user@corp", password="p@ss:w/rd#1", dsn=dsn)
+    dialect = OracleDialect_oracledb(dbapi=oracledb)
+    positional, kwargs = dialect.create_connect_args(make_url(build_oracle_uri(config)))
+    assert positional == []
+    assert kwargs == {"dsn": dsn, "user": "user@corp", "password": "p@ss:w/rd#1"}
