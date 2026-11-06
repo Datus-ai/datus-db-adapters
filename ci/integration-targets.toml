@@ -119,4 +119,5 @@ packages_without_live_targets = [
     "datus-db-core",
     "datus-redshift",
     "datus-sqlalchemy",
+    "datus-databricks", # SQL warehouse: no self-hosted compose target yet.
 ]

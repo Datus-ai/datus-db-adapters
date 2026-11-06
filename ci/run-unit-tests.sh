@@ -30,6 +30,7 @@ PACKAGE_SPECS=(
   "datus-gaussdb:datus-gaussdb/tests/unit"
   "datus-bigquery:datus-bigquery/tests/unit"
   "datus-dws:datus-dws/tests/unit"
+  "datus-databricks:datus-databricks/tests/unit"
 )
 
 usage() {
