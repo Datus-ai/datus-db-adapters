@@ -81,6 +81,9 @@ def _log_sql_exception(event: str, sql: str, exc: Exception) -> None:
         driver_error = driver_error.replace(statement, "<sql>")
     if normalized_sql and normalized_sql != statement:
         driver_error = driver_error.replace(normalized_sql, "<sql>")
+    encoded_error = driver_error.encode("utf-8", errors="replace")
+    if len(encoded_error) > 2048:
+        driver_error = encoded_error[:2032].decode("utf-8", errors="ignore") + " [truncated]"
     safe_exception = RuntimeError(driver_error)
     logger.error(
         "%s; sql_preview=%r; sql_chars=%d; error_type=%s; error=%s",
@@ -105,6 +108,67 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
     with no_parameters=True to preserve literal colons and percent signs without
     SQLAlchemy bind parsing or DBAPI interpolation of an empty parameter set.
     """
+
+    @property
+    def supports_streaming_read(self) -> bool:
+        dialect = self._ensure_engine().dialect
+        # SQLite evaluates locally; Oracle cursors are already server cursors.
+        # Other drivers must explicitly support SQLAlchemy's unbuffered mode.
+        return dialect.name in {"sqlite", "oracle"} or bool(dialect.supports_server_side_cursors)
+
+    def iter_query_batches(self, sql: str, batch_size: int = 5000):
+        """Stream Arrow tables, keeping the connection until exhaustion/close.
+
+        A batch can infer a null type for an entirely-null column; consumers
+        must reconcile batch schemas before publishing a typed output file.
+        """
+        import pyarrow as pa
+
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+        if parse_sql_type(sql, self.dialect) not in (SQLType.SELECT, SQLType.METADATA_SHOW):
+            raise ValueError("Only read-only queries can be streamed")
+        if not self.supports_streaming_read:
+            raise NotImplementedError("This SQLAlchemy driver does not provide bounded streaming reads")
+        try:
+            with self._conn() as conn:
+                result = conn.exec_driver_sql(
+                    sql, execution_options={"no_parameters": True, "stream_results": True, "max_row_buffer": batch_size}
+                )
+                complete = False
+                try:
+                    columns = list(result.keys())
+                    if len(set(columns)) != len(columns):
+                        raise ValueError("Query output columns must have unique names; add explicit aliases")
+                    emitted = False
+                    while rows := result.fetchmany(batch_size):
+                        emitted = True
+                        yield pa.Table.from_arrays(
+                            [pa.array([row[index] for row in rows]) for index in range(len(columns))], names=columns
+                        )
+                    complete = True
+                    if not emitted:
+                        yield pa.table({column: pa.array([], type=pa.null()) for column in columns})
+                finally:
+                    if complete:
+                        result.close()
+                    else:
+                        # Closing an active MySQL SSCursor drains every unread
+                        # row. Drop its transport first on limits/cancellation
+                        # so aborting a bounded read never consumes the rest.
+                        conn.invalidate()
+                        driver_result = getattr(result.cursor, "_result", None)
+                        if type(driver_result).__module__.startswith("pymysql."):
+                            # PyMySQL's result destructor otherwise drains the
+                            # already-closed socket and emits unraisable errors.
+                            driver_result.unbuffered_active = False
+                            driver_result.connection = None
+                        try:
+                            result.close()
+                        except Exception:
+                            pass  # The cursor's transport is already closed.
+        except Exception as exc:
+            raise self._handle_exception(exc, sql, "streaming query") from exc
 
     def __init__(self, connection_string: str, dialect: str = "", timeout_seconds: int = 30):
         """
