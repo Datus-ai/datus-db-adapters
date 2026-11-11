@@ -267,6 +267,16 @@ def test_handle_exception_classifies_and_logs_common_failures(exception, expecte
     assert caplog.records[-1].exc_info[2] is exception.__traceback__
 
 
+def test_driver_error_payload_cannot_expand_log_records(caplog):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="sqlite")
+    raw_error = "bulk query failed: " + "数据" * 700000
+    connector._handle_exception(RuntimeError(raw_error), "SELECT 1", "streaming query")
+    assert len(caplog.text.encode("utf-8")) < 8192
+    assert "bulk query failed:" in caplog.text
+    assert "[truncated]" in caplog.text
+    assert raw_error not in caplog.text
+
+
 @pytest.mark.parametrize("wrapper", [sa_exc.OperationalError, sa_exc.InternalError, sa_exc.DatabaseError])
 @pytest.mark.parametrize(
     "reason",

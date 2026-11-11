@@ -19,6 +19,17 @@ _UNSET = object()
 
 
 class BaseSqlConnector(ABC):
+    supports_streaming_read = False
+
+    def iter_query_batches(self, sql: str, batch_size: int = 5000):
+        """Yield Arrow tables without materializing the full query result.
+
+        Yield an empty table carrying column names for an empty result. Schemas
+        may promote null types between batches. Consumers must close the
+        iterator on early exit to release its database connection.
+        """
+        raise NotImplementedError("This adapter does not support streaming query reads")
+
     def __new__(cls, *args, **kwargs):
         instance = super().__new__(cls)
         # ContextVar: works with both threading and asyncio (per-task isolation).

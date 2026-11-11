@@ -6,6 +6,7 @@ closes the peer even when the client under test has no read deadline.
 """
 
 import socket
+import ssl
 import struct
 import threading
 from contextlib import AbstractContextManager
@@ -20,6 +21,8 @@ class StallingMySQLServer(AbstractContextManager):
         safety_timeout: Independent connection deadline protecting the test.
         stall_handshake: Withhold the initial greeting instead of a query reply.
         reject: Predicate selecting session settings to reject as unsupported.
+        stall_after_row: Send metadata and one row, then withhold the final EOF.
+        ssl_context: Optional server context for verified-TLS protocol tests.
     """
 
     def __init__(
@@ -29,10 +32,14 @@ class StallingMySQLServer(AbstractContextManager):
         *,
         stall_handshake: bool = False,
         reject: Callable[[str], bool] | None = None,
+        stall_after_row: Callable[[str], bool] | None = None,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         self.stall = stall
         self.stall_handshake = stall_handshake
         self.reject = reject
+        self.stall_after_row = stall_after_row
+        self.ssl_context = ssl_context
         self.safety_timeout = safety_timeout
         self.statements: list[str] = []
         self.connections = 0
@@ -87,14 +94,20 @@ class StallingMySQLServer(AbstractContextManager):
         )
         eof = b"\xfe\x00\x00\x02\x00"
         row = b"\xfb" if value is None else bytes([len(value)]) + value
-        for sequence, payload in enumerate((b"\x01", column, eof, row, eof), 1):
+        stalled = self.stall_after_row is not None and self.stall_after_row(self.statements[-1])
+        payloads = (b"\x01", column, eof, row) if stalled else (b"\x01", column, eof, row, eof)
+        for sequence, payload in enumerate(payloads, 1):
             self._packet(conn, payload, sequence)
+        if stalled:
+            self._stall(conn)
 
     def _session(self, conn: socket.socket) -> None:
         if self.stall_handshake and not self.stalled.is_set():
             self._stall(conn)
             return
         capabilities = 0x00088205  # protocol 4.1, secure connection, plugin auth
+        if self.ssl_context is not None:
+            capabilities |= 0x800  # CLIENT_SSL
         handshake = (
             b"\x0a8.0.36\x00"
             + struct.pack("<I", self.connections)
@@ -108,8 +121,21 @@ class StallingMySQLServer(AbstractContextManager):
         )
         ok = b"\x00\x00\x00\x02\x00\x00\x00"
         self._packet(conn, handshake)
-        self._receive(conn)
-        self._packet(conn, ok, 2)
+        authentication = self._receive(conn)
+        tls = self.ssl_context is not None and int.from_bytes(authentication[:4], "little") & 0x800
+        wrapped = None
+        if tls:
+            wrapped = self.ssl_context.wrap_socket(conn, server_side=True)
+            conn = wrapped
+            self._receive(conn)
+        try:
+            self._packet(conn, ok, 3 if tls else 2)
+            self._queries(conn, ok)
+        finally:
+            if wrapped is not None:
+                wrapped.close()
+
+    def _queries(self, conn: socket.socket, ok: bytes) -> None:
         while not self._stop.is_set():
             packet = self._receive(conn)
             if packet[0] == 1:  # COM_QUIT
@@ -148,8 +174,9 @@ class StallingMySQLServer(AbstractContextManager):
     def _stall(self, conn: socket.socket) -> None:
         self.stalled.set()
         # A correctly bounded client closes this socket after its timeout.
-        if conn.recv(1) == b"":
-            self.client_closed.set()
+        while conn.recv(1024):
+            pass
+        self.client_closed.set()
 
     def _serve(self) -> None:
         while not self._stop.is_set():

@@ -1,4 +1,7 @@
+import runpy
+import ssl
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pymysql
@@ -133,5 +136,41 @@ def test_stalled_handshake_is_bounded():
             assert server.client_closed.wait(1)
             assert server.connections == 1
             assert server.statements == []
+        finally:
+            connector.close()
+
+
+@pytest.mark.parametrize("verified_tls", [False, True])
+def test_abandoned_unbuffered_query_closes_without_draining(tmp_path, verified_tls):
+    """Use real PyMySQL, including verified TLS, against a stalled result body."""
+    ssl_context = None
+    settings = {"username": "test", "timeout_seconds": 3}
+    if verified_tls:
+        directory = tmp_path / "certificates"
+        generator = Path(__file__).resolve().parents[3] / "ci/integration/generate_tls.py"
+        runpy.run_path(str(generator))["generate"](directory)
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(directory / "server.crt", directory / "server.key")
+        settings.update(
+            host="localhost", ssl_ca=str(directory / "ca.crt"), ssl_verify_cert=True, ssl_verify_identity=True
+        )
+    with StallingMySQLServer(
+        lambda sql: False, stall_after_row=lambda sql: "stream_lifecycle" in sql, ssl_context=ssl_context
+    ) as server:
+        connector = MySQLConnector({**settings, "port": server.port})
+        invalidated = []
+        event.listen(connector._ensure_engine(), "invalidate", lambda *args: invalidated.append(args))
+        try:
+            batches = connector.iter_query_batches("SELECT 'stream_lifecycle' AS value", batch_size=1)
+            assert next(batches).to_pylist() == [{"value": "1"}]
+            assert server.stalled.wait(1) is True
+            started = time.monotonic()
+            batches.close()
+            assert time.monotonic() - started < 1
+            assert server.client_closed.wait(1)
+            assert len(invalidated) == 1
+            assert sum("stream_lifecycle" in sql for sql in server.statements) == 1
+            assert connector.execute_query("SELECT 42").success is True
+            assert server.connections == 2
         finally:
             connector.close()
