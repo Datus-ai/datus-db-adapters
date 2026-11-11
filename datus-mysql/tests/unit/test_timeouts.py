@@ -163,7 +163,7 @@ def test_abandoned_unbuffered_query_closes_without_draining(tmp_path, verified_t
         try:
             batches = connector.iter_query_batches("SELECT 'stream_lifecycle' AS value", batch_size=1)
             assert next(batches).to_pylist() == [{"value": "1"}]
-            assert server.stalled.is_set()
+            assert server.stalled.wait(1) is True
             started = time.monotonic()
             batches.close()
             assert time.monotonic() - started < 1
