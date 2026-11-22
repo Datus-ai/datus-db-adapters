@@ -19,7 +19,7 @@ classifiers = [
 
 dependencies = [
     "datus-db-core>=0.1.11",
-    "datus-postgresql>=0.1.11",
+    "datus-postgresql>=0.1.12",
     "pydantic>=2.0.0",
 ]
 
