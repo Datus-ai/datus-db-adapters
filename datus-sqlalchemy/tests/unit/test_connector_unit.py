@@ -433,3 +433,71 @@ def test_network_error_invalidation_follows_native_exception_chain(chain):
     context = SimpleNamespace(original_exception=error, is_disconnect=False)
     SQLAlchemyConnector._invalidate_network_error(context)
     assert context.is_disconnect is (chain in ("direct", "cause", "context"))
+
+
+def test_execute_query_timeout_override_enters_scope_around_select():
+    from contextlib import contextmanager
+
+    events = []
+
+    class TimedConnector(DummySQLAlchemyConnector):
+        supports_query_timeout_override = True
+
+        @contextmanager
+        def _query_timeout_scope(self, conn, seconds: int):
+            events.append(("enter", conn, seconds))
+            try:
+                yield
+            finally:
+                events.append(("exit", conn, seconds))
+
+    connector = TimedConnector("sqlite://", dialect="mysql")
+    mock_conn = MagicMock()
+    query_result = MagicMock()
+    query_result.fetchall.return_value = [MagicMock(_asdict=lambda: {"n": 1})]
+
+    def run_sql(sql, **kwargs):
+        events.append(("execute", sql))
+        return query_result
+
+    mock_conn.exec_driver_sql.side_effect = run_sql
+    engine = MagicMock()
+    engine.connect.return_value = mock_conn
+
+    with patch("datus_sqlalchemy.connector.create_engine", return_value=engine):
+        result = connector.execute_query("SELECT 1 AS n", result_format="list", query_timeout_seconds=12)
+
+    assert result.success is True
+    assert result.sql_return == [{"n": 1}]
+    assert events == [
+        ("enter", mock_conn, 12),
+        ("execute", "SELECT 1 AS n"),
+        ("exit", mock_conn, 12),
+    ]
+
+
+@pytest.mark.parametrize(
+    "supported, sql, timeout, expected_error",
+    [
+        (False, "SELECT 1", 5, "does not support"),
+        (True, "SELECT 1", 0, "positive integer"),
+        (True, "SELECT 1", -1, "positive integer"),
+        (True, "SELECT 1", True, "positive integer"),
+        (True, "SELECT 1", 1.5, "positive integer"),
+        (True, "SHOW TABLES", 5, "SELECT"),
+        (True, "EXPLAIN SELECT 1", 5, "SELECT"),
+    ],
+)
+def test_execute_query_timeout_override_rejects_invalid_or_unsupported_before_connecting(
+    supported, sql, timeout, expected_error
+):
+    connector = DummySQLAlchemyConnector("sqlite://", dialect="mysql")
+    connector.supports_query_timeout_override = supported
+    engine = MagicMock()
+
+    with patch("datus_sqlalchemy.connector.create_engine", return_value=engine):
+        result = connector.execute_query(sql, result_format="list", query_timeout_seconds=timeout)
+
+    assert result.success is False
+    assert expected_error in result.error
+    engine.connect.assert_not_called()

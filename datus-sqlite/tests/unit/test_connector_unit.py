@@ -6,6 +6,43 @@ import pytest
 from datus_sqlite import SQLiteConfig, SQLiteConnector
 
 
+def test_query_timeout_interrupts_sqlite_without_leaking_to_the_next_select():
+    connector = SQLiteConnector({"uri": ":memory:"})
+    try:
+        sql = (
+            "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < 100000000) "
+            "SELECT SUM(n) FROM seq"
+        )
+        result = connector.execute_query(sql, query_timeout_seconds=1)
+        assert not result.success and "Query timed out after 1 seconds" in result.error
+        assert connector.execute_query("SELECT 42 AS answer", result_format="list").sql_return == [{"answer": 42}]
+    finally:
+        connector.close()
+
+
+@pytest.mark.parametrize(
+    "sql, timeout, expected_error",
+    [
+        ("PRAGMA table_list", 1, "SELECT"),
+        ("EXPLAIN SELECT 1", 1, "SELECT"),
+        ("CREATE TABLE t (id INT)", 1, "SELECT"),
+        ("SELECT 1", 0, "positive integer"),
+        ("SELECT 1", -1, "positive integer"),
+    ],
+)
+def test_query_timeout_rejects_non_select_and_invalid_values(sql, timeout, expected_error):
+    connector = SQLiteConnector({"uri": ":memory:"})
+    try:
+        result = connector.execute_query(sql, result_format="list", query_timeout_seconds=timeout)
+        assert result.success is False
+        assert expected_error in result.error
+        tables = connector.execute_query("SELECT name FROM sqlite_master WHERE type='table'", result_format="list")
+        assert tables.success is True
+        assert tables.sql_return == []
+    finally:
+        connector.close()
+
+
 def test_context_quoting_and_close_failure():
     db = SQLiteConnector(SQLiteConfig(uri="sqlite:////tmp/retail.db"))
     assert db.db_path == "/tmp/retail.db"
