@@ -20,11 +20,9 @@ from datus_db_core import (
     ExecuteSQLResult,
     MigrationTargetMixin,
     SchemaNamespaceMixin,
-    SQLType,
     get_logger,
     list_to_in_str,
     parse_context_switch,
-    parse_sql_type,
 )
 from datus_duckdb.config import DuckDBConfig
 
@@ -634,11 +632,14 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             cursor = self.connection.cursor()
             scope = nullcontext()
             if query_timeout_seconds is not None:
-                from datus_db_core.query_timeout import duckdb_query_timeout, validate_query_timeout
+                from datus_db_core.query_timeout import (
+                    duckdb_query_timeout,
+                    validate_query_timeout,
+                    validate_select_query_for_timeout,
+                )
 
                 validate_query_timeout(query_timeout_seconds)
-                if parse_sql_type(sql, self.dialect) != SQLType.SELECT:
-                    raise ValueError("A per-query timeout can only be set on SELECT queries")
+                validate_select_query_for_timeout(sql, self.dialect)
                 scope = duckdb_query_timeout(cursor, query_timeout_seconds, duckdb.InterruptException)
             with scope:
                 result = cursor.execute(sql)

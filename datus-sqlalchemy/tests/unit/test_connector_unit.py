@@ -486,6 +486,7 @@ def test_execute_query_timeout_override_enters_scope_around_select():
         (True, "SELECT 1", 1.5, "positive integer"),
         (True, "SHOW TABLES", 5, "SELECT"),
         (True, "EXPLAIN SELECT 1", 5, "SELECT"),
+        (True, "SELECT 1; SET LOCAL statement_timeout = 0; SELECT 2", 5, "single SELECT"),
     ],
 )
 def test_execute_query_timeout_override_rejects_invalid_or_unsupported_before_connecting(

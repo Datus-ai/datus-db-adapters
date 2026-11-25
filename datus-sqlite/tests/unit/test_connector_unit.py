@@ -26,6 +26,7 @@ def test_query_timeout_interrupts_sqlite_without_leaking_to_the_next_select():
         ("PRAGMA table_list", 1, "SELECT"),
         ("EXPLAIN SELECT 1", 1, "SELECT"),
         ("CREATE TABLE t (id INT)", 1, "SELECT"),
+        ("SELECT 1; CREATE TABLE t (id INT); SELECT 42", 1, "single SELECT"),
         ("SELECT 1", 0, "positive integer"),
         ("SELECT 1", -1, "positive integer"),
     ],
@@ -39,6 +40,9 @@ def test_query_timeout_rejects_non_select_and_invalid_values(sql, timeout, expec
         tables = connector.execute_query("SELECT name FROM sqlite_master WHERE type='table'", result_format="list")
         assert tables.success is True
         assert tables.sql_return == []
+        single = connector.execute_query("SELECT 'a;b' AS txt;", result_format="list", query_timeout_seconds=1)
+        assert single.success is True
+        assert single.sql_return == [{"txt": "a;b"}]
     finally:
         connector.close()
 

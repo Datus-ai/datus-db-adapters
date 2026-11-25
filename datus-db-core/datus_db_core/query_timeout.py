@@ -15,6 +15,14 @@ def validate_query_timeout(seconds: int) -> None:
         raise ValueError("query_timeout_seconds must be a positive integer")
 
 
+def validate_select_query_for_timeout(sql: str, dialect: str) -> None:
+    from datus_db_core.constants import SQLType
+    from datus_db_core.sql_utils import is_single_statement, parse_sql_type
+
+    if not is_single_statement(sql) or parse_sql_type(sql, dialect) != SQLType.SELECT:
+        raise ValueError("A per-query timeout can only be set on a single SELECT query")
+
+
 def _deadline_error(seconds: int) -> DatusDbException:
     return DatusDbException(
         ErrorCode.DB_EXECUTION_TIMEOUT, message_args={"error_message": f"Query timed out after {seconds} seconds"}
@@ -24,6 +32,11 @@ def _deadline_error(seconds: int) -> DatusDbException:
 @contextmanager
 def sqlite_query_timeout(connection: sqlite3.Connection, seconds: int) -> Iterator[None]:
     validate_query_timeout(seconds)
+    previous_busy_ms = max(0, int(connection.execute("PRAGMA busy_timeout").fetchone()[0]))
+    timeout_ms = seconds * 1000
+    capped_busy = previous_busy_ms > timeout_ms
+    if capped_busy:
+        connection.execute(f"PRAGMA busy_timeout = {timeout_ms}")
     deadline = monotonic() + seconds
     interrupted = False
 
@@ -35,12 +48,21 @@ def sqlite_query_timeout(connection: sqlite3.Connection, seconds: int) -> Iterat
     connection.set_progress_handler(progress, 1000)
     try:
         yield
+        if monotonic() >= deadline:
+            raise _deadline_error(seconds)
     except sqlite3.OperationalError as exc:
-        if interrupted and getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_INTERRUPT:
+        code = getattr(exc, "sqlite_errorcode", None)
+        base_code = (code & 0xFF) if isinstance(code, int) else None
+        if interrupted and base_code == sqlite3.SQLITE_INTERRUPT:
+            raise _deadline_error(seconds) from exc
+        # Allow a small timer-jitter margin when SQLite's ms busy handler exits right at the cap.
+        if base_code == sqlite3.SQLITE_BUSY and monotonic() >= deadline - 0.05:
             raise _deadline_error(seconds) from exc
         raise
     finally:
         connection.set_progress_handler(None, 0)
+        if capped_busy:
+            connection.execute(f"PRAGMA busy_timeout = {previous_busy_ms}")
 
 
 @contextmanager

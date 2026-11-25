@@ -287,6 +287,22 @@ def _first_statement(sql: str) -> str:
     return s.strip()
 
 
+def is_single_statement(sql: str) -> bool:
+    """Whether the input contains exactly one SQL statement.
+
+    A single trailing semicolon and surrounding comments are allowed;
+    semicolons inside quoted literals or identifiers are ignored.
+    """
+    if not sql or not isinstance(sql, str):
+        return False
+    normalized = strip_sql_comments(sql).strip()
+    if normalized.endswith(";"):
+        normalized = normalized[:-1].strip()
+    if not normalized:
+        return False
+    return _first_statement(normalized) == normalized
+
+
 _METADATA_RE: re.Pattern = re.compile(
     r"""(?ix)^\s*
     (?:

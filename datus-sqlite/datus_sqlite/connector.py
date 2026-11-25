@@ -21,9 +21,7 @@ from datus_db_core import (
     ErrorCode,
     ExecuteSQLResult,
     MigrationTargetMixin,
-    SQLType,
     get_logger,
-    parse_sql_type,
 )
 
 from .config import SQLiteConfig
@@ -313,11 +311,14 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             cursor = self.connection.cursor()
             scope = nullcontext()
             if query_timeout_seconds is not None:
-                from datus_db_core.query_timeout import sqlite_query_timeout, validate_query_timeout
+                from datus_db_core.query_timeout import (
+                    sqlite_query_timeout,
+                    validate_query_timeout,
+                    validate_select_query_for_timeout,
+                )
 
                 validate_query_timeout(query_timeout_seconds)
-                if parse_sql_type(sql, self.dialect) != SQLType.SELECT:
-                    raise ValueError("A per-query timeout can only be set on SELECT queries")
+                validate_select_query_for_timeout(sql, self.dialect)
                 scope = sqlite_query_timeout(self.connection, query_timeout_seconds)
             with scope:
                 cursor.execute(sql)

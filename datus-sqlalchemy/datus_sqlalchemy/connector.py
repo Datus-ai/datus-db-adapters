@@ -573,9 +573,11 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         query_timeout_seconds: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Internal query execution returning list of dicts."""
+        if query_timeout_seconds is not None:
+            from datus_db_core.query_timeout import validate_select_query_for_timeout
+
+            validate_select_query_for_timeout(sql, self.dialect)
         sql_type = parse_sql_type(sql, self.dialect)
-        if query_timeout_seconds is not None and sql_type != SQLType.SELECT:
-            raise ValueError("A per-query timeout can only be set on SELECT queries")
         if sql_type in (
             SQLType.INSERT,
             SQLType.UPDATE,
