@@ -107,6 +107,29 @@ def test_sqlite_rejects_short_statement_that_finishes_after_deadline(monkeypatch
         assert captured.value.code == ErrorCode.DB_EXECUTION_TIMEOUT
 
 
+def test_sqlite_preserves_near_deadline_lock_error_before_deadline(tmp_path, monkeypatch):
+    db_path = tmp_path / "near_deadline.sqlite"
+    with closing(sqlite3.connect(db_path)) as setup:
+        setup.execute("PRAGMA journal_mode = DELETE")
+        setup.execute("CREATE TABLE items (n INTEGER)")
+        setup.execute("INSERT INTO items VALUES (1)")
+        setup.commit()
+
+    monkeypatch.setattr("datus_db_core.query_timeout.monotonic", Mock(side_effect=[0.0, 0.961]))
+    with (
+        closing(sqlite3.connect(db_path, isolation_level=None, timeout=5.0)) as locker,
+        closing(sqlite3.connect(db_path, timeout=0.96)) as reader,
+    ):
+        assert reader.execute("PRAGMA busy_timeout").fetchone() == (960,)
+        locker.execute("BEGIN EXCLUSIVE")
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="locked"), sqlite_query_timeout(reader, 1):
+                reader.execute("SELECT n FROM items").fetchone()
+            assert reader.execute("PRAGMA busy_timeout").fetchone() == (960,)
+        finally:
+            locker.execute("ROLLBACK")
+
+
 def test_duckdb_deadline_calls_the_current_cursor_and_classifies_its_interrupt():
     interrupted = Event()
     cursor = Mock()

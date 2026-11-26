@@ -78,8 +78,7 @@ def sqlite_query_timeout(connection: sqlite3.Connection, seconds: int) -> Iterat
         base_code = (code & 0xFF) if isinstance(code, int) else None
         if interrupted and base_code == sqlite3.SQLITE_INTERRUPT:
             raise _deadline_error(seconds) from exc
-        # Allow a small timer-jitter margin when SQLite's ms busy handler exits right at the cap.
-        if base_code == sqlite3.SQLITE_BUSY and monotonic() >= deadline - 0.05:
+        if base_code == sqlite3.SQLITE_BUSY and monotonic() >= deadline:
             raise _deadline_error(seconds) from exc
         raise
     finally:
