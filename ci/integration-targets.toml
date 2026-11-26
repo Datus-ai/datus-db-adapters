@@ -111,6 +111,10 @@ kind = "compose"
 # Manual 20-case Express trial passed; provision CI storage/credentials/sysctl profile before enabling.
 enabled = false
 
+[targets.mongodb]
+package = "datus-mongodb"
+kind = "compose"
+
 [selection]
 packages_without_live_targets = [
     "datus-sqlite", # Embedded: no server needed.

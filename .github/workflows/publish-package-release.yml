@@ -33,6 +33,7 @@ on:
           - datus-hana
           - datus-gaussdb
           - datus-dws
+          - datus-mongodb
       version:
         description: "Optional version; leave empty or use auto to resolve from main and PyPI"
         required: false
@@ -95,6 +96,10 @@ jobs:
           git checkout --detach "${RELEASE_COMMIT}"
           test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"
 
+      - name: Set up Rust for workspace builds
+        if: steps.resolve.outputs.state != 'complete' && hashFiles('datus-mongodb/Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Prepare release metadata
         if: steps.resolve.outputs.state == 'new'
         env:
@@ -144,15 +149,28 @@ jobs:
             done
           done
 
-      - name: Build release artifacts
+      - name: Build MongoDB release artifacts
+        if: steps.resolve.outputs.state != 'complete' && steps.resolve.outputs.package == 'datus-mongodb'
+        uses: PyO3/maturin-action@v1
+        with:
+          maturin-version: v1.14.1
+          target: x86_64
+          manylinux: "2_28"
+          args: >-
+            --release --locked --sdist --compatibility pypi --auditwheel repair
+            --out dist/release/datus-mongodb --manifest-path datus-mongodb/Cargo.toml
+
+      - name: Validate release artifacts
         if: steps.resolve.outputs.state != 'complete'
         env:
           PACKAGE: ${{ steps.resolve.outputs.package }}
         run: |
           set -euo pipefail
           release_dir="dist/release/${PACKAGE}"
-          rm -rf dist/release
-          uv build --package "${PACKAGE}" --out-dir "${release_dir}"
+          if [ "${PACKAGE}" != "datus-mongodb" ]; then
+            rm -rf dist/release
+            uv build --package "${PACKAGE}" --out-dir "${release_dir}"
+          fi
           python -m twine check "${release_dir}"/*
           if [ "${PACKAGE}" = "datus-gaussdb" ]; then
             python3 - "${release_dir}" <<'EOF'

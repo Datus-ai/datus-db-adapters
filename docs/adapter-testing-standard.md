@@ -261,6 +261,14 @@ Document every env var in the module docstring as a table (see
 - `metadata_objects_setup` (session) — creates known tables/views for metadata tests to
   exact-compare against
 
+### Document adapters
+
+Document adapters run the same connection, metadata, read-only enforcement, and typed
+result checks against a live server using native document queries. Validate the BSON
+document contract with real documents, including nested fields, missing fields, nulls,
+non-ASCII values, and exact numerics. The SQL table contract and SQL TPC-H setup below
+apply to SQL adapters.
+
 ### Shared contract test (non-negotiable)
 
 `test_contract.py` must call the shared contract module — never hand-roll it. One test function,

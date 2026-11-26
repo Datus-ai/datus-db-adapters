@@ -1,0 +1,29 @@
+[project]
+name = "datus-mongodb"
+version = "0.1.0"
+description = "Read-only MongoDB SQL and document adapter for Datus"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+dependencies = ["datus-db-core>=0.1.11", "pymongo>=4.10,<5"]
+
+[project.optional-dependencies]
+sql = ["pyarrow>=14.0.0", "pandas>=2.1.4"]
+
+[project.entry-points."datus.adapters"]
+mongodb = "datus_mongodb:register"
+
+[tool.uv.sources]
+datus-db-core = {workspace = true}
+
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "datus_mongodb._mongosql"
+locked = true
+
+[tool.pytest.ini_options]
+markers = ["integration: tests that require MongoDB"]
+testpaths = ["tests"]

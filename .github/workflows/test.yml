@@ -36,6 +36,10 @@ jobs:
       - name: Install uv
         uses: ./.github/actions/setup-uv
 
+      - name: Set up Rust for the MongoDB adapter build
+        if: hashFiles('datus-mongodb/Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Resolve changed test base
         id: changed-base
         shell: bash
@@ -150,6 +154,10 @@ jobs:
 
       - name: Install uv
         uses: ./.github/actions/setup-uv
+
+      - name: Set up Rust for the MongoDB adapter build
+        if: matrix.adapter == 'mongodb'
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Run ${{ matrix.adapter }} integration tests
         run: ci/run-integration-tests.sh "${{ matrix.adapter }}"
