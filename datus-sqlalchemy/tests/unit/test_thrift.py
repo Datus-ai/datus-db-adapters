@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine
 from thrift.transport import TTransport
 
-from datus_sqlalchemy.thrift import configure_thrift_timeouts
+from datus_sqlalchemy.thrift import configure_thrift_timeouts, thrift_query_timeout
 
 
 @pytest.fixture
@@ -78,10 +78,14 @@ def test_each_new_connection_sends_query_deadline_on_every_statement(engine):
         execute = Mock(return_value="operation-handle")
         connection = SimpleNamespace(_client=SimpleNamespace(ExecuteStatement=execute))
         engine.pool.dispatch.connect(connection, None)
-        for initial in (None, 99):
-            request = SimpleNamespace(queryTimeout=initial)
-            assert connection._client.ExecuteStatement(request) == "operation-handle"
-            assert request.queryTimeout == 11
+        for override, expected in ((None, 11), (3, 3), (29, 29), (None, 11)):
+            request = SimpleNamespace(queryTimeout=99)
+            if override is None:
+                assert connection._client.ExecuteStatement(request) == "operation-handle"
+            else:
+                with thrift_query_timeout(override):
+                    assert connection._client.ExecuteStatement(request) == "operation-handle"
+            assert request.queryTimeout == expected
             execute.assert_called_with(request)
 
 

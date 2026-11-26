@@ -908,7 +908,7 @@ def test_show_fallback_excludes_materialized_views_from_views():
         raise AssertionError(f"unexpected SQL: {sql}")
 
     connector = _fallback_connector(fake)
-    assert connector.get_views(database_name="test") == ["plain_view"]
+    assert connector.get_views(database_name="test", strict=True) == ["plain_view"]
 
 
 def test_show_fallback_keeps_tables_clean_without_mv_enumeration():
@@ -926,7 +926,7 @@ def test_show_fallback_keeps_tables_clean_without_mv_enumeration():
 
 
 def test_show_fallback_view_listing_gives_up_when_mvs_cannot_be_enumerated():
-    """No MV enumeration means no honest view answer: re-raise, degrade to []."""
+    """An incomplete SHOW fallback must report the original metadata failure."""
 
     def fake(sql, **kwargs):
         if "information_schema" in sql:
@@ -938,11 +938,67 @@ def test_show_fallback_view_listing_gives_up_when_mvs_cannot_be_enumerated():
         raise AssertionError(f"unexpected SQL: {sql}")
 
     connector = _fallback_connector(fake)
-    # _get_metadata re-raises the original information_schema error...
-    with pytest.raises(RuntimeError, match="THRIFT_EAGAIN"):
-        connector._get_metadata(table_type="view", database_name="test")
-    # ...and the public get_views() degrades to an empty list, never leaking MVs.
     assert connector.get_views(database_name="test") == []
+    with pytest.raises(RuntimeError, match="THRIFT_EAGAIN"):
+        connector.get_views(database_name="test", strict=True)
+
+
+def test_materialized_view_listing_raises_if_both_queries_fail():
+    connector = _connector_for_metadata()
+
+    def fail_metadata(sql, **kwargs):
+        if "information_schema.materialized_views" in sql.lower():
+            raise RuntimeError("metadata query timed out")
+        assert sql.startswith("SHOW MATERIALIZED VIEWS FROM")
+        raise RuntimeError("SHOW failed")
+
+    connector._execute_pandas = MagicMock(side_effect=fail_metadata)
+    assert connector.get_materialized_views(database_name="testdb") == []
+    with pytest.raises(RuntimeError, match="metadata query timed out"):
+        connector.get_materialized_views(database_name="testdb", strict=True)
+
+
+def test_strict_materialized_view_listing_can_fall_back_to_show():
+    def read_metadata(sql, **kwargs):
+        if "information_schema.materialized_views" in sql.lower():
+            raise RuntimeError("metadata query timed out")
+        assert sql.startswith("SHOW MATERIALIZED VIEWS FROM")
+        return pd.DataFrame({"id": [1], "database_name": ["test"], "name": ["orders_mv"]})
+
+    connector = _fallback_connector(read_metadata)
+    assert connector.get_materialized_views(database_name="test", strict=True) == ["orders_mv"]
+
+
+@pytest.mark.parametrize(
+    ("method", "metadata_table"),
+    [("get_views", "views"), ("get_materialized_views", "materialized_views")],
+)
+def test_strict_view_listing_accepts_an_empty_result(method, metadata_table):
+    def read_metadata(sql, **kwargs):
+        assert f"information_schema.{metadata_table}" in sql.lower()
+        return pd.DataFrame({"TABLE_SCHEMA": [], "TABLE_NAME": []})
+
+    connector = _fallback_connector(read_metadata)
+    assert getattr(connector, method)(database_name="test", strict=True) == []
+    connector._execute_pandas.assert_called_once()
+
+
+def test_full_sampling_keeps_table_rows_when_view_listing_fails():
+    def read_metadata(sql, **kwargs):
+        if "information_schema.tables" in sql.lower():
+            return pd.DataFrame({"TABLE_SCHEMA": ["test"], "TABLE_NAME": ["orders"]})
+        if "information_schema.materialized_views" in sql.lower():
+            return pd.DataFrame({"TABLE_SCHEMA": [], "TABLE_NAME": []})
+        if "information_schema.views" in sql.lower() or sql.startswith("SHOW FULL TABLES FROM"):
+            raise RuntimeError("view metadata unavailable")
+        assert sql.startswith("SELECT * FROM") and sql.endswith("`orders` LIMIT 5")
+        return pd.DataFrame({"id": [701]})
+
+    connector = _fallback_connector(read_metadata)
+    with patch.object(connector, "_inspector"):
+        samples = connector.get_sample_rows(database_name="test", table_type="full")
+
+    assert [(sample["table_name"], sample["sample_rows"]) for sample in samples] == [("orders", "id\n701\n")]
 
 
 def test_get_schema_queries_catalog_qualified_information_schema():

@@ -8,6 +8,48 @@ from datus_db_core import DatusDbException, ErrorCode
 from datus_duckdb import DuckDBConfig, DuckdbConnector
 
 
+def test_query_timeout_interrupts_duckdb_without_leaking_to_the_next_select():
+    connector = DuckdbConnector({"uri": ":memory:"})
+    try:
+        sql = "SELECT SUM(SIN(i::DOUBLE)) FROM range(1000000000) t(i)"
+        result = connector.execute_query(sql, query_timeout_seconds=1)
+        assert not result.success and "Query timed out after 1 seconds" in result.error
+        assert connector.execute_query("SELECT 42 AS answer", result_format="list").sql_return == [{"answer": 42}]
+    finally:
+        connector.close()
+
+
+@pytest.mark.parametrize(
+    "sql, timeout, expected_error",
+    [
+        ("SHOW TABLES", 1, "SELECT"),
+        ("EXPLAIN SELECT 1", 1, "SELECT"),
+        ("CREATE TABLE t (id INT)", 1, "SELECT"),
+        ("SELECT 1; CREATE TABLE t (id INT); SELECT 42", 1, "single SELECT"),
+        (r"SELECT '\'; CREATE TABLE t (id INT); SELECT '\'", 1, "single SELECT"),
+        ("SELECT 1", 0, "positive integer"),
+        ("SELECT 1", -1, "positive integer"),
+    ],
+)
+def test_query_timeout_rejects_non_select_and_invalid_values(sql, timeout, expected_error):
+    connector = DuckdbConnector({"uri": ":memory:"})
+    try:
+        result = connector.execute_query(sql, result_format="list", query_timeout_seconds=timeout)
+        assert result.success is False
+        assert expected_error in result.error
+        tables = connector.execute_query("SHOW TABLES", result_format="list")
+        assert tables.success is True
+        assert tables.sql_return == []
+        # Trailing semicolon and DuckDB backslash literals remain valid single SELECTs.
+        single = connector.execute_query(
+            r"SELECT '\' AS slash, ';' AS semi;", result_format="list", query_timeout_seconds=1
+        )
+        assert single.success is True
+        assert single.sql_return == [{"slash": "\\", "semi": ";"}]
+    finally:
+        connector.close()
+
+
 def test_file_context_and_close_on_driver_error():
     connector = DuckdbConnector(DuckDBConfig(uri="duckdb:////tmp/retail.duckdb"))
     assert connector.db_path == "/tmp/retail.duckdb"

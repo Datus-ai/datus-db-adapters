@@ -174,3 +174,34 @@ def test_abandoned_unbuffered_query_closes_without_draining(tmp_path, verified_t
             assert server.connections == 2
         finally:
             connector.close()
+
+
+@pytest.mark.parametrize(
+    "config, dialect, expected",
+    [
+        ({}, "mysql", True),
+        ({"aurora": True, "ssl_ca": "/tmp/ca.pem"}, "mysql", False),
+        ({}, "other", False),
+    ],
+)
+def test_query_timeout_override_capability_and_scope(config, dialect, expected):
+    from unittest.mock import MagicMock
+
+    connector = MySQLConnector({"username": "test", **config})
+    connector.dialect = dialect
+    try:
+        assert connector.supports_query_timeout_override is expected
+        if expected:
+            conn = MagicMock(invalidated=False)
+            previous_result = MagicMock()
+            previous_result.scalar_one.return_value = 4000
+            conn.exec_driver_sql.side_effect = [previous_result, MagicMock(), MagicMock()]
+            with connector._query_timeout_scope(conn, 9):
+                pass
+            assert [call.args[0] for call in conn.exec_driver_sql.call_args_list] == [
+                "SELECT @@SESSION.max_execution_time",
+                "SET SESSION max_execution_time = 9000",
+                "SET SESSION max_execution_time = 4000",
+            ]
+    finally:
+        connector.close()

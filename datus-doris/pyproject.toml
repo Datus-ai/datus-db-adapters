@@ -1,6 +1,6 @@
 [project]
 name = "datus-doris"
-version = "0.1.4"
+version = "0.1.5"
 description = "Doris database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,9 +18,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.11",
-    "datus-mysql>=0.1.11",
-    "datus-sqlalchemy>=0.1.13",
+    "datus-db-core>=0.1.12",
+    "datus-mysql>=0.1.12",
+    "datus-sqlalchemy>=0.1.14",
     "pymysql>=1.1.1",
     "pydantic>=2.0.0",
 ]

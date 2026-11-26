@@ -8,7 +8,7 @@ from threading import RLock
 from typing import Any, Dict, List, Optional, Set, Union, override
 from urllib.parse import quote_plus
 
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import URL, Connection, Engine
 
 from datus_db_core import get_logger
 from datus_sqlalchemy import SQLAlchemyConnector
@@ -28,6 +28,13 @@ class SparkConnector(SQLAlchemyConnector):
     Spark uses a two-level hierarchy: database -> table.
     Connects via the Hive SQLAlchemy dialect (pyhive).
     """
+
+    supports_query_timeout_override = True
+
+    def _query_timeout_scope(self, conn: Connection, seconds: int):
+        from datus_sqlalchemy.thrift import thrift_query_timeout
+
+        return thrift_query_timeout(seconds)
 
     def __init__(self, config: Union[SparkConfig, dict]):
         """

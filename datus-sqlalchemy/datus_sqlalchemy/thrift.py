@@ -1,10 +1,24 @@
 """Connection-local PyHive transport and query deadlines for Hive/Spark."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy.engine import Dialect, Engine, ExceptionContext
 from sqlalchemy.pool import ConnectionPoolEntry
+
+_query_timeout: ContextVar[int | None] = ContextVar("thrift_query_timeout", default=None)
+
+
+@contextmanager
+def thrift_query_timeout(seconds: int) -> Iterator[None]:
+    token = _query_timeout.set(seconds)
+    try:
+        yield
+    finally:
+        _query_timeout.reset(token)
 
 
 def configure_thrift_timeouts(engine: Engine, seconds: int, query_seconds: int) -> None:
@@ -66,7 +80,8 @@ def configure_thrift_timeouts(engine: Engine, seconds: int, query_seconds: int) 
         execute = connection._client.ExecuteStatement
 
         def bounded_execute(request: Any) -> Any:
-            request.queryTimeout = query_seconds
+            override = _query_timeout.get()
+            request.queryTimeout = query_seconds if override is None else override
             return execute(request)
 
         connection._client.ExecuteStatement = bounded_execute

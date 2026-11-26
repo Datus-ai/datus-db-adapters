@@ -1,6 +1,6 @@
 [project]
 name = "datus-hive"
-version = "0.1.5"
+version = "0.1.6"
 description = "Hive database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,8 +18,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.11",
-    "datus-sqlalchemy>=0.1.13",
+    "datus-db-core>=0.1.12",
+    "datus-sqlalchemy>=0.1.14",
     "pyhive>=0.7.0",
     "pure-sasl>=0.6.2",
     "thrift>=0.16.0",
