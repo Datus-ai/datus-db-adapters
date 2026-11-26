@@ -27,6 +27,7 @@ COMPOSE_TARGETS = {
     "trino",
     "greenplum",
     "hive",
+    "mongodb",
     "spark",
     "oracle",
     "gaussdb",
@@ -40,7 +41,7 @@ def select(*paths: str):
 def test_sqlalchemy_runtime_change_selects_transitive_starrocks_dependency() -> None:
     selection = select("datus-sqlalchemy/datus_sqlalchemy/connector.py")
 
-    assert selection.compose_targets == COMPOSE_TARGETS
+    assert selection.compose_targets == COMPOSE_TARGETS - {"mongodb"}
     assert "datus-starrocks" in selection.unit_packages
 
 

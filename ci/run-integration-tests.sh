@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER_DEFINITION_DIR="$ROOT_DIR/ci/integration/adapters"
 cd "$ROOT_DIR"
 
-ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris tidb trino greenplum hive spark oracle gaussdb hana)
+ALL_ADAPTERS=(postgresql mysql clickhouse starrocks doris tidb trino greenplum hive spark oracle gaussdb hana mongodb)
 DOCKER_COMPOSE=()
 STARTED_ADAPTERS=()
 CURRENT_ADAPTER=""
@@ -547,7 +547,11 @@ for adapter in "${selected_adapters[@]}"; do
   prepare_adapter_test_artifacts
   wait_for_adapter_client_readiness
 
-  uv run --package "$ADAPTER_PACKAGE" --with pytest --with pandas --with pyarrow \
+  test_dependencies=(--with pandas --with pyarrow)
+  if [ "$ADAPTER_PACKAGE" = "datus-mongodb" ]; then
+    test_dependencies=(--extra sql)
+  fi
+  uv run --package "$ADAPTER_PACKAGE" --with pytest "${test_dependencies[@]}" \
     pytest "$ADAPTER_TEST_PATH" -m integration --tb=short --verbose
 
   compose_down "$adapter"

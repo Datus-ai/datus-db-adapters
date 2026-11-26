@@ -41,6 +41,7 @@ Plugin Adapters (Independent packages, install as needed)
     ├── datus-clickzetta
     ├── datus-maxcompute
     ├── datus-hana (official Python hdbcli; limited local SQL analysis)
+    └── datus-mongodb (read-only MongoSQL and document queries)
 ```
 
 ## Implemented Adapters

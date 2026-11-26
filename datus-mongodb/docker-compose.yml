@@ -1,0 +1,14 @@
+services:
+  mongodb:
+    image: mongo:8.0.38
+    ports:
+      - "127.0.0.1:${MONGODB_HOST_PORT:-47017}:27017"
+    environment:
+      TZ: UTC
+      MONGO_INITDB_ROOT_USERNAME: ${DATUS_TEST_MONGODB_USER:-mongodb_test_admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${DATUS_TEST_MONGODB_PASSWORD:-mongodb_test_password}
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host \"$$HOSTNAME\" --username \"$$MONGO_INITDB_ROOT_USERNAME\" --password \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)'"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
