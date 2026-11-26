@@ -16,10 +16,33 @@ def validate_query_timeout(seconds: int) -> None:
 
 
 def validate_select_query_for_timeout(sql: str, dialect: str) -> None:
-    from datus_db_core.constants import SQLType
-    from datus_db_core.sql_utils import is_single_statement, parse_sql_type
+    import sqlglot
+    from sqlglot import expressions
 
-    if not is_single_statement(sql) or parse_sql_type(sql, dialect) != SQLType.SELECT:
+    from datus_db_core.constants import SQLType
+    from datus_db_core.registry import connector_registry
+    from datus_db_core.sql_utils import (
+        _normalize_expression,
+        _sqlglot_dialect,
+        is_single_statement,
+        parse_sql_type,
+    )
+
+    if not is_single_statement(sql, dialect):
+        raise ValueError("A per-query timeout can only be set on a single SELECT query")
+    if connector_registry.get_sql_analyzer(dialect) is not None:
+        if parse_sql_type(sql, dialect) != SQLType.SELECT:
+            raise ValueError("A per-query timeout can only be set on a single SELECT query")
+        return
+    try:
+        parsed = [
+            expr
+            for expr in sqlglot.parse(sql, dialect=_sqlglot_dialect(dialect), error_level=sqlglot.ErrorLevel.IGNORE)
+            if expr is not None and not isinstance(expr, expressions.Semicolon)
+        ]
+    except Exception as exc:
+        raise ValueError("A per-query timeout can only be set on a single SELECT query") from exc
+    if len(parsed) != 1 or not isinstance(_normalize_expression(parsed[0]), (expressions.Query, expressions.Values)):
         raise ValueError("A per-query timeout can only be set on a single SELECT query")
 
 

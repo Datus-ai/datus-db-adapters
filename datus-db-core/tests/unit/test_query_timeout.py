@@ -21,26 +21,36 @@ def test_query_timeout_requires_a_positive_integer(invalid):
 
 
 @pytest.mark.parametrize(
-    "sql, valid",
+    "dialect, sql, valid",
     [
-        ("SELECT 1", True),
-        ("SELECT 1;", True),
-        ("SELECT 'a;b' AS txt; -- trailing comment", True),
-        ("SELECT $$a;b$$ AS txt;", True),
-        ("SELECT 1; SELECT 2", False),
-        ("SELECT 1; SET LOCAL statement_timeout = 0; SELECT 2", False),
-        ("SELECT 1; CREATE TABLE leaked(id INT); SELECT 42", False),
-        ("SELECT 1;;", False),
-        ("; SELECT 1", False),
-        ("SHOW TABLES", False),
+        ("postgresql", "SELECT 1", True),
+        ("postgresql", "SELECT 1;", True),
+        ("postgresql", "SELECT 'a;b' AS txt; -- trailing comment", True),
+        ("postgresql", "SELECT $$a;b$$ AS txt;", True),
+        ("postgresql", r"SELECT E'\';' AS txt;", True),
+        ("postgresql", r"SELECT '\' AS slash, ';' AS semi", True),
+        ("postgresql", r"SELECT '\'; SET LOCAL statement_timeout = 0; SELECT '\'", False),
+        ("duckdb", r"SELECT '\' AS slash, ';' AS semi", True),
+        ("duckdb", r"SELECT '\'; CREATE TABLE leaked(id INT); SELECT '\'", False),
+        ("duckdb", r"WITH x AS (SELECT '\' AS slash, ';' AS semi) INSERT INTO t SELECT * FROM x", False),
+        ("sqlite", r"SELECT '\' AS slash, ';' AS semi", True),
+        ("sqlite", r"SELECT '\'; CREATE TABLE leaked(id INT); SELECT '\'", False),
+        ("mysql", r"SELECT '\';' AS txt;", True),
+        ("tidb", r"SELECT '\';' AS txt;", True),
+        ("postgresql", "SELECT 1; SELECT 2", False),
+        ("postgresql", "SELECT 1; SET LOCAL statement_timeout = 0; SELECT 2", False),
+        ("postgresql", "SELECT 1; CREATE TABLE leaked(id INT); SELECT 42", False),
+        ("postgresql", "SELECT 1;;", False),
+        ("postgresql", "; SELECT 1", False),
+        ("postgresql", "SHOW TABLES", False),
     ],
 )
-def test_validate_select_query_for_timeout_requires_single_select(sql, valid):
+def test_validate_select_query_for_timeout_requires_single_select(dialect, sql, valid):
     if valid:
-        validate_select_query_for_timeout(sql, "postgresql")
+        validate_select_query_for_timeout(sql, dialect)
     else:
         with pytest.raises(ValueError, match="single SELECT"):
-            validate_select_query_for_timeout(sql, "postgresql")
+            validate_select_query_for_timeout(sql, dialect)
 
 
 def test_sqlite_clears_deadline_after_interrupting_current_statement(monkeypatch):

@@ -287,20 +287,40 @@ def _first_statement(sql: str) -> str:
     return s.strip()
 
 
-def is_single_statement(sql: str) -> bool:
-    """Whether the input contains exactly one SQL statement.
+def _sqlglot_dialect(dialect: str) -> sqlglot.Dialect:
+    candidates = []
+    if dialect:
+        for candidate in (parse_dialect(dialect), parse_read_dialect(dialect)):
+            normalized = "mysql" if candidate == "tidb" else candidate
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+    for candidate in candidates:
+        try:
+            return sqlglot.Dialect.get_or_raise(candidate)
+        except ValueError:
+            continue
+    return sqlglot.Dialect.get_or_raise("")
+
+
+def is_single_statement(sql: str, dialect: str = "") -> bool:
+    """Whether the input contains exactly one SQL statement under the dialect's lexical rules.
 
     A single trailing semicolon and surrounding comments are allowed;
-    semicolons inside quoted literals or identifiers are ignored.
+    semicolons inside quoted literals or identifiers follow the dialect's escaping rules.
     """
     if not sql or not isinstance(sql, str):
         return False
-    normalized = strip_sql_comments(sql).strip()
-    if normalized.endswith(";"):
-        normalized = normalized[:-1].strip()
-    if not normalized:
+    try:
+        tokens = _sqlglot_dialect(dialect).tokenize(sql)
+    except sqlglot.errors.TokenError:
         return False
-    return _first_statement(normalized) == normalized
+    if not tokens:
+        return False
+    if tokens[-1].token_type == sqlglot.tokens.TokenType.SEMICOLON:
+        tokens = tokens[:-1]
+    if not tokens:
+        return False
+    return all(token.token_type != sqlglot.tokens.TokenType.SEMICOLON for token in tokens)
 
 
 _METADATA_RE: re.Pattern = re.compile(
