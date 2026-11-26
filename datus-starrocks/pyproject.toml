@@ -1,6 +1,6 @@
 [project]
 name = "datus-starrocks"
-version = "0.1.13"
+version = "0.1.14"
 description = "StarRocks database adapter for Datus"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,8 +18,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "datus-db-core>=0.1.11",
-    "datus-mysql>=0.1.11",
+    "datus-db-core>=0.1.12",
+    "datus-mysql>=0.1.12",
     "pydantic>=2.0.0",
 ]
 

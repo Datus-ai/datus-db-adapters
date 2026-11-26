@@ -20,6 +20,7 @@ _UNSET = object()
 
 class BaseSqlConnector(ABC):
     supports_streaming_read = False
+    supports_query_timeout_override = False
 
     def iter_query_batches(self, sql: str, batch_size: int = 5000):
         """Yield Arrow tables without materializing the full query result.
@@ -226,7 +227,10 @@ class BaseSqlConnector(ABC):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        *,
+        query_timeout_seconds: int | None = None,
     ) -> ExecuteSQLResult:
+        """Execute one query, optionally overriding its deadline on supporting connectors."""
         raise NotImplementedError()
 
     def execute_explain(

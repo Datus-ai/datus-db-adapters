@@ -19,6 +19,23 @@ from datus_db_core import DatusDbException
 from .connector import SQLAlchemyConnector
 
 
+def assert_query_timeout_override(
+    config: BaseModel, connector_type: type[SQLAlchemyConnector], sql: str, *, units_per_second: int = 1
+) -> None:
+    """Observe the deadline from inside the query and again on the reused pool connection."""
+    settings = config.model_dump()
+    settings.update(timeout_seconds=15, query_timeout_seconds=4)
+    connector = connector_type(settings)
+    try:
+        for override, expected in ((None, 4), (1, 1), (8, 8), (None, 4)):
+            kwargs = {} if override is None else {"query_timeout_seconds": override}
+            result = connector.execute_query(sql, result_format="list", **kwargs)
+            assert result.success, result.error
+            assert float(result.sql_return[0]["deadline"]) == expected * units_per_second
+    finally:
+        connector.close()
+
+
 class BlackholeProxy(AbstractContextManager):
     """Forward TCP traffic, optionally discarding replies with a safety cutoff.
 

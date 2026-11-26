@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, override
 from pandas import DataFrame
 from pyarrow import Table
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import URL, Engine, ExceptionContext, Inspector, make_url
+from sqlalchemy.engine import URL, Connection, Engine, ExceptionContext, Inspector, make_url
 from sqlalchemy.exc import (
     DatabaseError,
     DataError,
@@ -43,6 +43,26 @@ logger = get_logger(__name__)
 
 _SQL_PREVIEW_CHARS = 50
 _INITIAL_CREDENTIAL_VERSION = object()
+
+
+@contextmanager
+def temporary_query_setting(conn: Connection, apply_sql: str, restore_sql: str) -> Iterator[None]:
+    """Restore a session setting before the physical connection returns to its pool."""
+    query_failed = False
+    try:
+        conn.exec_driver_sql(apply_sql).close()
+        yield
+    except BaseException:
+        query_failed = True
+        raise
+    finally:
+        if not conn.invalidated:
+            try:
+                conn.exec_driver_sql(restore_sql).close()
+            except Exception as exc:
+                conn.invalidate(exc)
+                if not query_failed:
+                    raise
 
 
 def _safe_connect_error(exc: Exception, parameters: dict) -> Exception:
@@ -505,11 +525,21 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
+        *,
+        query_timeout_seconds: int | None = None,
     ) -> ExecuteSQLResult:
         """Execute SELECT query."""
         try:
+            options = {}
+            if query_timeout_seconds is not None:
+                from datus_db_core.query_timeout import validate_query_timeout
+
+                validate_query_timeout(query_timeout_seconds)
+                if not self.supports_query_timeout_override:
+                    raise ValueError(f"{self.dialect} does not support a per-query timeout override")
+                options["query_timeout_seconds"] = query_timeout_seconds
             result = self._execute_query(
-                sql, catalog_name=catalog_name, database_name=database_name, schema_name=schema_name
+                sql, catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, **options
             )
             row_count = len(result)
 
@@ -534,10 +564,21 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
             return ExecuteSQLResult(success=False, error=str(ex), sql_query=sql)
 
     def _execute_query(
-        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+        self,
+        sql: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        *,
+        query_timeout_seconds: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Internal query execution returning list of dicts."""
-        if parse_sql_type(sql, self.dialect) in (
+        if query_timeout_seconds is not None:
+            from datus_db_core.query_timeout import validate_select_query_for_timeout
+
+            validate_select_query_for_timeout(sql, self.dialect)
+        sql_type = parse_sql_type(sql, self.dialect)
+        if sql_type in (
             SQLType.INSERT,
             SQLType.UPDATE,
             SQLType.DELETE,
@@ -552,13 +593,23 @@ class SQLAlchemyConnector(BaseSqlConnector, MigrationTargetMixin):
 
         try:
             with self._conn(catalog_name=catalog_name, database_name=database_name, schema_name=schema_name) as conn:
-                result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
-                rows = result.fetchall()
+                scope = (
+                    nullcontext()
+                    if query_timeout_seconds is None
+                    else self._query_timeout_scope(conn, query_timeout_seconds)
+                )
+                with scope:
+                    result = conn.exec_driver_sql(sql, execution_options={"no_parameters": True})
+                    rows = result.fetchall()
                 return [row._asdict() for row in rows]
         except DatusDbException:
             raise
         except Exception as e:
             raise self._handle_exception(e, sql, "query") from e
+
+    def _query_timeout_scope(self, conn: Connection, seconds: int):
+        """Apply a query deadline after checkout and only while executing the SELECT."""
+        raise NotImplementedError(f"{self.dialect} does not support a per-query timeout override")
 
     @override
     def execute_insert(

@@ -5,7 +5,7 @@
 from typing import Any, Dict, List, Optional, Set, Union, override
 
 from sqlalchemy import event
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import URL, Connection, Engine
 from trino.auth import BasicAuthentication
 
 from datus_db_core import CatalogSupportMixin, MigrationTargetMixin, get_logger
@@ -26,6 +26,17 @@ class TrinoConnector(SQLAlchemyConnector, CatalogSupportMixin, MigrationTargetMi
     Trino supports multi-catalog with a three-level hierarchy: catalog -> schema -> table.
     This connector implements CatalogSupportMixin for catalog management.
     """
+
+    supports_query_timeout_override = True
+
+    def _query_timeout_scope(self, conn: Connection, seconds: int):
+        from datus_sqlalchemy.connector import temporary_query_setting
+
+        previous = conn.exec_driver_sql("SHOW SESSION LIKE 'query_max_run_time'").one()[1]
+        escaped = str(previous).replace("'", "''")
+        return temporary_query_setting(
+            conn, f"SET SESSION query_max_run_time = '{seconds}s'", f"SET SESSION query_max_run_time = '{escaped}'"
+        )
 
     def __init__(self, config: Union[TrinoConfig, dict]):
         """

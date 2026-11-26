@@ -4,11 +4,52 @@ import queue
 import socket
 import socketserver
 import threading
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
+from datus_sqlalchemy.connector import temporary_query_setting
 from datus_sqlalchemy.testing import BlackholeProxy
+
+
+def test_query_setting_restore_failure_invalidates_connection_without_hiding_query_error():
+    connection = Mock(invalidated=False)
+    restore_error = RuntimeError("could not restore setting")
+    connection.exec_driver_sql.side_effect = [Mock(), restore_error]
+
+    with pytest.raises(ValueError, match="execution failed"):
+        with temporary_query_setting(connection, "SET limit = 1", "SET limit = 4"):
+            raise ValueError("execution failed")
+
+    connection.invalidate.assert_called_once_with(restore_error)
+
+
+def test_query_setting_applies_and_restores_or_propagates_restore_failure():
+    connection = Mock(invalidated=False)
+    applied = Mock()
+    restored = Mock()
+    connection.exec_driver_sql.side_effect = [applied, restored]
+
+    with temporary_query_setting(connection, "SET limit = 1", "SET limit = 4"):
+        pass
+
+    assert [call.args for call in connection.exec_driver_sql.call_args_list] == [("SET limit = 1",), ("SET limit = 4",)]
+    applied.close.assert_called_once_with()
+    restored.close.assert_called_once_with()
+    connection.invalidate.assert_not_called()
+
+    broken = Mock(invalidated=False)
+    restore_error = RuntimeError("restore failed")
+    broken.exec_driver_sql.side_effect = [Mock(), restore_error]
+    with pytest.raises(RuntimeError, match="restore failed"):
+        with temporary_query_setting(broken, "SET limit = 1", "SET limit = 4"):
+            pass
+    broken.invalidate.assert_called_once_with(restore_error)
+
+    already_invalid = Mock(invalidated=True)
+    with temporary_query_setting(already_invalid, "SET limit = 1", "SET limit = 4"):
+        pass
+    assert [call.args for call in already_invalid.exec_driver_sql.call_args_list] == [("SET limit = 1",)]
 
 
 @pytest.fixture

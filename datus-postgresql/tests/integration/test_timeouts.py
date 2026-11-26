@@ -4,7 +4,7 @@ import pytest
 
 from datus_db_core import DatusDbException, ErrorCode
 from datus_postgresql import PostgreSQLConnector
-from datus_sqlalchemy.testing import BlackholeProxy, assert_stalled_response_timeout
+from datus_sqlalchemy.testing import BlackholeProxy, assert_query_timeout_override, assert_stalled_response_timeout
 
 pytestmark = pytest.mark.integration
 
@@ -97,3 +97,15 @@ def test_reused_writer_validator_has_deadline_before_checkout_sql(config, engine
                 assert connection.execute(text("SELECT 42")).scalar_one() == 42
         finally:
             connector.close()
+
+
+def test_query_timeout_override_is_scoped_to_one_select(config):
+    # Keep the TLS fixture's resolved verify-full mode and CA while testing
+    # the community server's per-statement timeout.
+    config = config.model_copy(update={"aurora": False})
+    assert_query_timeout_override(
+        config,
+        PostgreSQLConnector,
+        "SELECT setting AS deadline FROM pg_settings WHERE name = 'statement_timeout'",
+        units_per_second=1000,
+    )

@@ -6,7 +6,7 @@ import functools
 import os
 import re
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, TypeVar, override
 
 import duckdb
@@ -83,6 +83,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     """
     Connector for DuckDB databases with schema support using native DuckDB SDK.
     """
+
+    supports_query_timeout_override = True
 
     def __init__(self, config: DuckDBConfig | dict):
         if isinstance(config, dict):
@@ -611,7 +613,11 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     @override
     @_serialised
     def execute_query(
-        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+        self,
+        sql: str,
+        result_format: Literal["csv", "arrow", "pandas", "list"] = "csv",
+        *,
+        query_timeout_seconds: int | None = None,
     ) -> ExecuteSQLResult:
         """Execute a SELECT query.
 
@@ -620,48 +626,62 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         so a future regression that drops the lock can't silently return
         rows that belong to a sibling query whose state was just reset.
         """
+        cursor = None
         try:
             self.connect()
-            result = self.connection.cursor().execute(sql)
+            cursor = self.connection.cursor()
+            scope = nullcontext()
+            if query_timeout_seconds is not None:
+                from datus_db_core.query_timeout import (
+                    duckdb_query_timeout,
+                    validate_query_timeout,
+                    validate_select_query_for_timeout,
+                )
 
-            if result_format == "csv":
-                df = result.df()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=df.to_csv(index=False),
-                    row_count=len(df),
-                    result_format=result_format,
-                )
-            elif result_format == "arrow":
-                arrow_table = result.fetch_arrow_table()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=arrow_table,
-                    row_count=arrow_table.num_rows,
-                    result_format=result_format,
-                )
-            elif result_format == "pandas":
-                df = result.df()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=df,
-                    row_count=len(df),
-                    result_format=result_format,
-                )
-            else:  # list
-                rows = result.fetchall()
-                columns = [desc[0] for desc in result.description]
-                result_list = [dict(zip(columns, row)) for row in rows]
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=result_list,
-                    row_count=len(rows),
-                    result_format=result_format,
-                )
+                validate_query_timeout(query_timeout_seconds)
+                validate_select_query_for_timeout(sql, self.dialect)
+                scope = duckdb_query_timeout(cursor, query_timeout_seconds, duckdb.InterruptException)
+            with scope:
+                result = cursor.execute(sql)
+
+                if result_format == "csv":
+                    df = result.df()
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=df.to_csv(index=False),
+                        row_count=len(df),
+                        result_format=result_format,
+                    )
+                elif result_format == "arrow":
+                    arrow_table = result.fetch_arrow_table()
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=arrow_table,
+                        row_count=arrow_table.num_rows,
+                        result_format=result_format,
+                    )
+                elif result_format == "pandas":
+                    df = result.df()
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=df,
+                        row_count=len(df),
+                        result_format=result_format,
+                    )
+                else:  # list
+                    rows = result.fetchall()
+                    columns = [desc[0] for desc in result.description]
+                    result_list = [dict(zip(columns, row)) for row in rows]
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=result_list,
+                        row_count=len(rows),
+                        result_format=result_format,
+                    )
         except Exception as e:
             ex = self._handle_exception(e, sql)
             return ExecuteSQLResult(
@@ -669,6 +689,10 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 error=str(ex),
                 sql_query=sql,
             )
+
+        finally:
+            if cursor is not None:
+                cursor.close()
 
     @override
     def execute_pandas(self, sql: str) -> ExecuteSQLResult:

@@ -4,7 +4,7 @@ import pytest
 
 from datus_db_core import DatusDbException, ErrorCode
 from datus_greenplum import GreenplumConnector
-from datus_sqlalchemy.testing import assert_stalled_response_timeout
+from datus_sqlalchemy.testing import assert_query_timeout_override, assert_stalled_response_timeout
 
 pytestmark = pytest.mark.integration
 
@@ -34,4 +34,13 @@ def test_real_server_silent_connection_is_invalidated(config, operation):
         engine_getter=lambda connector: connector._get_engine(),
         settings_overrides={"query_timeout_seconds": 3},
         max_seconds=2.5,
+    )
+
+
+def test_query_timeout_override_is_scoped_to_one_select(config):
+    assert_query_timeout_override(
+        config,
+        GreenplumConnector,
+        "SELECT setting AS deadline FROM pg_settings WHERE name = 'statement_timeout'",
+        units_per_second=1000,
     )

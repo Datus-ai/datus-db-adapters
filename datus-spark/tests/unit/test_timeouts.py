@@ -36,3 +36,19 @@ def test_timeout_cannot_disable_bound(field, value):
 
     with pytest.raises(ValidationError):
         SparkConfig(**{"username": "test"}, **{field: value})
+
+
+def test_query_timeout_override_capability_and_thrift_scope():
+    from unittest.mock import MagicMock
+
+    from datus_sqlalchemy.thrift import _query_timeout
+
+    connector = SparkConnector({"username": "test", "auth_mechanism": "NOSASL"})
+    try:
+        assert connector.supports_query_timeout_override is True
+        assert _query_timeout.get() is None
+        with connector._query_timeout_scope(MagicMock(), 13):
+            assert _query_timeout.get() == 13
+        assert _query_timeout.get() is None
+    finally:
+        connector.close()

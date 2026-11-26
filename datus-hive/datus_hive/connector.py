@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Connection
 
 from datus_db_core import get_logger
 from datus_sqlalchemy import SQLAlchemyConnector
@@ -19,6 +20,15 @@ logger = get_logger(__name__)
 
 class HiveConnector(SQLAlchemyConnector):
     """Hive database connector using SQLAlchemy + PyHive."""
+
+    @property
+    def supports_query_timeout_override(self) -> bool:
+        return self.config.server_type == "hive"
+
+    def _query_timeout_scope(self, conn: Connection, seconds: int):
+        from datus_sqlalchemy.thrift import thrift_query_timeout
+
+        return thrift_query_timeout(seconds)
 
     def __init__(self, config: Union[HiveConfig, dict]):
         """
