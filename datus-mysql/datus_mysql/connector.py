@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from sqlalchemy import event, text
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import URL, Connection, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -109,9 +109,25 @@ class MySQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             connect_args[key] = getattr(config, f"{key}_seconds") or config.timeout_seconds
         configure_database_connection(self, config, connect_args, dialect="mysql")
 
-    def _query_timeout_sql(self) -> str:
+    _query_timeout_variable = "max_execution_time"
+
+    @property
+    def supports_query_timeout_override(self) -> bool:
+        return self.dialect in {"mysql", "tidb", "starrocks", "doris"} and not self.config.aurora
+
+    def _query_timeout_sql(self, seconds: int | None = None) -> str:
         """MySQL and TiDB use milliseconds for their SELECT execution deadline."""
-        return f"SET SESSION max_execution_time = {self.config.query_timeout_seconds * 1000}"
+        effective = self.config.query_timeout_seconds if seconds is None else seconds
+        return f"SET SESSION max_execution_time = {effective * 1000}"
+
+    def _query_timeout_scope(self, conn: Connection, seconds: int):
+        from datus_sqlalchemy.connector import temporary_query_setting
+
+        variable = self._query_timeout_variable
+        previous = conn.exec_driver_sql(f"SELECT @@SESSION.{variable}").scalar_one()
+        return temporary_query_setting(
+            conn, self._query_timeout_sql(seconds), f"SET SESSION {variable} = {int(previous)}"
+        )
 
     def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         engine = super()._create_engine(connection_string, **options)

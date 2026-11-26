@@ -36,3 +36,20 @@ def test_timeout_cannot_disable_bound(field, value):
 
     with pytest.raises(ValidationError):
         HiveConfig(**{"username": "test"}, **{field: value})
+
+
+@pytest.mark.parametrize("server_type, expected", [("hive", True), ("inceptor", False)])
+def test_query_timeout_override_capability_and_thrift_scope(server_type, expected):
+    from unittest.mock import MagicMock
+
+    from datus_sqlalchemy.thrift import _query_timeout
+
+    connector = HiveConnector({"username": "test", "auth": "NOSASL", "server_type": server_type})
+    try:
+        assert connector.supports_query_timeout_override is expected
+        assert _query_timeout.get() is None
+        with connector._query_timeout_scope(MagicMock(), 11):
+            assert _query_timeout.get() == 11
+        assert _query_timeout.get() is None
+    finally:
+        connector.close()

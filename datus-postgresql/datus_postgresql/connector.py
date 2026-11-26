@@ -9,7 +9,7 @@ from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import URL, Connection, Engine
 from sqlglot.dialects.postgres import Postgres
 from sqlglot.tokens import TokenType
 
@@ -108,6 +108,16 @@ class PostgreSQLConnector(SQLAlchemyConnector, MigrationTargetMixin):
             if getattr(config, key) is not None
         }
         configure_database_connection(self, config, connect_args, dialect="postgresql")
+
+    @property
+    def supports_query_timeout_override(self) -> bool:
+        return self.dialect in {"postgresql", "greenplum"} and not self.config.aurora
+
+    def _query_timeout_scope(self, conn: Connection, seconds: int):
+        # The SELECT shares this transaction. Checkout cleanup rolls it back,
+        # releasing the local setting without a second server-variable change.
+        conn.exec_driver_sql(f"SET LOCAL statement_timeout = {seconds * 1000}").close()
+        return nullcontext()
 
     def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         from .timeouts import configure_timeouts

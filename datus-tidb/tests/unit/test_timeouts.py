@@ -76,3 +76,26 @@ def test_unsupported_server_deadline_fails_before_application_sql():
             assert server.connections == 1
         finally:
             connector.close()
+
+
+def test_query_timeout_override_scope_applies_and_restores_tidb_variable():
+    from unittest.mock import MagicMock
+
+    connector = TiDBConnector({"username": "test", "query_timeout_seconds": 4})
+    try:
+        assert connector.supports_query_timeout_override is True
+        conn = MagicMock(invalidated=False)
+        previous_result = MagicMock()
+        previous_result.scalar_one.return_value = 4000
+        conn.exec_driver_sql.side_effect = [previous_result, MagicMock(), MagicMock()]
+
+        with connector._query_timeout_scope(conn, 12):
+            pass
+
+        assert [call.args[0] for call in conn.exec_driver_sql.call_args_list] == [
+            "SELECT @@SESSION.max_execution_time",
+            "SET SESSION max_execution_time = 12000",
+            "SET SESSION max_execution_time = 4000",
+        ]
+    finally:
+        connector.close()

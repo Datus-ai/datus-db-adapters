@@ -83,8 +83,11 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         # Override dialect to StarRocks
         self.dialect = "starrocks"
 
-    def _query_timeout_sql(self) -> str:
-        return f"SET query_timeout = {self.config.query_timeout_seconds}"
+    _query_timeout_variable = "query_timeout"
+
+    def _query_timeout_sql(self, seconds: int | None = None) -> str:
+        effective = self.config.query_timeout_seconds if seconds is None else seconds
+        return f"SET query_timeout = {effective}"
 
     # ==================== Context Manager Support ====================
 

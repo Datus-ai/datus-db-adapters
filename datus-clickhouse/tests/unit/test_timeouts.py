@@ -29,3 +29,27 @@ def test_timeout_cannot_disable_bound(field, value):
 
     with pytest.raises(ValidationError):
         ClickHouseConfig(**{"username": "test"}, **{field: value})
+
+
+def test_query_timeout_override_scope_updates_and_restores_transport_settings():
+    from types import SimpleNamespace
+
+    connector = ClickHouseConnector({"username": "test", "timeout_seconds": 15, "query_timeout_seconds": 4})
+    try:
+        assert connector.supports_query_timeout_override is True
+        original = {"max_execution_time": 4, "readonly": 1}
+        transport = SimpleNamespace(ch_settings=original)
+        conn = SimpleNamespace(connection=SimpleNamespace(driver_connection=SimpleNamespace(transport=transport)))
+
+        with connector._query_timeout_scope(conn, 9):
+            assert transport.ch_settings == {"max_execution_time": 9, "readonly": 1}
+            assert original == {"max_execution_time": 4, "readonly": 1}
+        assert transport.ch_settings is original
+
+        with pytest.raises(RuntimeError, match="query failed"):
+            with connector._query_timeout_scope(conn, 3):
+                assert transport.ch_settings["max_execution_time"] == 3
+                raise RuntimeError("query failed")
+        assert transport.ch_settings is original
+    finally:
+        connector.close()

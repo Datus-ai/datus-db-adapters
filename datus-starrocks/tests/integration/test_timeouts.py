@@ -3,7 +3,7 @@ import time
 import pytest
 
 from datus_db_core import DatusDbException, ErrorCode
-from datus_sqlalchemy.testing import assert_stalled_response_timeout
+from datus_sqlalchemy.testing import assert_query_timeout_override, assert_stalled_response_timeout
 from datus_starrocks import StarRocksConnector
 
 pytestmark = pytest.mark.integration
@@ -32,3 +32,7 @@ def test_real_server_enforces_query_deadline(config):
         assert connector.test_connection()
     finally:
         connector.close()
+
+
+def test_query_timeout_override_is_scoped_to_one_select(config):
+    assert_query_timeout_override(config, StarRocksConnector, "SELECT @@SESSION.query_timeout AS deadline")

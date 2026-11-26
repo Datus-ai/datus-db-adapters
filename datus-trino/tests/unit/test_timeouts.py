@@ -27,3 +27,26 @@ def test_timeout_cannot_disable_bound(field, value):
 
     with pytest.raises(ValidationError):
         TrinoConfig(**{"username": "test"}, **{field: value})
+
+
+def test_query_timeout_override_scope_sets_and_restores_session_property():
+    from unittest.mock import MagicMock
+
+    connector = TrinoConnector({"username": "test", "timeout_seconds": 15, "query_timeout_seconds": 4})
+    try:
+        assert connector.supports_query_timeout_override is True
+        conn = MagicMock(invalidated=False)
+        show_result = MagicMock()
+        show_result.one.return_value = ("query_max_run_time", "6s", "100.00d")
+        conn.exec_driver_sql.side_effect = [show_result, MagicMock(), MagicMock()]
+
+        with connector._query_timeout_scope(conn, 12):
+            pass
+
+        assert [call.args[0] for call in conn.exec_driver_sql.call_args_list] == [
+            "SHOW SESSION LIKE 'query_max_run_time'",
+            "SET SESSION query_max_run_time = '12s'",
+            "SET SESSION query_max_run_time = '6s'",
+        ]
+    finally:
+        connector.close()
