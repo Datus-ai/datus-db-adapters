@@ -18,7 +18,7 @@ from bson.raw_bson import RawBSONDocument
 from pydantic import ConfigDict, Field, SecretStr, field_validator
 from pymongo.errors import ConfigurationError, OperationFailure, PyMongoError
 from sqlglot import exp, parse
-from sqlglot.errors import ParseError
+from sqlglot.errors import SqlglotError
 
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, ErrorCode, ExecuteSQLResult
 
@@ -376,7 +376,7 @@ class MongoDBConnector(BaseSqlConnector):
             return ExecuteSQLResult(
                 success=True, sql_query=sql, sql_return=result, row_count=len(rows), result_format=result_format
             )
-        except (DatusDbException, ParseError, ValueError) as exc:
+        except (DatusDbException, SqlglotError, ValueError) as exc:
             return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql, result_format=result_format)
 
     def execute_csv(self, sql: str) -> ExecuteSQLResult:

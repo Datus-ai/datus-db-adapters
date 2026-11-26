@@ -83,6 +83,20 @@ def test_native_aggregation_decimal_and_null_group(connector):
     assert [row["order_no"] for row in limited] == [1]
 
 
+@pytest.mark.parametrize("stage", ["$out", "$merge"])
+def test_rejects_write_pipeline_on_a_live_connection(connector, stage):
+    collections = connector.list_collections()
+    rows = connector.find("orders", sort=[("order_no", 1)], limit=5)
+    assert collections == ["orders", "paid_orders"]
+    assert [row["order_no"] for row in rows] == [1, 2, 3, 4, 5]
+
+    with pytest.raises(ValueError, match=r"^Unsupported MongoDB aggregation stage$"):
+        connector.aggregate("orders", [{stage: "orders"}])
+
+    assert connector.list_collections() == collections
+    assert connector.find("orders", sort=[("order_no", 1)], limit=5) == rows
+
+
 def test_sql_query_formats_and_empty_schema(order_database, tmp_path):
     schema_file = tmp_path / "schema.json"
     schema_file.write_text(

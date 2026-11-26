@@ -180,7 +180,7 @@ def healthcheck_command(adapter: str) -> str:
     return shlex.join(probe[1:])
 
 
-@pytest.mark.parametrize("adapter", ["postgresql", "clickhouse", "greenplum"])
+@pytest.mark.parametrize("adapter", ["postgresql", "clickhouse", "greenplum", "mongodb"])
 @pytest.mark.parametrize("final_ready", [False, True])
 def test_healthcheck_rejects_init_only_listener(database_env: dict[str, str], adapter: str, final_ready: bool) -> None:
     # Match each image's temporary-listener boundary: PostgreSQL has only a
@@ -219,6 +219,27 @@ case "$host" in
 esac
 """,
     )
+    executable(
+        fake_bin / "mongosh",
+        r"""
+host=localhost
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --host) host=$2; shift ;;
+        --username) username=$2; shift ;;
+        --password) password=$2; shift ;;
+        --authenticationDatabase) auth_database=$2; shift ;;
+    esac
+    shift
+done
+case "$host" in
+  localhost|127.0.0.1|::1) exit 0 ;;
+  *) [ "$host" = "$HOSTNAME" ] && [ "$FINAL_READY" = 1 ] &&
+     [ "$username" = "$MONGO_INITDB_ROOT_USERNAME" ] &&
+     [ "$password" = "$MONGO_INITDB_ROOT_PASSWORD" ] && [ "$auth_database" = admin ] ;;
+esac
+""",
+    )
     result = run_shell(
         healthcheck_command(adapter),
         {
@@ -231,6 +252,9 @@ esac
             "CLICKHOUSE_PASSWORD": "default_test",
             "CLICKHOUSE_DB": "default_test",
             "GREENPLUM_DATA_DIRECTORY": database_env["PGDATA"],
+            "HOSTNAME": "test-mongodb",
+            "MONGO_INITDB_ROOT_USERNAME": "test_admin",
+            "MONGO_INITDB_ROOT_PASSWORD": "test_password",
         },
     )
     assert (result.returncode == 0) is final_ready

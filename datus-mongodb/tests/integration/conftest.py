@@ -3,11 +3,14 @@
 | Environment variable | Default |
 | --- | --- |
 | MONGODB_HOST_PORT | 47017 |
-| MONGODB_TEST_ADMIN_URI | Local Compose administrator |
+| MONGODB_TEST_ADMIN_URI | Built from the local administrator settings below |
+| MONGODB_TEST_USER | mongodb_test_admin |
+| MONGODB_TEST_PASSWORD | mongodb_test_password |
 """
 
 import os
 from datetime import datetime, timezone
+from urllib.parse import quote_plus, unquote_plus, urlsplit, urlunsplit
 from uuid import uuid4
 
 import pytest
@@ -18,13 +21,27 @@ from pymongo import MongoClient
 from datus_mongodb import MongoDBConfig, MongoDBConnector
 
 
+def _reader_uri(admin_uri: str, database: str) -> str:
+    parts = urlsplit(admin_uri)
+    hosts = parts.netloc.rsplit("@", 1)[-1]
+    # PyMongo accepts either query separator. Keep the options as supplied and
+    # replace authSource case-insensitively.
+    separator = ";" if ";" in parts.query else "&"
+    options = [
+        option
+        for option in parts.query.split(separator)
+        if option and unquote_plus(option.partition("=")[0]).lower() != "authsource"
+    ]
+    options.append(f"authSource={quote_plus(database)}")
+    return urlunsplit((parts.scheme, f"reader:mongodb_test_read@{hosts}", f"/{database}", separator.join(options), ""))
+
+
 @pytest.fixture(scope="module")
 def order_database():
     port = os.environ.get("MONGODB_HOST_PORT", "47017")
-    host = f"127.0.0.1:{port}"
-    uri = os.environ.get(
-        "MONGODB_TEST_ADMIN_URI", f"mongodb://mongodb_test_admin:mongodb_test_password@{host}/?authSource=admin"
-    )
+    user = quote_plus(os.environ.get("MONGODB_TEST_USER", "mongodb_test_admin"))
+    password = quote_plus(os.environ.get("MONGODB_TEST_PASSWORD", "mongodb_test_password"))
+    uri = os.environ.get("MONGODB_TEST_ADMIN_URI", f"mongodb://{user}:{password}@127.0.0.1:{port}/?authSource=admin")
     name = f"datus_orders_{uuid4().hex}"
     with MongoClient(uri, serverSelectionTimeoutMS=5000) as admin:
         database = admin[name]
@@ -47,7 +64,7 @@ def order_database():
                 ]
             )
             database.command("create", "paid_orders", viewOn="orders", pipeline=[{"$match": {"status": "paid"}}])
-            yield MongoDBConfig(uri=f"mongodb://reader:mongodb_test_read@{host}/?authSource={name}", database=name)
+            yield MongoDBConfig(uri=_reader_uri(uri, name), database=name)
         finally:
             database.command("dropUser", "reader")
             admin.drop_database(name)

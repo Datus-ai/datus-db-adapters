@@ -34,6 +34,15 @@ def test_sql_connector_rejects_writes_and_out_of_scope_queries(sql, error):
         assert error in result.error
 
 
+@pytest.mark.parametrize("sql", ["SELECT 'unclosed FROM orders", "SELECT order_no FROM orders /*"])
+def test_execute_query_reports_tokenization_errors(sql):
+    with MongoDBConnector({"uri": "mongodb://127.0.0.1:1", "database": "sales"}) as connector:
+        result = connector.execute_query(sql)
+        assert not result.success
+        assert result.sql_query == sql
+        assert "Error tokenizing" in result.error
+
+
 def test_config_redacts_uri_on_validation_failure():
     uri = "mysql://reader:secret-value@example.org"
     with pytest.raises(ValidationError, match="Expected a mongodb://") as exc:
