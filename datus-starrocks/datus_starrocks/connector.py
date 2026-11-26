@@ -509,24 +509,16 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
 
     @override
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """Get list of view names."""
-        try:
-            result = self._get_metadata(table_type="view", catalog_name=catalog_name, database_name=database_name)
-            return [self._qualify_name(view, database_name, schema_name) for view in result]
-        except Exception as e:
-            logger.warning(f"Failed to get views: {e}")
-            return []
+        """Get view names, raising if neither metadata listing succeeds."""
+        result = self._get_metadata(table_type="view", catalog_name=catalog_name, database_name=database_name)
+        return [self._qualify_name(view, database_name, schema_name) for view in result]
 
     def get_materialized_views(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
     ) -> List[str]:
-        """Get list of materialized view names."""
-        try:
-            result = self._get_metadata(table_type="mv", catalog_name=catalog_name, database_name=database_name)
-            return [self._qualify_name(mv, database_name, schema_name) for mv in result]
-        except Exception as e:
-            logger.warning(f"Failed to get materialized views: {e}")
-            return []
+        """Get materialized view names, raising if neither listing succeeds."""
+        result = self._get_metadata(table_type="mv", catalog_name=catalog_name, database_name=database_name)
+        return [self._qualify_name(mv, database_name, schema_name) for mv in result]
 
     def get_materialized_views_with_ddl(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""

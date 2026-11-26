@@ -926,7 +926,7 @@ def test_show_fallback_keeps_tables_clean_without_mv_enumeration():
 
 
 def test_show_fallback_view_listing_gives_up_when_mvs_cannot_be_enumerated():
-    """No MV enumeration means no honest view answer: re-raise, degrade to []."""
+    """An incomplete SHOW fallback must report the original metadata failure."""
 
     def fake(sql, **kwargs):
         if "information_schema" in sql:
@@ -938,11 +938,22 @@ def test_show_fallback_view_listing_gives_up_when_mvs_cannot_be_enumerated():
         raise AssertionError(f"unexpected SQL: {sql}")
 
     connector = _fallback_connector(fake)
-    # _get_metadata re-raises the original information_schema error...
     with pytest.raises(RuntimeError, match="THRIFT_EAGAIN"):
-        connector._get_metadata(table_type="view", database_name="test")
-    # ...and the public get_views() degrades to an empty list, never leaking MVs.
-    assert connector.get_views(database_name="test") == []
+        connector.get_views(database_name="test")
+
+
+def test_materialized_view_listing_raises_if_both_queries_fail():
+    connector = _connector_for_metadata()
+
+    def fail_metadata(sql, **kwargs):
+        if "information_schema.materialized_views" in sql.lower():
+            raise RuntimeError("metadata query timed out")
+        assert sql.startswith("SHOW MATERIALIZED VIEWS FROM")
+        raise RuntimeError("SHOW failed")
+
+    connector._execute_pandas = MagicMock(side_effect=fail_metadata)
+    with pytest.raises(RuntimeError, match="metadata query timed out"):
+        connector.get_materialized_views(database_name="testdb")
 
 
 def test_get_schema_queries_catalog_qualified_information_schema():
