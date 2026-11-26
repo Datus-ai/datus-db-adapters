@@ -38,6 +38,30 @@ def test_doris_ci_does_not_reserve_a_fixed_management_port(http_port: str | None
     assert result.stdout.splitlines() == [http_port or "127.0.0.1:0", "49030", "49030"]
 
 
+def test_mongodb_compose_uses_the_same_credentials_for_container_and_client() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; export_adapter_env; printf "%s\\n" "$MONGODB_TEST_USER" "$MONGODB_TEST_PASSWORD"',
+            "mongodb-credential-check",
+            str(CI_ROOT / "integration" / "adapters" / "mongodb.sh"),
+        ],
+        env={
+            **os.environ,
+            "DATUS_TEST_MONGODB_USER": "compose_user",
+            "DATUS_TEST_MONGODB_PASSWORD": "compose_password",
+            "MONGODB_TEST_USER": "external_user",
+            "MONGODB_TEST_PASSWORD": "external_password",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.stdout.splitlines() == ["compose_user", "compose_password"]
+
+
 def test_gaussdb_client_ca_files_are_private_before_export() -> None:
     source = GAUSSDB_DEFINITION.read_text(encoding="utf-8")
 
