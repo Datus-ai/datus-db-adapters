@@ -37,6 +37,8 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
     without requiring SET CATALOG context switching.
     """
 
+    supports_strict_view_listing = True
+
     def __init__(self, config: Union[StarRocksConfig, dict]):
         """
         Initialize StarRocks connector.
@@ -508,17 +510,30 @@ class StarRocksConnector(MySQLConnector, CatalogSupportMixin, MaterializedViewSu
         return [self._qualify_name(table, database_name, schema_name) for table in result]
 
     @override
-    def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """Get view names, raising if neither metadata listing succeeds."""
-        result = self._get_metadata(table_type="view", catalog_name=catalog_name, database_name=database_name)
-        return [self._qualify_name(view, database_name, schema_name) for view in result]
+    def get_views(
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", *, strict: bool = False
+    ) -> List[str]:
+        """List views. With strict=True, raise if enumeration cannot complete."""
+        return self._get_view_names("view", catalog_name, database_name, schema_name, strict=strict)
 
     def get_materialized_views(
-        self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+        self, catalog_name: str = "", database_name: str = "", schema_name: str = "", *, strict: bool = False
     ) -> List[str]:
-        """Get materialized view names, raising if neither listing succeeds."""
-        result = self._get_metadata(table_type="mv", catalog_name=catalog_name, database_name=database_name)
-        return [self._qualify_name(mv, database_name, schema_name) for mv in result]
+        """List materialized views. With strict=True, raise if enumeration cannot complete."""
+        return self._get_view_names("mv", catalog_name, database_name, schema_name, strict=strict)
+
+    def _get_view_names(
+        self, table_type: str, catalog_name: str, database_name: str, schema_name: str, *, strict: bool
+    ) -> List[str]:
+        try:
+            rows = self._get_metadata(table_type=table_type, catalog_name=catalog_name, database_name=database_name)
+            return [self._qualify_name(row, database_name, schema_name) for row in rows]
+        except Exception as exc:
+            if strict:
+                raise
+            kind = "materialized views" if table_type == "mv" else "views"
+            logger.warning(f"Failed to get {kind}: {exc}")
+            return []
 
     def get_materialized_views_with_ddl(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = ""
