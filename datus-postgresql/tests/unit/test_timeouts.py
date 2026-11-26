@@ -342,3 +342,35 @@ def test_connector_timeout_wiring_in_base_and_database_engines(overrides, expect
             )
     finally:
         connector.close()
+
+
+@pytest.mark.parametrize(
+    "overrides, dialect, expected",
+    [
+        ({}, "postgresql", True),
+        ({}, "greenplum", True),
+        ({"aurora": True, "sslrootcert": "/tmp/ca.pem"}, "postgresql", False),
+        ({}, "dws", False),
+        ({}, "gaussdb", False),
+        ({}, "hologres", False),
+    ],
+)
+def test_query_timeout_override_capability_and_scope(overrides, dialect, expected):
+    from datus_postgresql import PostgreSQLConnector
+
+    connector = PostgreSQLConnector(
+        {"host": "db.test", "username": "reader", "password": "test", "database": "app", **overrides}
+    )
+    connector.dialect = dialect
+    try:
+        assert connector.supports_query_timeout_override is expected
+        if expected:
+            conn = Mock()
+            applied = Mock()
+            conn.exec_driver_sql.return_value = applied
+            with connector._query_timeout_scope(conn, 9):
+                pass
+            conn.exec_driver_sql.assert_called_once_with("SET LOCAL statement_timeout = 9000")
+            applied.close.assert_called_once_with()
+    finally:
+        connector.close()

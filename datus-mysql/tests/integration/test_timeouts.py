@@ -4,7 +4,7 @@ import pytest
 
 from datus_db_core import DatusDbException
 from datus_mysql import MySQLConnector
-from datus_sqlalchemy.testing import assert_stalled_response_timeout
+from datus_sqlalchemy.testing import assert_query_timeout_override, assert_stalled_response_timeout
 
 pytestmark = pytest.mark.integration
 
@@ -44,3 +44,12 @@ def test_server_select_deadline(config, connector):
     finally:
         bounded.execute_ddl(f"DROP TABLE IF EXISTS `{table}`")
         bounded.close()
+
+
+def test_query_timeout_override_is_scoped_to_one_select(config):
+    # The TLS fixture uses Aurora mode to require verification. Keep its
+    # resolved CA and verification flags and exercise the community server.
+    config = config.model_copy(update={"aurora": False})
+    assert_query_timeout_override(
+        config, MySQLConnector, "SELECT @@SESSION.max_execution_time AS deadline", units_per_second=1000
+    )

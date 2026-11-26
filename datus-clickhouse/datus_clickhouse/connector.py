@@ -2,11 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, List, Optional, Set, Union, override
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Set, Union, override
 
 from pydantic import BaseModel, Field
 from sqlalchemy import event
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import URL, Connection, Engine
 
 from datus_db_core import (
     TABLE_TYPE,
@@ -101,6 +102,21 @@ class ClickHouseConnector(SQLAlchemyConnector, MigrationTargetMixin):
                 "ch_settings": {"max_execution_time": config.query_timeout_seconds or config.timeout_seconds},
             }
         )
+
+    supports_query_timeout_override = True
+
+    @contextmanager
+    def _query_timeout_scope(self, conn: Connection, seconds: int) -> Iterator[None]:
+        # The HTTP driver's transport belongs to this checked-out connection.
+        # This replaces the datasource's HTTP parameter. ClickHouse applies
+        # an explicit SETTINGS clause in the statement after the request settings.
+        transport = conn.connection.driver_connection.transport
+        previous = transport.ch_settings
+        transport.ch_settings = {**previous, "max_execution_time": seconds}
+        try:
+            yield
+        finally:
+            transport.ch_settings = previous
 
     def _create_engine(self, connection_string: str | URL, **options: Any) -> Engine:
         engine = super()._create_engine(connection_string, **options)

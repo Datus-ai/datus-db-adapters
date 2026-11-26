@@ -5,6 +5,7 @@
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, override
@@ -62,6 +63,8 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     """
     Connector for SQLite databases using native sqlite3 SDK.
     """
+
+    supports_query_timeout_override = True
 
     def __init__(self, config: SQLiteConfig | dict):
         if isinstance(config, dict):
@@ -296,14 +299,30 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     @override
     @_serialized_connection
     def execute_query(
-        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+        self,
+        sql: str,
+        result_format: Literal["csv", "arrow", "pandas", "list"] = "csv",
+        *,
+        query_timeout_seconds: int | None = None,
     ) -> ExecuteSQLResult:
         """Execute a SELECT query."""
         try:
             self.connect()
             cursor = self.connection.cursor()
-            cursor.execute(sql)
-            rows = cursor.fetchall()
+            scope = nullcontext()
+            if query_timeout_seconds is not None:
+                from datus_db_core.query_timeout import (
+                    sqlite_query_timeout,
+                    validate_query_timeout,
+                    validate_select_query_for_timeout,
+                )
+
+                validate_query_timeout(query_timeout_seconds)
+                validate_select_query_for_timeout(sql, self.dialect)
+                scope = sqlite_query_timeout(self.connection, query_timeout_seconds)
+            with scope:
+                cursor.execute(sql)
+                rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
 
             # Convert to list of dicts
