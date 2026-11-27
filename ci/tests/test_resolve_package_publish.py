@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import shlex
+import shutil
 import subprocess
 import urllib.error
 from pathlib import Path
@@ -10,7 +11,10 @@ from pathlib import Path
 import pytest
 from packaging.version import Version
 
+from ci import publish_package_release as publisher
+from ci.package_release import REPO_ROOT, load_workspace_packages
 from ci.resolve_package_publish import (
+    PublishState,
     PyPIReleaseStatus,
     next_patch_version,
     pypi_release_status,
@@ -37,13 +41,13 @@ def git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def write_package(repo: Path, version: str, dependencies: tuple[str, ...] = ()) -> None:
-    package_dir = repo / PACKAGE
+def write_package(repo: Path, version: str, dependencies: tuple[str, ...] = (), *, name: str = PACKAGE) -> None:
+    package_dir = repo / name
     package_dir.mkdir(exist_ok=True)
     dependency_lines = "\n".join(f'    "{dependency}",' for dependency in dependencies)
     (package_dir / "pyproject.toml").write_text(
         f'''[project]
-name = "{PACKAGE}"
+name = "{name}"
 version = "{version}"
 dependencies = [
 {dependency_lines}
@@ -68,6 +72,262 @@ members = ["{PACKAGE}"]
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-m", "initial")
     return tmp_path
+
+
+@pytest.fixture
+def batch_repo(repo: Path) -> Path:
+    dependencies = {
+        PACKAGE: (),
+        "datus-sqlalchemy": (PACKAGE,),
+        "datus-mysql": ("datus-sqlalchemy",),
+        "datus-starrocks": ("datus-sqlalchemy", "datus-mysql"),
+        "datus-unrelated": (),
+    }
+    (repo / "pyproject.toml").write_text(f"[tool.uv.workspace]\nmembers = {json.dumps(list(dependencies))}\n")
+    for package, upstream in dependencies.items():
+        write_package(repo, "0.1.5", tuple(f"{name}>=0.1.5" for name in upstream), name=package)
+    ci = repo / "ci"
+    ci.mkdir()
+    for filename in ("package_release.py", "prepare_package_release.py"):
+        shutil.copy(REPO_ROOT / "ci" / filename, ci / filename)
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "add adapter dependencies")
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("package", "checked", "recursive", "expected"),
+    [
+        (PACKAGE, [], False, [PACKAGE]),
+        (PACKAGE, [], True, [PACKAGE, "datus-sqlalchemy", "datus-mysql", "datus-starrocks"]),
+        (PACKAGE, ["datus-starrocks", "datus-mysql"], False, ["datus-mysql", "datus-starrocks"]),
+    ],
+)
+def test_select_packages_deduplicates_and_orders_only_requested_releases(
+    batch_repo: Path,
+    package: str,
+    checked: list[str],
+    recursive: bool,
+    expected: list[str],
+) -> None:
+    _, ordered = publisher.select_packages(batch_repo, package, checked, recursive)
+    assert ordered == expected
+
+
+@pytest.mark.parametrize(
+    ("package", "checked", "recursive", "message"),
+    [
+        ("", [], False, "Choose a package"),
+        (PACKAGE, ["datus-mysql", "datus-unknown"], False, "Unknown package 'datus-unknown'"),
+        (PACKAGE, ["datus-mysql"], True, "Uncheck the adapter boxes"),
+    ],
+)
+def test_select_packages_rejects_invalid_batches(
+    batch_repo: Path, package: str, checked: list[str], recursive: bool, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        publisher.select_packages(batch_repo, package, checked, recursive)
+
+
+def test_build_artifacts_excludes_uv_generated_gitignore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    filenames = ["datus_db_core-0.1.6-py3-none-any.whl", "datus_db_core-0.1.6.tar.gz"]
+    checked: list[str] = []
+
+    def run(_repo: Path, *args: str) -> None:
+        if args[:2] == ("uv", "build"):
+            output_dir = Path(args[-1])
+            output_dir.mkdir(parents=True)
+            for filename in [".gitignore", *filenames]:
+                (output_dir / filename).touch()
+        if ("twine", "check") == args[2:4]:
+            checked.extend(Path(arg).name for arg in args[4:])
+
+    monkeypatch.setattr(publisher, "run", run)
+    monkeypatch.setattr(publisher.subprocess, "check_output", lambda *args, **kwargs: "")
+
+    artifacts = publisher.build_artifacts(tmp_path, PACKAGE, "0.1.6")
+
+    assert checked == [Path(artifact).name for artifact in artifacts] == filenames
+
+
+@pytest.mark.parametrize("dependent_bound", ["0.1.5", "0.1.6"], ids=["awaiting-metadata", "squash-merged"])
+def test_auto_release_requires_recorded_dependency_bounds(
+    batch_repo: Path, monkeypatch: pytest.MonkeyPatch, dependent_bound: str
+) -> None:
+    git(batch_repo, "checkout", "--detach")
+    write_package(batch_repo, "0.1.6")
+    write_package(batch_repo, "0.1.5", (f"{PACKAGE}>=0.1.6",), name="datus-sqlalchemy")
+    git(batch_repo, "commit", "-am", "release 0.1.6")
+    git(batch_repo, "tag", f"{PACKAGE}-v0.1.6")
+
+    git(batch_repo, "checkout", "main")
+    write_package(batch_repo, "0.1.6")
+    write_package(batch_repo, "0.1.5", (f"{PACKAGE}>={dependent_bound}",), name="datus-sqlalchemy")
+    git(batch_repo, "commit", "-am", "squash release metadata to main")
+
+    def resolve(path: Path, name: str, version: str) -> PublishState:
+        def status(_name: str, queried: Version) -> PyPIReleaseStatus:
+            return release_complete(_name, queried) if queried == Version("0.1.6") else release_missing(_name, queried)
+
+        return resolve_publish_state(path, name, version, latest_release=latest_release("0.1.6"), release_status=status)
+
+    monkeypatch.setattr(publisher, "resolve_publish_state", resolve)
+
+    state = publisher.resolve_release(batch_repo, PACKAGE, "auto")
+
+    expected = ("0.1.7", "new") if dependent_bound == "0.1.6" else ("0.1.6", "complete")
+    assert (state.version, state.state) == expected
+
+
+@pytest.mark.parametrize(
+    ("inputs", "expected_versions"),
+    [
+        pytest.param(
+            {"package": PACKAGE, "recursive": True, "version": "0.1.7"},
+            [(PACKAGE, "0.1.7"), ("datus-sqlalchemy", "0.1.6"), ("datus-mysql", "0.1.6"), ("datus-starrocks", "0.1.6")],
+            id="recursive",
+        ),
+        pytest.param(
+            {
+                "package": "datus-unrelated",
+                "recursive": False,
+                "datus-starrocks": True,
+                "datus-mysql": True,
+                "datus-sqlalchemy": False,
+            },
+            [("datus-mysql", "0.1.6"), ("datus-starrocks", "0.1.6")],
+            id="checkboxes",
+        ),
+    ],
+)
+def test_batch_build_failure_and_upload_retry_leave_consistent_release_state(
+    batch_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inputs: dict[str, bool | str],
+    expected_versions: list[tuple[str, str]],
+) -> None:
+    remote = tmp_path / "remote.git"
+    git(batch_repo, "init", "--bare", str(remote))
+    git(batch_repo, "remote", "add", "origin", str(remote))
+    git(batch_repo, "push", "origin", "main")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "test/db-adapters")
+    uploads: list[tuple[str, str]] = []
+    verified: dict[str, Version] = {}
+    pr_calls: list[list[str]] = []
+    versions = dict(expected_versions)
+    fix_file = "downstream-source-fix"
+
+    def status(name: str, version: Version) -> PyPIReleaseStatus:
+        return release_complete(name, version) if verified.get(name) == version else release_missing(name, version)
+
+    def resolve(path: Path, name: str, version: str) -> PublishState:
+        return resolve_publish_state(
+            path,
+            name,
+            version,
+            latest_release=lambda package: verified.get(package, Version("0.1.5")),
+            release_status=status,
+        )
+
+    def build(path: Path, name: str, version: str) -> list[str]:
+        if name == "datus-starrocks" and not (path / fix_file).exists():
+            raise ValueError("downstream needs a source fix")
+        package = load_workspace_packages(path)[name]
+        assert package.version == Version(version)
+        for dependency, requirement in package.dependencies.items():
+            assert str(requirement.specifier) == f">={versions.get(dependency, '0.1.5')}"
+        source_dir = tmp_path / "built" / name
+        source_dir.mkdir(parents=True, exist_ok=True)
+        artifacts = [source_dir / f"{name}.whl", source_dir / f"{name}.tar.gz"]
+        for artifact in artifacts:
+            artifact.write_text(f"{name} {version} validated artifact", encoding="utf-8")
+        return [str(artifact) for artifact in artifacts]
+
+    def upload(repo: Path, name: str, version: str, artifacts: list[str], _credentials: dict[str, str]) -> None:
+        refs = git(repo, "ls-remote", "--tags", "origin", "refs/tags/*")
+        assert all(f"refs/tags/{name}-v{version}" in refs for name, version in expected_versions)
+        assert all(Path(artifact).read_text() == f"{name} {version} validated artifact" for artifact in artifacts)
+        dependencies = load_workspace_packages(repo)[name].dependencies
+        assert all(verified[dep] == Version(versions[dep]) for dep in dependencies if dep in versions)
+        uploads.append((name, version))
+        if name == "datus-starrocks" and uploads.count((name, version)) == 1:
+            raise OSError("simulated upload failure after reserving all versions")
+        verified[name] = Version(version)
+
+    original_run = publisher.run
+    original_check_output = subprocess.check_output
+
+    def run(path: Path, *args: str, env: dict[str, str] | None = None) -> None:
+        if args[:2] == ("gh", "pr"):
+            assert verified == {name: Version(version) for name, version in expected_versions}
+            pr_calls.append(list(args))
+        else:
+            original_run(path, *args, env=env)
+
+    def check_output(args: list[str], **kwargs):
+        if args[:3] == ["gh", "pr", "list"]:
+            return "[]" if not pr_calls else '[{"number": 12, "state": "OPEN"}]'
+        return original_check_output(args, **kwargs)
+
+    monkeypatch.setattr(publisher, "resolve_publish_state", resolve)
+    monkeypatch.setattr(publisher, "pypi_release_status", status)
+    monkeypatch.setattr(publisher, "build_artifacts", build)
+    monkeypatch.setattr(publisher, "publish_artifacts", upload)
+    monkeypatch.setattr(publisher, "run", run)
+    monkeypatch.setattr(publisher.subprocess, "check_output", check_output)
+
+    git(batch_repo, "checkout", "--detach")
+    with pytest.raises(ValueError, match="downstream needs a source fix"):
+        publisher.prepare_release(batch_repo, inputs, "1234", tmp_path / "failed-artifact")
+    assert not (tmp_path / "failed-artifact" / "releases.json").exists()
+    assert git(batch_repo, "ls-remote", "--tags", "origin") == ""
+
+    git(batch_repo, "checkout", "-f", "main")
+    (batch_repo / fix_file).write_text("fixed", encoding="utf-8")
+    git(batch_repo, "add", fix_file)
+    git(batch_repo, "commit", "-m", "fix downstream build")
+    git(batch_repo, "push", "origin", "main")
+    git(batch_repo, "checkout", "--detach")
+    artifact = tmp_path / "artifact"
+    publisher.prepare_release(batch_repo, inputs, "1234", artifact)
+    assert git(batch_repo, "ls-remote", "--tags", "origin") == ""
+    assert not uploads
+
+    release_repo = tmp_path / "publish-clone"
+    git(tmp_path, "clone", "-b", "main", str(remote), str(release_repo))
+    git(release_repo, "config", "user.name", "Test User")
+    git(release_repo, "config", "user.email", "test@example.com")
+    with pytest.raises(OSError, match="simulated upload failure"):
+        publisher.publish_release(release_repo, "1234", artifact, {}, "")
+    assert uploads == expected_versions
+    assert not pr_calls
+    final_tag = "datus-starrocks-v0.1.6"
+    final_commit = git(release_repo, "rev-list", "-1", final_tag)
+
+    git(batch_repo, "fetch", "--tags", "origin")
+    git(batch_repo, "checkout", "--detach", "main")
+    with pytest.raises(ValueError, match="reserved for its batch"):
+        publisher.prepare_release(batch_repo, {"package": "datus-starrocks"}, "4321", tmp_path / "competing")
+    rebuilt = tmp_path / "rebuilt"
+    publisher.prepare_release(batch_repo, inputs, "1234", rebuilt)
+    assert (rebuilt / "releases.json").read_text() == (artifact / "releases.json").read_text()
+    assert [path.name for path in rebuilt.iterdir() if path.is_dir()] == ["datus-starrocks"]
+
+    publisher.publish_release(release_repo, "1234", artifact, {}, "")
+    assert uploads == [*expected_versions, expected_versions[-1]]
+    assert git(release_repo, "rev-list", "-1", final_tag) == final_commit
+    assert git(release_repo, "ls-remote", "--heads", "origin", "release/batch-1234").split()[0] == final_commit
+    assert len(pr_calls) == 1
+    assert pr_calls[0][2:7] == ["create", "--base", "main", "--head", "release/batch-1234"]
+
+    git(release_repo, "merge", "--no-ff", final_commit, "-m", "merge batch release PR")
+    git(release_repo, "push", "origin", "main")
+    git(release_repo, "push", "origin", "--delete", "release/batch-1234")
+    publisher.publish_release(release_repo, "1234", artifact, {}, "")
+    assert uploads == [*expected_versions, expected_versions[-1]]
+    assert len(pr_calls) == 1
+    assert git(release_repo, "ls-remote", "--heads", "origin", "release/batch-1234") == ""
 
 
 def no_latest_release(_package: str) -> Version | None:

@@ -348,6 +348,25 @@ def register():
 register()
 ```
 
+### Publishing packages
+
+Run [Publish Package Release](https://github.com/Datus-ai/datus-db-adapters/actions/workflows/publish-package-release.yml)
+from GitHub Actions.
+
+| Release | Inputs |
+| --- | --- |
+| One package | Choose `package`. Set `version` or leave it empty for automatic version selection. |
+| Several packages | Check the boxes for the open-source database or SQL engine adapters you want to publish, such as `datus-mysql` and `datus-starrocks`. Keep `recursive` off and use automatic versions. Checked adapters take precedence over the `package` dropdown. |
+| A package and its downstream packages | Choose the starting `package`, leave the adapter boxes unchecked, and turn on `recursive`. An explicit `version` applies to the starting package. The workflow selects downstream versions automatically. |
+
+The workflow builds and validates all selected packages before reserving their tags. It then publishes the
+validated distributions in dependency order and opens one PR to record the batch after all uploads are
+verified on PyPI.
+
+If preparation fails, merge the fix into `main` and rerun the failed run. If publishing fails, rerun the
+failed job in the same Actions run to reuse its validated distributions and skip completed uploads. The
+batch's reserved tags protect its versions while it is waiting for a publishing retry.
+
 ## Using with Datus Agent
 
 Adapters are automatically discovered via entry points:
