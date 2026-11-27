@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       package:
-        description: "Workspace adapter package to publish"
-        required: true
+        description: "Package for single or recursive release (ignored when package boxes are checked)"
+        required: false
         type: choice
         options:
           - datus-athena
@@ -34,30 +34,95 @@ on:
           - datus-gaussdb
           - datus-dws
       version:
-        description: "Optional version; leave empty or use auto to resolve from main and PyPI"
+        description: "Version for a single selected package; leave empty or use auto for automatic versioning"
         required: false
         default: ""
         type: string
+      recursive:
+        description: "Publish the package from the dropdown and all its downstream packages (leave package boxes unchecked)"
+        required: false
+        default: false
+        type: boolean
+      datus-clickhouse:
+        description: "datus-clickhouse"
+        type: boolean
+        default: false
+      datus-doris:
+        description: "datus-doris"
+        type: boolean
+        default: false
+      datus-duckdb:
+        description: "datus-duckdb"
+        type: boolean
+        default: false
+      datus-gaussdb:
+        description: "datus-gaussdb (openGauss)"
+        type: boolean
+        default: false
+      datus-greenplum:
+        description: "datus-greenplum"
+        type: boolean
+        default: false
+      datus-hive:
+        description: "datus-hive"
+        type: boolean
+        default: false
+      datus-mysql:
+        description: "datus-mysql"
+        type: boolean
+        default: false
+      datus-postgresql:
+        description: "datus-postgresql"
+        type: boolean
+        default: false
+      datus-spark:
+        description: "datus-spark"
+        type: boolean
+        default: false
+      datus-sqlite:
+        description: "datus-sqlite"
+        type: boolean
+        default: false
+      datus-starrocks:
+        description: "datus-starrocks"
+        type: boolean
+        default: false
+      datus-tidb:
+        description: "datus-tidb"
+        type: boolean
+        default: false
+      datus-trino:
+        description: "datus-trino"
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
-  group: publish-${{ inputs.package }}-release
-  cancel-in-progress: false
+  # Single and batch releases can touch the same package metadata.
+  group: publish-package-release
+  queue: max
 
 jobs:
-  publish:
+  prepare:
     runs-on: ubuntu-latest
-    environment: Pypi Publish
+    outputs:
+      checkout_ref: ${{ steps.source.outputs.ref }}
+      artifact_name: ${{ steps.source.outputs.artifact_name }}
     steps:
       - name: Checkout latest main
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+
+      - name: Record release source
+        id: source
+        run: |
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=package-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -76,307 +141,52 @@ jobs:
       - name: Install release tooling
         run: pip install packaging twine
 
-      - name: Resolve publication state
-        id: resolve
+      - name: Build and validate all selected packages
         env:
-          PACKAGE: ${{ inputs.package }}
-          REQUESTED_VERSION: ${{ inputs.version }}
-        run: |
-          python3 ci/resolve_package_publish.py \
-            --package "${PACKAGE}" \
-            --requested-version "${REQUESTED_VERSION}"
+          RELEASE_INPUTS: ${{ toJSON(inputs) }}
+        run: python3 -m ci.publish_package_release prepare "$RUNNER_TEMP/package-release"
 
-      - name: Check out existing release commit
-        if: steps.resolve.outputs.state != 'new'
+      - name: Store validated release plan and distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.artifact_name }}
+          path: ${{ runner.temp }}/package-release
+          if-no-files-found: error
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: Pypi Publish
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release tooling
+        run: pip install packaging twine
+
+      - name: Download validated release plan and distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.artifact_name }}
+          path: ${{ runner.temp }}/package-release
+
+      - name: Publish workspace packages
         env:
-          RELEASE_COMMIT: ${{ steps.resolve.outputs.release_commit }}
-        run: |
-          set -euo pipefail
-          git checkout --detach "${RELEASE_COMMIT}"
-          test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"
-
-      - name: Prepare release metadata
-        if: steps.resolve.outputs.state == 'new'
-        env:
-          PACKAGE: ${{ steps.resolve.outputs.package }}
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          python3 ci/prepare_package_release.py \
-            --package "${PACKAGE}" \
-            --version "${VERSION}" \
-            --update-dependent-bounds \
-            --allow-current-version \
-            --allow-no-changes
-
-      - name: Validate package release
-        if: steps.resolve.outputs.state != 'complete'
-        env:
-          PACKAGE: ${{ steps.resolve.outputs.package }}
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          python3 ci/check_package_release_readiness.py \
-            --package "${PACKAGE}" \
-            --expected-version "${VERSION}" \
-            --check-dependent-bounds \
-            --build
-
-          if ci/run-unit-tests.sh --list | awk '{print $1}' | grep -Fx "${PACKAGE}" >/dev/null; then
-            ci/run-unit-tests.sh "${PACKAGE}"
-          else
-            echo "No package-scoped unit-test target configured for ${PACKAGE}"
-          fi
-
-          git diff --check
-
-      - name: Vendor native libraries (datus-gaussdb)
-        if: steps.resolve.outputs.state != 'complete' && steps.resolve.outputs.package == 'datus-gaussdb'
-        run: |
-          set -euo pipefail
-          # datus-gaussdb wheels bundle the openGauss libpq (Mulan PSL v2)
-          # with checksum-pinned openEuler OpenSSL security updates. The
-          # binaries are generated only at release-build time.
-          python3 datus-gaussdb/scripts/fetch_vendor_libpq.py --arch all
-          for arch in x86_64 aarch64; do
-            for artifact in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1 MulanPSL-2.0.txt OPENSSL-LICENSE.txt; do
-              test -f "datus-gaussdb/datus_gaussdb/_vendor/${arch}/${artifact}"
-            done
-          done
-
-      - name: Build release artifacts
-        if: steps.resolve.outputs.state != 'complete'
-        env:
-          PACKAGE: ${{ steps.resolve.outputs.package }}
-        run: |
-          set -euo pipefail
-          release_dir="dist/release/${PACKAGE}"
-          rm -rf dist/release
-          uv build --package "${PACKAGE}" --out-dir "${release_dir}"
-          python -m twine check "${release_dir}"/*
-          if [ "${PACKAGE}" = "datus-gaussdb" ]; then
-            python3 - "${release_dir}" <<'EOF'
-          import glob, sys, zipfile
-
-          wheels = glob.glob(f"{sys.argv[1]}/*.whl")
-          assert wheels, "no wheel built for datus-gaussdb"
-          for wheel in wheels:
-              names = zipfile.ZipFile(wheel).namelist()
-              for arch in ("x86_64", "aarch64"):
-                  for artifact in (
-                      "libpq.so.5",
-                      "libssl.so.1.1",
-                      "libcrypto.so.1.1",
-                      "MulanPSL-2.0.txt",
-                      "OPENSSL-LICENSE.txt",
-                  ):
-                      member = f"datus_gaussdb/_vendor/{arch}/{artifact}"
-                      assert member in names, f"{wheel} is missing {member} — vendor step did not run"
-          print("vendored libpq and licenses present in wheel")
-          EOF
-          fi
-
-      - name: Commit release metadata and create tag
-        if: steps.resolve.outputs.state == 'new'
-        env:
-          BRANCH: ${{ steps.resolve.outputs.branch }}
-          PACKAGE: ${{ steps.resolve.outputs.package }}
-          TAG: ${{ steps.resolve.outputs.tag }}
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --tags origin
-          git fetch origin \
-            "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" || true
-
-          if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
-            echo "Release tag ${TAG} was created by another process" >&2
-            exit 1
-          fi
-
-          git checkout -B "${BRANCH}"
-          git add -- ./*/pyproject.toml
-          if git diff --cached --quiet; then
-            echo "${PACKAGE} ${VERSION} release metadata is already present on main"
-          else
-            git commit -m "chore: release ${PACKAGE} ${VERSION}"
-          fi
-          git tag -a "${TAG}" -m "Release ${PACKAGE} ${VERSION}"
-
-          push_args=(--atomic)
-          if git rev-parse --verify --quiet "refs/remotes/origin/${BRANCH}" >/dev/null; then
-            remote_commit="$(git rev-parse "refs/remotes/origin/${BRANCH}")"
-            push_args+=("--force-with-lease=refs/heads/${BRANCH}:${remote_commit}")
-          fi
-          git push "${push_args[@]}" origin \
-            "HEAD:refs/heads/${BRANCH}" \
-            "refs/tags/${TAG}"
-
-      - name: Publish to PyPI
-        if: steps.resolve.outputs.state != 'complete'
-        env:
-          PACKAGE: ${{ steps.resolve.outputs.package }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
           PYPI_USERNAME: ${{ secrets.PYPI_USERNAME }}
           PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          set -euo pipefail
-          password="${PYPI_PASSWORD:-${PYPI_API_TOKEN:-${PYPI_TOKEN:-}}}"
-          if [ -z "${password}" ]; then
-            echo "Missing PyPI password/token secret" >&2
-            exit 1
-          fi
-
-          if [ -n "${PYPI_USERNAME:-}" ]; then
-            username="${PYPI_USERNAME}"
-          elif [ -n "${PYPI_PASSWORD:-}" ]; then
-            username="transform_data"
-          else
-            username="__token__"
-          fi
-
-          release_dir="dist/release/${PACKAGE}"
-          python -m twine upload \
-            --non-interactive \
-            --skip-existing \
-            --username "${username}" \
-            --password "${password}" \
-            "${release_dir}"/*
-
-      - name: Verify PyPI release
-        if: steps.resolve.outputs.state != 'complete'
-        env:
-          PACKAGE: ${{ steps.resolve.outputs.package }}
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: |
-          python - <<'PY'
-          from __future__ import annotations
-
-          import os
-          import time
-
-          from packaging.version import Version
-
-          from ci.resolve_package_publish import pypi_release_status
-
-          for attempt in range(12):
-              try:
-                  status = pypi_release_status(
-                      os.environ["PACKAGE"],
-                      Version(os.environ["VERSION"]),
-                  )
-                  if not status.complete:
-                      raise ValueError(
-                          "PyPI release is missing required artifacts; "
-                          f"found {status.artifact_types or '<none>'}"
-                      )
-                  print(
-                      f"Verified {os.environ['PACKAGE']} {os.environ['VERSION']} "
-                      f"on PyPI with {status.artifact_types}"
-                  )
-                  break
-              except Exception as exc:
-                  if attempt == 11:
-                      raise
-                  print(f"PyPI verification attempt {attempt + 1} failed: {exc}")
-                  time.sleep(10)
-          PY
-
-      - name: Create or update post-publish release PR
-        env:
-          BRANCH: ${{ steps.resolve.outputs.branch }}
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
-          PACKAGE: ${{ steps.resolve.outputs.package }}
-          TAG: ${{ steps.resolve.outputs.tag }}
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          git fetch origin "+refs/heads/main:refs/remotes/origin/main"
-
-          if git diff --quiet "origin/main" HEAD -- ./*/pyproject.toml; then
-            echo "Release metadata is already present on main; no PR is needed."
-            exit 0
-          fi
-
-          git fetch origin \
-            "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" || true
-
-          if git rev-parse --verify --quiet "refs/remotes/origin/${BRANCH}" >/dev/null; then
-            remote_commit="$(git rev-parse "refs/remotes/origin/${BRANCH}")"
-            if [ "${remote_commit}" != "$(git rev-parse HEAD)" ]; then
-              git push \
-                "--force-with-lease=refs/heads/${BRANCH}:${remote_commit}" \
-                origin "HEAD:refs/heads/${BRANCH}"
-            fi
-          else
-            git push origin "HEAD:refs/heads/${BRANCH}"
-          fi
-
-          title="[Tool] Record ${PACKAGE} ${VERSION} release"
-          body_file="$(mktemp)"
-          cat > "${body_file}" <<EOF
-          ## Why
-
-          Record the package metadata for the published ${PACKAGE} ${VERSION} release.
-
-          ## Solution
-
-          - update ${PACKAGE} package version to ${VERSION}
-          - update workspace package lower bounds that depend on ${PACKAGE}
-          - record release tag ${TAG}
-
-          ## Test Cases
-
-          - package release readiness checks and unit tests passed
-          - release artifacts passed Twine validation
-          - ${PACKAGE} ${VERSION} was verified on PyPI before this PR was created
-
-          EOF
-
-          pr_number="$(gh pr list \
-            --repo "${GITHUB_REPOSITORY}" \
-            --base main \
-            --head "${BRANCH}" \
-            --state open \
-            --json number \
-            --jq '.[0].number // empty')"
-          if [ -n "${pr_number}" ]; then
-            gh pr edit "${pr_number}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${title}" \
-              --body-file "${body_file}"
-          else
-            gh pr create \
-              --repo "${GITHUB_REPOSITORY}" \
-              --base main \
-              --head "${BRANCH}" \
-              --title "${title}" \
-              --body-file "${body_file}"
-          fi
-
-      - name: Summarize release
-        if: always()
-        env:
-          BRANCH: ${{ steps.resolve.outputs.branch }}
-          CURRENT_VERSION: ${{ steps.resolve.outputs.current_version }}
-          LATEST_PYPI_VERSION: ${{ steps.resolve.outputs.latest_pypi_version }}
-          PACKAGE: ${{ steps.resolve.outputs.package }}
-          VERSION: ${{ steps.resolve.outputs.version }}
-          TAG: ${{ steps.resolve.outputs.tag }}
-          STATE: ${{ steps.resolve.outputs.state }}
-          PYPI_COMPLETE: ${{ steps.resolve.outputs.pypi_complete }}
-        run: |
-          {
-            echo "### Package release"
-            echo "- Package: \`${PACKAGE}\`"
-            echo "- Current main version: \`${CURRENT_VERSION}\`"
-            echo "- Latest PyPI version: \`${LATEST_PYPI_VERSION:-<none>}\`"
-            echo "- Release version: \`${VERSION}\`"
-            echo "- Tag: \`${TAG}\`"
-            echo "- Release branch: \`${BRANCH}\`"
-            echo "- Initial state: \`${STATE}\`"
-            echo "- PyPI artifacts complete: \`${PYPI_COMPLETE:-unknown}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+        run: python3 -m ci.publish_package_release publish "$RUNNER_TEMP/package-release"

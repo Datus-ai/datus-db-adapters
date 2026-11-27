@@ -1,3 +1,4 @@
+import re
 import tomllib
 from pathlib import Path
 
@@ -16,6 +17,45 @@ def test_publish_workflow_offers_every_workspace_package() -> None:
     workspace_packages = set(workspace["tool"]["uv"]["workspace"]["members"])
 
     assert published_packages == workspace_packages
+
+
+def test_publish_workflow_defaults_open_source_adapter_checkboxes_to_off() -> None:
+    source = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    checkboxes = dict(re.findall(r"^      (datus-[a-z0-9-]+):\n((?: {8}.*\n)+)", source, re.MULTILINE))
+
+    assert set(checkboxes) == {
+        "datus-clickhouse",
+        "datus-doris",
+        "datus-duckdb",
+        "datus-gaussdb",
+        "datus-greenplum",
+        "datus-hive",
+        "datus-mysql",
+        "datus-postgresql",
+        "datus-spark",
+        "datus-sqlite",
+        "datus-starrocks",
+        "datus-tidb",
+        "datus-trino",
+    }
+    assert all(
+        "        type: boolean\n" in block and "        default: false\n" in block for block in checkboxes.values()
+    )
+
+
+def test_publish_workflow_isolates_build_from_release_credentials() -> None:
+    source = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    prepare, publish = source.partition("  publish:\n")[::2]
+
+    assert "persist-credentials: false" in prepare
+    assert "ci.publish_package_release prepare " in prepare
+    assert "actions/upload-artifact@" in prepare
+    assert "secrets." not in prepare
+    assert "contents: write" not in prepare
+    assert "needs: prepare" in publish
+    assert "actions/download-artifact@" in publish
+    assert "ci.publish_package_release publish " in publish
+    assert "secrets.PYPI_API_TOKEN" in publish
 
 
 def test_aggregate_gate_requires_selected_jobs_to_succeed() -> None:
